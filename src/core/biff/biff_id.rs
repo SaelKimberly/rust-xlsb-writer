@@ -1,3 +1,6 @@
+#[cfg(feature = "test")]
+use strum_macros::Display as EnumDisplay;
+
 /// BiffId ID from u16, based on section 2.1.4
 const fn as_biff_id(id: u16) -> u16 {
     if id > 0x00_7f {
@@ -9,7 +12,8 @@ const fn as_biff_id(id: u16) -> u16 {
 
 #[repr(u16)]
 #[allow(non_camel_case_types, dead_code)]
-#[cfg_attr(feature = "test", derive(Debug, PartialEq))]
+#[cfg_attr(feature = "test", derive(Debug, PartialEq, EnumDisplay))]
+#[derive(Copy, Clone)]
 /// Enumeration with all variants of XLSB BIFF IDs from section 2.3.2
 pub(crate) enum BiffId {
     BrtRowHdr = as_biff_id(0),
