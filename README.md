@@ -52,7 +52,7 @@ The condition for the release of version 1.0.0-alpha will be the recognition of 
 
 You are more than welcome to contribute to this project, or sponsor it at [Boosty.to](https://boosty.to/sael.dev/donate).
 
-The project is in active development, but at the moment there is only one developer working on it, Sael Kimberly. Your Issues and Pull Requests are welcome!
+The project is in active development, but at the moment there is only one developer working on it, Peter ([SaelKimberly](https://github.com/SaelKimberly)). Your Issues and Pull Requests are welcome!
 
 ## License
 
