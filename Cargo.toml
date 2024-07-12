@@ -1,0 +1,16 @@
+[package]
+name = "rust-xlsb-writer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+homepage = "https://github.com/SaelKimberly/rust-xlsb-writer"
+documentation = "https://github.com/SaelKimberly/rust-xlsb-writer"
+repository = "https://github.com/SaelKimberly/rust-xlsb-writer"
+authors = ["SaelKimberly"]
+license = "Apache-2.0"
+readme = "README.md"
+
+keywords = ["data", "xlsb", "excel", "arrow"]
+categories = ["encoding"]
+
+[dependencies]
