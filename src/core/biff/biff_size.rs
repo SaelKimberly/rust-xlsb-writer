@@ -5,7 +5,6 @@ pub(crate) enum BiffSize {
     U32([u8; 4]),
 }
 
-
 impl BiffSize {
     #[inline]
     pub(super) const fn from_size(sz: u32) -> Self {
@@ -33,5 +32,16 @@ impl BiffSize {
             Self::U24(sz) => sz,
             Self::U32(sz) => sz,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_biff_size() {
+        assert_eq!(BiffSize::from_size(0x7F).inner(), &[0x7F]);
+        assert_eq!(BiffSize::from_size(0x80).inner(), &[0x80, 0x01]);
     }
 }
