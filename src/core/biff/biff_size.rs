@@ -1,3 +1,7 @@
+/// Size of BIFF records
+///
+/// Teoretically, chain of `from_size` and `inner` methods
+///   can be inlined, and, in fact, `[u8]` buffer will be computed in constant.
 pub(crate) enum BiffSize {
     U8([u8; 1]),
     U16([u8; 2]),
@@ -7,7 +11,7 @@ pub(crate) enum BiffSize {
 
 impl BiffSize {
     #[inline]
-    pub(super) const fn from_size(sz: u32) -> Self {
+    pub(crate) const fn from_size(sz: u32) -> Self {
         match sz {
             n if n < 0x80 => Self::U8([n as u8]),
             n if (n >> 7) < 0x80 => Self::U16([n as u8 | 0x80, (n >> 7) as u8]),
@@ -25,7 +29,7 @@ impl BiffSize {
     }
 
     #[inline]
-    pub const fn inner<'a>(&'a self) -> &'a [u8] {
+    pub(crate) const fn inner<'a>(&'a self) -> &'a [u8] {
         match self {
             Self::U8(sz) => sz,
             Self::U16(sz) => sz,
