@@ -13,5 +13,7 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
-
+#![feature(const_vec_string_slice)]
+#![feature(iter_array_chunks)]
+#![feature(assert_matches)]
 mod core;
