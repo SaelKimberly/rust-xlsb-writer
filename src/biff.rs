@@ -448,32 +448,54 @@ pub(crate) struct FRTSqrefs {
     #[deku(count = "csqref")]
     array: Vec<FRTSqref>,
 }
-pub(crate) mod ptg {
-    use deku::{DekuRead, DekuWrite};
 
-    #[derive(DekuRead, DekuWrite, Debug)]
-    #[repr(u8)]
-    #[deku(id_type = "u8")]
-    /// `2.5.98.36`
-    pub(crate) enum PtgDataType {
-        #[deku(id = 0x1)]
-        Reference = 0x1,
-        #[deku(id = 0x2)]
-        Value = 0x2,
-        #[deku(id = 0x3)]
-        Array = 0x3,
-    }
-
-    #[derive(DekuRead, DekuWrite, Debug)]
-    /// `2.5.98.17`
-    pub(crate) struct PtgAdd {
-        #[deku(bits = 7)]
-        ptg: u8,
-    }
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[deku(id_type = "u8")]
+#[repr(u8)]
+pub(crate) enum BErr {
+    #[deku(id = 0x00)]
+    Null = 0x00,
+    #[deku(id = 0x07)]
+    ZeroDivision = 0x07,
+    #[deku(id = 0x0f)]
+    Value = 0x0f,
+    #[deku(id = 0x17)]
+    Ref = 0x17,
+    #[deku(id = 0x1d)]
+    Name = 0x1d,
+    #[deku(id = 0x24)]
+    Num = 0x24,
+    #[deku(id = 0x2a)]
+    NA = 0x2a,
+    #[deku(id = 0x2b)]
+    GettingData = 0x2b,
 }
 
-pub(crate) enum Ptg {
-    PtgAdd,
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub(crate) struct RgceArea {
+    pub(crate) rowFirst: u32,
+    pub(crate) rowLast: u32,
+    pub(crate) columnFirst: u16,
+    pub(crate) columnLast: u16,
+}
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub(crate) struct RgceAreaRel {
+    rowFirst: u32,
+    rowLast: u32,
+    columnFirst: u16,
+    columnLast: u16,
+}
+
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub(crate) struct RgceLoc {
+    row: u32,
+    column: u16,
+}
+
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, PartialOrd, Eq, Ord)]
+pub(crate) struct RgceLocRel {
+    row: u32,
+    column: u16,
 }
 
 #[derive(DekuRead, DekuWrite, Debug)]
