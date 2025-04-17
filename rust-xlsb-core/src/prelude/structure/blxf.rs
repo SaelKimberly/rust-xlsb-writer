@@ -1,13 +1,12 @@
 use deku::{DekuRead, DekuWrite};
 
-use super::BrtColor;
+use crate::prelude::{BrtColor, Unchecked};
 
-#[derive(DekuRead, DekuWrite, Debug, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq)]
 #[deku(id_type = "u8")]
-#[repr(u8)]
-pub(crate) enum BorderType {
-    #[deku(id = 0x00, default)]
+pub enum BorderType {
     #[default]
+    #[deku(id = 0x00)]
     None = 0x00,
     #[deku(id = 0x01)]
     Thin = 0x01,
@@ -37,23 +36,13 @@ pub(crate) enum BorderType {
     SlantDashDot = 0x0D,
 }
 
-#[derive(DekuRead, DekuWrite, Hash, Debug, Default)]
-pub(crate) struct Blxf {
-    dg: BorderType,
-    brtColor: BrtColor,
+impl Unchecked for BorderType {}
+
+#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq)]
+pub struct Blxf {
+    #[deku(pad_bytes_after = "1")]
+    pub border_type: BorderType,
+    pub color: BrtColor,
 }
 
-#[derive(DekuRead, DekuWrite, Hash, Debug, Default)]
-/// 2.4.311
-pub(crate) struct BrtBorder {
-    #[deku(bits = 1)]
-    fBdrDiagDown: bool,
-    #[deku(bits = 1)]
-    fBdrDiagUp: bool,
-    #[deku(pad_bits_before = "6")]
-    blxfTop: Blxf,
-    blxfBottom: Blxf,
-    blxfLeft: Blxf,
-    blxfRight: Blxf,
-    blxfDiag: Blxf,
-}
+impl Unchecked for Blxf {}

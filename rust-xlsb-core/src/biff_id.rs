@@ -1,9 +1,5 @@
-#[cfg(feature = "test")]
-use strum_macros::Display as EnumDisplay;
+use strum_macros::{Display as EnumDisplay, EnumIter};
 
-use super::BiffRecord;
-
-/// BiffId ID from u16, based on section 2.1.4
 const fn as_biff_id(id: u16) -> u16 {
     if id > 0x00_7f {
         (id & 0x7f | 0x80) | ((id & 0x3f80) << 1)
@@ -13,11 +9,9 @@ const fn as_biff_id(id: u16) -> u16 {
 }
 
 #[repr(u16)]
-#[allow(non_camel_case_types, dead_code)]
-#[cfg_attr(feature = "test", derive(Debug, EnumDisplay))]
-#[derive(Copy, Clone, PartialEq)]
-/// Enumeration with all variants of XLSB BIFF IDs from section 2.3.2
-pub(crate) enum BiffId {
+#[allow(non_camel_case_types)]
+#[derive(PartialEq, Debug, Clone, Copy, EnumIter, EnumDisplay, Hash, Eq)]
+pub enum KnownID {
     BrtRowHdr = as_biff_id(0),
     BrtCellBlank = as_biff_id(1),
     BrtCellRk = as_biff_id(2),
@@ -881,40 +875,93 @@ pub(crate) enum BiffId {
     BrtPivotCacheAutoRefresh = as_biff_id(5132),
 }
 
-impl From<u16> for BiffId {
-    #[inline]
-    fn from(id: u16) -> Self {
-        // unsafe, because the enumeration purposed for internal usage only
-        unsafe { std::mem::transmute(id) }
-    }
-}
-
-impl Into<u16> for BiffId {
-    #[inline]
-    fn into(self) -> u16 {
-        self as u16
-    }
-}
-
-impl Into<Box<[u8]>> for BiffId {
-    fn into(self) -> Box<[u8]> {
-        let id = self as u16;
-
-        if id & 0x80 != 0 {
-            Box::from(id.to_le_bytes())
+const fn expected_biff_size(id: u16, sz: usize) -> usize {
+    (if id > 0x00_7f { 2 } else { 1 })
+        + if sz < 0x80 {
+            1
+        } else if sz < 0x4000 {
+            2
+        } else if sz < 0x200000 {
+            3
         } else {
-            Box::from([id as u8])
+            4
         }
+        + sz
+}
+
+impl KnownID {
+    #[allow(clippy::uninit_vec)]
+    pub fn as_biff_literal<T: Sized + zerocopy::IntoBytes + zerocopy::Immutable>(
+        &self,
+        v: &T,
+    ) -> Box<[u8]> {
+        let data_size = size_of::<T>();
+        let area_size = expected_biff_size(*self as u16, data_size);
+        let mut area = Box::<[u8]>::new_uninit_slice(area_size);
+
+        let mut idx = 0_usize;
+        if (*self as u16) > 0x00_7f {
+            area[idx..idx + 2].write_copy_of_slice((*self as u16).to_le_bytes().as_slice());
+            idx += 2;
+        } else {
+            area[idx].write(*self as u8);
+            idx += 1;
+        };
+
+        if data_size < 0x80 {
+            area[idx].write(data_size as u8);
+            idx += 1;
+        } else if data_size < 0x4000 {
+            area[idx..idx + 2]
+                .write_copy_of_slice([(data_size | 0x80) as u8, (data_size >> 7) as u8].as_slice());
+            idx += 2;
+        } else if data_size < 0x200000 {
+            area[idx..idx + 3].write_copy_of_slice(
+                [
+                    (data_size | 0x80) as u8,
+                    ((data_size >> 7) | 0x80) as u8,
+                    (data_size >> 14) as u8,
+                ]
+                .as_slice(),
+            );
+            idx += 3;
+        } else {
+            area[idx..idx + 3].write_copy_of_slice(
+                [
+                    (data_size | 0x80) as u8,
+                    ((data_size >> 7) | 0x80) as u8,
+                    ((data_size >> 14) | 0x80) as u8,
+                    ((data_size >> 21) & 0x7f) as u8,
+                ]
+                .as_slice(),
+            );
+            idx += 4;
+        };
+
+        area[idx..].write_copy_of_slice(v.as_bytes());
+
+        unsafe { area.assume_init() }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
+    use std::mem::transmute;
+
+    use crate::BiffHead;
+
+    use super::KnownID;
 
     #[test]
-    fn test_known_id() {
-        assert_eq!(BiffId::from(as_biff_id(0)), BiffId::BrtRowHdr);
-        // assert_eq!(as_biff_id(33), BiffId::BrtPCRRecord.into());
+    fn test_known_ids() {
+        let a = KnownID::BrtACBegin.as_biff_literal(&12_u8);
+        println!("{:?}", a);
+
+        let x = BiffHead::from_data(&a).expect("Malformed BiffHead");
+        println!("{:?}", x);
+
+        let id: KnownID = unsafe { transmute(x.id) };
+        println!("{:?}", id);
     }
 }

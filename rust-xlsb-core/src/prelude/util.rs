@@ -3,6 +3,7 @@ use std::{
     borrow::Cow,
     hash::Hash,
     io::{ErrorKind, Read, Seek, Write},
+    ops::Deref,
 };
 
 use bitflags::{Bits, Flags};
@@ -15,10 +16,18 @@ use zerocopy::{FromBytes, Immutable, IntoBytes};
 pub(crate) type Result<T> = std::result::Result<T, DekuError>;
 
 #[derive(DekuRead, DekuWrite, Debug, Default, Clone, Copy)]
-pub(crate) struct Xnum(f64);
+pub struct Xnum(f64);
+
+impl Deref for Xnum {
+    type Target = f64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Xnum {
-    pub(crate) const fn to_le_bytes(self) -> [u8; 8] {
+    pub const fn to_le_bytes(self) -> [u8; 8] {
         self.0.to_le_bytes()
     }
 }
@@ -107,6 +116,18 @@ pub(crate) fn utf16_write<W: Write + Seek>(field: &str, writer: &mut Writer<W>) 
         writer.write_bytes(b)?;
     }
     Ok(())
+}
+
+pub(crate) fn nullable_utf16_write<W: Write + Seek, S: Deref<Target = str>>(
+    field: Option<S>,
+    writer: &mut Writer<W>,
+) -> Result<()> {
+    if let Some(field) = field.as_deref() {
+        utf16_write(field, writer)
+    } else {
+        writer.write_bytes(&0xff_ff_ff_ff_u32.to_le_bytes())?;
+        Ok(())
+    }
 }
 
 pub(crate) trait DekuBitFlag: Sized + Default + Hash + Flags {}
