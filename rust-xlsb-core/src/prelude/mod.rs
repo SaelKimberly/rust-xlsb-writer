@@ -15,7 +15,10 @@ use super::{Checked, Unchecked};
 
 pub use collection::BrtBeginColInfos;
 pub use record::BrtColor;
-pub use structure::{ACProductVersion, Blxf, Bold, BorderType, FontFlags};
+pub use structure::{
+ACProductVersion, Blxf, Bold, BorderType, CodeName, FontFlags, XlNullableWideString,
+    XlWideString,
+};
 
 pub use scope::{
     BrtBeginSheet, BrtBeginSheetData, BrtBeginSingleCells, BrtBeginSlicerCacheIDs,
@@ -27,7 +30,7 @@ pub use scope::{
 
 #[cfg(test)]
 mod tests {
-    use super::check::Checked;
+    use crate::Checked;
     use deku::{DekuContainerRead, DekuContainerWrite};
     use std::hash::{Hash, Hasher};
 
@@ -100,6 +103,9 @@ mod tests {
     test_biff_export!(structure, FontFlags = 2);
 
     test_biff_export!(structure, Xnum = 8);
+test_biff_export!(structure, CodeName = 4);
+    test_biff_export!(structure, XlWideString = 4);
+    test_biff_export!(structure, XlNullableWideString = 4);
 
     test_biff_export!(record, BrtColor = 8);
 

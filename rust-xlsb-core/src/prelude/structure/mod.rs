@@ -2,10 +2,11 @@ mod ac_product_version;
 mod blxf;
 mod bold;
 mod font_flags;
+mod xl_wide_string;
 mod xnum;
-
 pub use ac_product_version::ACProductVersion;
 pub use blxf::{Blxf, BorderType};
 pub use bold::Bold;
 pub use font_flags::FontFlags;
+pub use xl_wide_string::{CodeName, XlNullableWideString, XlStringExt, XlWideString};
 pub use xnum::Xnum;
