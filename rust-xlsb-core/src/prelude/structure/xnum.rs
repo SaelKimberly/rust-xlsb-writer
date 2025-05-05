@@ -14,12 +14,6 @@ impl Deref for Xnum {
     }
 }
 
-impl Xnum {
-    pub const fn to_le_bytes(self) -> [u8; 8] {
-        self.0.to_le_bytes()
-    }
-}
-
 impl From<f64> for Xnum {
     fn from(value: f64) -> Self {
         Self(value)
