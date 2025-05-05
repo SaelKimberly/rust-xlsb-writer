@@ -1,19 +1,34 @@
-use crate::err::{Error, Result};
+use crate::{
+    KnownID,
+    err::{Error, Result},
+};
 use std::{
-    intrinsics::{likely, offset, unlikely},
-    io::{Read, Write},
+    intrinsics::{cold_path, unlikely},
+    io::{BufRead, Write},
     ops::Deref,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BiffHead {
-    pub id: u16,
-    pub size: u32,
+    id: u16,
+    size: u32,
 }
 
 impl BiffHead {
     const MAX_ID: u16 = 0x7F_FF;
     const MAX_SIZE: u32 = 0x0F_FF_FF_FF;
+
+    pub const fn id(&self) -> u16 {
+        self.id
+    }
+
+    pub fn known_id(&self) -> Option<KnownID> {
+        KnownID::try_from(self.id).ok()
+    }
+
+    pub const fn size(&self) -> u32 {
+        self.size
+    }
 
     pub const fn new(id: u16, size: u32) -> Result<Self> {
         if unlikely(id.swap_bytes() > Self::MAX_ID) {
@@ -28,87 +43,141 @@ impl BiffHead {
         }
     }
 
-    pub fn from_data<T: Deref<Target = [u8]>>(data: &T) -> Result<BiffHead> {
+    pub fn from_data<T: Deref<Target = [u8]>>(data: T) -> Result<(usize, BiffHead)> {
         BiffHead::const_from_data(data.deref())
     }
 
-    pub const fn const_from_data(data: &[u8]) -> Result<BiffHead> {
-        let mut p: *const u8 = data.as_ptr();
-        if unlikely(data.len() < 2) {
-            Err(Error::Incomplete(data.len(), 2))
+    pub fn consume_data<T: Deref<Target = [u8]>>(data: T) -> Result<BiffHead> {
+        let buf = data.deref();
+        let (consumed, record) = BiffHead::const_from_data(buf)?;
+        if consumed < buf.len() {
+            Err(Error::ConsumeFailed(buf.len() - consumed))
+        } else {
+            Ok(record)
+        }
+    }
+
+    pub const fn const_from_data(data: &[u8]) -> Result<(usize, BiffHead)> {
+        let len = data.len();
+
+        if unlikely(len < 2) {
+            Err(Error::Incomplete(len, 2))
         } else {
             unsafe {
-                let id = if *p > 0x7f {
-                    let id = *(p as *const u16);
-                    p = offset(p, 2_isize);
-                    if data.len() == 2 {
-                        return Err(Error::Incomplete(2, 3));
+                let (id, mut p) = match [data[0], data[1]] {
+                    [id @ 0x00..0x80, sz @ 0x00..0x80] => {
+                        return Ok((
+                            2,
+                            BiffHead {
+                                id: id as u16,
+                                size: sz as u32,
+                            },
+                        ));
                     }
-                    id
-                } else {
-                    let id = *p as u16;
-                    p = offset(p, 1_isize);
-                    id
+                    [id @ 0x00..0x80, _] => {
+                        if unlikely(len == 2) {
+                            return Err(Error::Incomplete(2, 3));
+                        }
+                        (id as u16, data.as_ptr().offset(1))
+                    }
+                    id @ [0x80..=u8::MAX, 0x00..0x80] => {
+                        if unlikely(len == 2) {
+                            return Err(Error::Incomplete(2, 3));
+                        }
+                        (u16::from_le_bytes(id), data.as_ptr().offset(2))
+                    }
+                    id => {
+                        cold_path();
+                        return Err(Error::TooLargeRecordId(
+                            u16::from_le_bytes(id),
+                            Self::MAX_ID,
+                        ));
+                    }
                 };
-                let sz = {
+
+                let size = {
                     let mut sz = *p as u32;
 
                     if *p > 0x7f {
                         if data.len() == 3 {
                             return Err(Error::Incomplete(3, 4));
                         }
-                        p = offset(p, 1_isize);
+                        p = p.offset(1);
                         sz ^= ((!*p) as u32) << 7;
 
                         if *p > 0x7f {
                             if data.len() == 4 {
                                 return Err(Error::Incomplete(4, 5));
                             }
-                            p = offset(p, 1_isize);
+                            p = p.offset(1);
                             sz ^= ((!*p) as u32) << 14;
 
-                            if *p > 0x7f {
+                            if unlikely(*p > 0x7f) {
                                 if data.len() == 5 {
                                     return Err(Error::Incomplete(5, 6));
                                 }
-                                p = offset(p, 1_isize);
+                                p = p.offset(1);
                                 sz ^= ((!*p) as u32) << 21;
+
+                                if unlikely(*p > 0x7f) {
+                                    return Err(Error::TooLargeRecordBody(
+                                        sz as usize,
+                                        Self::MAX_SIZE as usize,
+                                    ));
+                                }
                             }
                         }
                     }
 
                     sz
                 };
-                BiffHead::new(id, sz)
+
+                Ok((p.offset_from_unsigned(data.as_ptr()) + 1, Self { id, size }))
             }
         }
     }
 
-    fn push_raw_size(&self, data: &mut Vec<u8>) -> Result<usize> {
-        let expected = match self.size {
-            n if likely(n < 0x80) => 1,
-            n if n < 0x4000 => 2,
-            n if unlikely(n < 0x200000) => 3,
-            n if unlikely(n < 0x10000000) => 4,
-            too_large => {
-                return Err(Error::TooLargeRecordBody(
-                    too_large as usize,
-                    Self::MAX_SIZE as usize,
-                ));
+    fn push_raw_size(&self, out: &mut Vec<u8>) -> Result<usize> {
+        let pushed = match self.size {
+            0..0x80 => {
+                out.push(
+                    // one byte
+                    self.size as u8,
+                );
+                1
+            }
+            0x80..0x4000 => {
+                out.extend_from_slice(&[
+                    // two bytes
+                    (self.size & 0x0000_007f | 0x00_80) as u8,
+                    ((self.size >> 0x07) & 0x0000_007f) as u8,
+                ]);
+                2
+            }
+            0x4000..0x200000 => {
+                cold_path();
+                out.extend_from_slice(&[
+                    // three bytes
+                    (self.size & 0x0000_007f | 0x00_80) as u8,
+                    ((self.size >> 0x07) & 0x7f | 0x80) as u8,
+                    ((self.size >> 0x0e) & 0x0000_007f) as u8,
+                ]);
+                3
+            }
+            _ => {
+                cold_path();
+                out.extend_from_slice(&[
+                    // four bytes
+                    (self.size & 0x0000_007f | 0x00_80) as u8,
+                    ((self.size >> 0x07) & 0x7f | 0x80) as u8,
+                    ((self.size >> 0x0e) & 0x7f | 0x80) as u8,
+                    ((self.size >> 0x15) & 0x0000_007f) as u8,
+                ]);
+                4
             }
         };
 
-        let mut i = 0_usize;
-        loop {
-            if i == (expected - 1) {
-                data.push((self.size >> (7 * i) & 0x7f) as u8);
-                break;
-            } else {
-                data.push((self.size >> (7 * i) & 0x7f) as u8 | 0x80);
-                i += 1;
-            }
-        }
-        Ok(i)
+        Ok(pushed)
     }
 
     /// Biff ID don't need special encoding, because it's value not used in computing.
@@ -117,59 +186,32 @@ impl BiffHead {
     ///
     /// This function will return an error if `data` is empty, or have not enough space.
     fn push_raw_id(&self, data: &mut Vec<u8>) -> Result<usize> {
-        if self.id > 0x7f {
-            if unlikely(self.id.swap_bytes() > Self::MAX_ID) {
-                Err(Error::TooLargeRecordId(self.id.swap_bytes(), Self::MAX_ID))
-            } else {
+        let pushed = match self.id {
+            0x00..0x80 => {
+                data.push((self.id & 0x7f) as u8);
+                1
+            }
+            _ => {
                 let buf = self.id.to_le_bytes();
                 data.extend_from_slice(&buf);
-                Ok(2)
+                2
             }
-        } else {
-            data.push((self.id & 0x7f) as u8);
-            Ok(1)
-        }
+        };
+        Ok(pushed)
     }
 
     pub fn write_to(&self, writer: &mut dyn Write) -> Result<usize> {
         let mut buf = Vec::with_capacity(6);
 
-        let result = self.push_raw_id(&mut buf)? + self.push_raw_size(&mut buf)?;
+        let pushed = self.push_raw_id(&mut buf)? + self.push_raw_size(&mut buf)?;
 
-        Ok(writer.write(&buf[..result])?)
+        writer.write(&buf[..pushed]).map_err(Error::BiffWriteFailed)
     }
 
-    pub fn read_from(reader: &mut dyn Read) -> Result<Self> {
-        let mut id_buf = [0u8; 2];
-        let mut sz_buf = [0u8; 1];
-
-        reader.read_exact(&mut id_buf)?;
-
-        let id = if likely(id_buf[0] < 0x80) {
-            sz_buf[0] = id_buf[1];
-            id_buf[0] as u16
-        } else {
-            reader.read_exact(&mut sz_buf)?;
-            u16::from_le_bytes(id_buf)
-        };
-
-        let mut size: u32 = sz_buf[0] as u32;
-
-        if sz_buf[0] > 0x80 {
-            reader.read_exact(&mut sz_buf)?;
-            size ^= (!sz_buf[0] as u32) << 7;
-
-            if sz_buf[0] > 0x80 {
-                reader.read_exact(&mut sz_buf)?;
-                size ^= (!sz_buf[0] as u32) << 14;
-
-                if sz_buf[0] > 0x80 {
-                    reader.read_exact(&mut sz_buf)?;
-                    size ^= (!sz_buf[0] as u32) << 21;
-                }
-            }
-        }
-
-        Ok(BiffHead { id, size })
+    pub fn read_from(reader: &mut dyn BufRead) -> crate::Result<Self> {
+        let buf = reader.fill_buf().map_err(Error::InputReaderError)?;
+        let (consumed, record) = Self::const_from_data(buf)?;
+        reader.consume(consumed);
+        Ok(record)
     }
 }
