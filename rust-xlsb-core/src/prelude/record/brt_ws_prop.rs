@@ -1,6 +1,9 @@
 use deku::{DekuRead, DekuWrite};
 
 use super::BrtColor;
+use crate::Unchecked;
+use crate::assign_id;
+use crate::prelude::CodeName;
 
 #[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash)]
 pub struct BrtWsProp {
@@ -39,4 +42,11 @@ pub struct BrtWsProp {
     brtcolorTab: BrtColor,
 
     rwSync: u32, // TODO: RwNullable
+    colSync: u32,
+
+    strName: CodeName,
 }
+
+impl Unchecked for BrtWsProp {}
+
+assign_id!(BrtWsProp);
