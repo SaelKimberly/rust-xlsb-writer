@@ -1,11 +1,11 @@
 #![allow(non_snake_case, clippy::upper_case_acronyms)]
-pub mod check;
+
 pub mod collection;
 pub mod record;
 pub mod scope;
 pub mod structure;
 
-pub use check::{Checked, Unchecked};
+use super::{Checked, Unchecked};
 // #[allow(dead_code)]
 // pub(crate) mod util;
 // #[allow(unused_imports)]
