@@ -5,7 +5,7 @@ use crate::Unchecked;
 use crate::assign_id;
 use crate::prelude::CodeName;
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
 pub struct BrtWsProp {
     #[deku(bits = 1, pad_bits_after = "2")]
     pub fShowAutoBreaks: bool,
