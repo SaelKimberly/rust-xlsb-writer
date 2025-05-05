@@ -22,12 +22,13 @@ crate-type = ["rlib"]
 # [x] for reading and writing zip files
 zip = { version = "^2.6" }
 # [x] for BIFF record content serialization and deserialization
-deku = { version = "^0.18" }
+deku = { version = "^0.19" }
 # [x] for fast and safe zero-copy conversions
 zerocopy = { version = "^0.8" }
 # [x] for enum values in debugging
-strum = { version = "0.27.1" }
-strum_macros = { version = "0.27.1" }
+num_enum = { version = "^0.7" }
+strum = { version = "^0.27" }
+strum_macros = { version = "^0.27" }
 # [x] for error handling
 thiserror = { version = "^2.0" }
 # [x] for fast allocations
