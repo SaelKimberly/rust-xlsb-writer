@@ -4,14 +4,16 @@
 #![feature(core_intrinsics)]
 #![feature(str_from_utf16_endian)]
 
+mod biff;
 mod biff_head;
 mod biff_id;
 mod check;
 mod err;
 pub mod prelude;
 
+pub use biff::BiffWrite;
 pub use biff_head::BiffHead;
-pub use biff_id::KnownID;
+pub use biff_id::{KnownID, RawBiffLiteral};
 pub use check::{Checked, CheckedBiff, Unchecked};
 pub use err::{Error, Result};
 
