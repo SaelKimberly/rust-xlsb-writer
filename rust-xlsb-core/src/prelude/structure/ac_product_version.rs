@@ -1,6 +1,6 @@
 use deku::{DekuRead, DekuWrite};
 
-use crate::prelude::check::Unchecked;
+use crate::prelude::Unchecked;
 
 #[derive(Debug, DekuRead, DekuWrite, Hash, PartialEq)]
 /// `2.5.1`
