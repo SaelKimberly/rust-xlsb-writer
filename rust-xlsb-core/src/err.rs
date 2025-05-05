@@ -13,9 +13,15 @@ pub enum Error {
     #[error("Output buffer is empty: expected at least {0} bytes")]
     EmptyOutputBuffer(usize),
     #[error("Input stream finished early: {0}")]
-    InputReaderError(#[from] std::io::Error),
+    InputReaderError(std::io::Error),
     #[error("Input incomplete ({0} of at least {1})")]
     Incomplete(usize, usize),
+    #[error("Input buffer too large: {0} bytes left not consumed")]
+    ConsumeFailed(usize),
+    #[error("Failed to write BIFF record: {0}")]
+    BiffWriteFailed(std::io::Error),
+    #[error("BIFF record fail validation: {0}")]
+    ValidationError(String),
 }
 
 pub type Result<T> = std::result::Result<T, self::Error>;
