@@ -1,4 +1,7 @@
+use deku::DekuContainerWrite;
 use strum_macros::{Display as EnumDisplay, EnumIter};
+
+use crate::{CheckedBiff, Error, Result, Unchecked, biff::BiffWrite};
 
 const fn as_biff_id(id: u16) -> u16 {
     if id > 0x00_7f {
@@ -10,7 +13,18 @@ const fn as_biff_id(id: u16) -> u16 {
 
 #[repr(u16)]
 #[allow(non_camel_case_types)]
-#[derive(PartialEq, Debug, Clone, Copy, EnumIter, EnumDisplay, Hash, Eq)]
+#[derive(
+    PartialEq,
+    Debug,
+    Clone,
+    Copy,
+    EnumIter,
+    EnumDisplay,
+    Hash,
+    Eq,
+    num_enum::TryFromPrimitive,
+    num_enum::IntoPrimitive,
+)]
 pub enum KnownID {
     BrtRowHdr = as_biff_id(0),
     BrtCellBlank = as_biff_id(1),
@@ -889,79 +903,211 @@ const fn expected_biff_size(id: u16, sz: usize) -> usize {
         + sz
 }
 
-impl KnownID {
-    #[allow(clippy::uninit_vec)]
-    pub fn as_biff_literal<T: Sized + zerocopy::IntoBytes + zerocopy::Immutable>(
-        &self,
-        v: &T,
-    ) -> Box<[u8]> {
-        let data_size = size_of::<T>();
-        let area_size = expected_biff_size(*self as u16, data_size);
+#[derive(Debug, Clone)]
+pub struct RawBiffLiteral {
+    id: KnownID,
+    data: Option<Box<[u8]>>,
+}
+impl Unchecked for RawBiffLiteral {}
+impl CheckedBiff for RawBiffLiteral {
+    fn id(&self) -> KnownID {
+        self.id
+    }
+}
+
+impl RawBiffLiteral {
+    pub fn with_data(&self, data: Vec<u8>) -> Self {
+        RawBiffLiteral {
+            id: self.id,
+            data: Some(data.into_boxed_slice()),
+        }
+    }
+
+    pub fn packed(&self) -> Result<Box<[u8]>> {
+        let data_size = self.data.as_ref().map_or(0, |d| d.len());
+        // println!("Data Size: {}", data_size);
+        let area_size = expected_biff_size(self.id as u16, data_size);
         let mut area = Box::<[u8]>::new_uninit_slice(area_size);
 
         let mut idx = 0_usize;
-        if (*self as u16) > 0x00_7f {
-            area[idx..idx + 2].write_copy_of_slice((*self as u16).to_le_bytes().as_slice());
-            idx += 2;
-        } else {
-            area[idx].write(*self as u8);
-            idx += 1;
-        };
 
-        if data_size < 0x80 {
-            area[idx].write(data_size as u8);
-            idx += 1;
-        } else if data_size < 0x4000 {
-            area[idx..idx + 2]
-                .write_copy_of_slice([(data_size | 0x80) as u8, (data_size >> 7) as u8].as_slice());
-            idx += 2;
-        } else if data_size < 0x200000 {
-            area[idx..idx + 3].write_copy_of_slice(
-                [
-                    (data_size | 0x80) as u8,
-                    ((data_size >> 7) | 0x80) as u8,
-                    (data_size >> 14) as u8,
-                ]
-                .as_slice(),
-            );
-            idx += 3;
-        } else {
-            area[idx..idx + 3].write_copy_of_slice(
-                [
-                    (data_size | 0x80) as u8,
-                    ((data_size >> 7) | 0x80) as u8,
-                    ((data_size >> 14) | 0x80) as u8,
-                    ((data_size >> 21) & 0x7f) as u8,
-                ]
-                .as_slice(),
-            );
-            idx += 4;
-        };
+        match self.id as u16 {
+            0..0x80 => {
+                area[idx].write(self.id as u8);
+                idx += 1;
+            }
+            _ => {
+                area[idx..idx + 2].write_copy_of_slice(&(self.id as u16).to_le_bytes());
+                idx += 2;
+            }
+        }
 
-        area[idx..].write_copy_of_slice(v.as_bytes());
+        const U1: usize = 1 << 7;
+        const U2: usize = 1 << 14;
+        const U3: usize = 1 << 21;
+        const U4: usize = 1 << 28;
 
-        unsafe { area.assume_init() }
+        match data_size {
+            0..U1 => {
+                area[idx].write(data_size as u8);
+                idx += 1;
+            }
+            U1..U2 => {
+                area[idx..idx + 2]
+                    .write_copy_of_slice(&[(data_size | 0x80) as u8, (data_size >> 7) as u8]);
+                idx += 2;
+            }
+            U2..U3 => {
+                area[idx..idx + 3].write_copy_of_slice(&[
+                    (data_size | 0x00_00_00_80) as u8,
+                    ((data_size >> 0x7) | 0x80) as u8,
+                    ((data_size >> 0xe) & 0x7f) as u8,
+                ]);
+                idx += 3;
+            }
+            U3..U4 => {
+                area[idx..idx + 3].write_copy_of_slice(
+                    [
+                        (data_size | 0x80) as u8,
+                        ((data_size >> 7) | 0x80) as u8,
+                        ((data_size >> 14) | 0x80) as u8,
+                        ((data_size >> 21) & 0x7f) as u8,
+                    ]
+                    .as_slice(),
+                );
+                idx += 4;
+            }
+            _ => {
+                return Err(Error::TooLargeRecordBody(U4, data_size));
+            }
+        }
+
+        if let Some(data) = self.data.as_deref() {
+            area[idx..].write_copy_of_slice(data);
+        }
+
+        Ok(unsafe { area.assume_init() })
+    }
+}
+
+impl KnownID {
+    pub fn as_biff_collection_begin(&self, item_count: u32) -> RawBiffLiteral {
+        self.as_raw_literal(&item_count)
+    }
+
+    pub fn as_biff_empty(&self) -> RawBiffLiteral {
+        RawBiffLiteral {
+            id: *self,
+            data: None,
+        }
+    }
+
+    pub fn as_raw_literal<T: zerocopy::IntoBytes + zerocopy::Immutable>(
+        &self,
+        v: &T,
+    ) -> RawBiffLiteral {
+        RawBiffLiteral {
+            id: *self,
+            data: {
+                if size_of::<T>() == 0 {
+                    None
+                } else {
+                    Some(Box::from(v.as_bytes()))
+                }
+            },
+        }
+    }
+
+    pub fn try_deku_literal<T: DekuContainerWrite + std::fmt::Debug>(
+        &self,
+        v: &T,
+    ) -> Result<RawBiffLiteral> {
+        let data = v
+            .to_bytes()
+            .map_err(|e| Error::ValidationError(format!("Failed to serialize: {v:?} ({e})")))?
+            .into_boxed_slice();
+        Ok(RawBiffLiteral {
+            id: *self,
+            data: if data.is_empty() { None } else { Some(data) },
+        })
+    }
+}
+
+impl Unchecked for KnownID {}
+impl CheckedBiff for KnownID {
+    fn id(&self) -> KnownID {
+        *self
+    }
+}
+
+impl BiffWrite for RawBiffLiteral {
+    fn biff_push_to(&self, out: &mut Vec<u8>) -> Result<usize> {
+        let packed = self.packed()?;
+        out.extend_from_slice(&packed);
+        Ok(packed.len())
+    }
+
+    fn biff_push_to_writer(&self, out: &mut dyn std::io::Write) -> Result<usize> {
+        let packed = self.packed()?;
+        out.write(&packed).map_err(Error::BiffWriteFailed)
+    }
+}
+
+impl BiffWrite for KnownID {
+    fn biff_push_to(&self, out: &mut Vec<u8>) -> Result<usize> {
+        let buf = self.as_biff_empty();
+        buf.biff_push_to(out)
+    }
+
+    fn biff_push_to_writer(&self, out: &mut dyn std::io::Write) -> Result<usize> {
+        let buf = self.as_biff_empty();
+        buf.biff_push_to_writer(out)
     }
 }
 
 #[cfg(test)]
 mod tests {
 
-    use std::mem::transmute;
-
-    use crate::BiffHead;
+    use crate::{BiffHead, Result, biff::BiffWrite};
 
     use super::KnownID;
 
+    fn compose_biff(biffs: Vec<Box<dyn BiffWrite>>) -> Result<Box<[u8]>> {
+        let mut out = Vec::<u8>::with_capacity(8192);
+        for biff in biffs {
+            biff.biff_push_to(&mut out)?;
+        }
+        Ok(out.into_boxed_slice())
+    }
+
     #[test]
     fn test_known_ids() {
-        let a = KnownID::BrtACBegin.as_biff_literal(&12_u8);
-        println!("{:?}", a);
+        let a = KnownID::BrtACBegin.as_raw_literal(&12_u32);
+        println!("Literal: {:?}", a);
 
-        let x = BiffHead::from_data(&a).expect("Malformed BiffHead");
-        println!("{:?}", x);
+        let c = KnownID::BrtBeginFonts.as_biff_collection_begin(4);
+        println!("Begin collection: {:?}", c);
 
-        let id: KnownID = unsafe { transmute(x.id) };
+        let e = KnownID::BrtEndSheet.as_biff_empty();
+        println!("Empty: {:?}", e);
+
+        let x = BiffHead::consume_data(e.packed().unwrap()).expect("Malformed BiffHead");
+        println!("From empty: {:?}", x);
+        let id = x.known_id().expect("Should be ok");
         println!("{:?}", id);
+
+        let (sz, x) = BiffHead::from_data(a.packed().unwrap()).expect("Malformed BiffHead");
+        println!("{:?}", x);
+        assert_eq!(sz, 2);
+
+        let id = x.known_id().expect("Should be ok");
+        println!("{:?}", id);
+
+        let data = compose_biff(vec![
+            Box::new(KnownID::BrtACBegin.as_biff_collection_begin(5)),
+            Box::new(KnownID::BrtACEnd),
+        ])
+        .expect("Should be ok");
+        println!("{:?}", data);
     }
 }
