@@ -11,7 +11,7 @@ rust-version = "1.88.0"
 homepage = "https://github.com/SaelKimberly/rust-xlsb-writer"
 documentation = "https://github.com/SaelKimberly/rust-xlsb-writer"
 repository = "https://github.com/SaelKimberly/rust-xlsb-writer"
-authors = ["SaelKimberly"]
+authors = ["SaelKimberly <sael.kimberly@yandex.ru>"]
 license = "Apache-2.0"
 readme = "README.md"
 
