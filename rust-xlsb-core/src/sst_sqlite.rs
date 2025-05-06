@@ -115,7 +115,7 @@ impl SSTHolder {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
     /// # use rust_xlsb_core::SSTHolder;
     ///
     /// let holder = SSTHolder::create_in_memory().unwrap();
