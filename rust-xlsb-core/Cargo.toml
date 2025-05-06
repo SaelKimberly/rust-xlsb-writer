@@ -36,7 +36,9 @@ bumpalo = { version = "^3.17" }
 bumpalo-herd = { version = "^0.1" }
 # [x] for test generators
 concat-idents = { version = "^1.1" }
-
+# [x] for shared strings
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+rusqlite = { version = "^0.35", features = ["bundled", "rusqlite-macros"] }
 
 [dev-dependencies]
 criterion = "^0.5"
