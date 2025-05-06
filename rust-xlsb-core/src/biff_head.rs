@@ -31,7 +31,7 @@ impl BiffHead {
     }
 
     pub const fn new(id: u16, size: u32) -> Result<Self> {
-        if unlikely(id.swap_bytes() > Self::MAX_ID) {
+        if unlikely(id & 0x80_00 != 0) {
             Err(Error::TooLargeRecordId(id.swap_bytes(), Self::MAX_ID))
         } else if unlikely(size > Self::MAX_SIZE) {
             Err(Error::TooLargeRecordBody(
