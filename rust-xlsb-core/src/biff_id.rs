@@ -891,20 +891,6 @@ pub enum KnownID {
     BrtPivotCacheAutoRefresh = as_biff_id(5132),
 }
 
-const fn expected_biff_size(id: u16, sz: usize) -> usize {
-    (if id > 0x00_7f { 2 } else { 1 })
-        + if sz < 0x80 {
-            1
-        } else if sz < 0x4000 {
-            2
-        } else if sz < 0x200000 {
-            3
-        } else {
-            4
-        }
-        + sz
-}
-
 #[derive(Debug, Clone)]
 pub struct RawBiffLiteral {
     id: KnownID,
