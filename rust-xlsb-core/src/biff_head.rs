@@ -137,75 +137,64 @@ impl BiffHead {
         }
     }
 
-    fn push_raw_size(&self, out: &mut Vec<u8>) -> Result<usize> {
-        let pushed = match self.size {
-            0..0x80 => {
-                out.push(
-                    // one byte
-                    self.size as u8,
-                );
-                1
-            }
-            0x80..0x4000 => {
-                out.extend_from_slice(&[
-                    // two bytes
-                    (self.size & 0x0000_007f | 0x00_80) as u8,
-                    ((self.size >> 0x07) & 0x0000_007f) as u8,
-                ]);
-                2
-            }
-            0x4000..0x200000 => {
-                cold_path();
-                out.extend_from_slice(&[
-                    // three bytes
-                    (self.size & 0x0000_007f | 0x00_80) as u8,
-                    ((self.size >> 0x07) & 0x7f | 0x80) as u8,
-                    ((self.size >> 0x0e) & 0x0000_007f) as u8,
-                ]);
-                3
-            }
-            _ => {
-                cold_path();
-                out.extend_from_slice(&[
-                    // four bytes
-                    (self.size & 0x0000_007f | 0x00_80) as u8,
-                    ((self.size >> 0x07) & 0x7f | 0x80) as u8,
-                    ((self.size >> 0x0e) & 0x7f | 0x80) as u8,
-                    ((self.size >> 0x15) & 0x0000_007f) as u8,
-                ]);
-                4
-            }
-        };
+    pub const fn as_raw_data(&self) -> ([u8; 6], usize) {
+        let mut out = [0u8; 6];
 
-        Ok(pushed)
-    }
-
-    /// Biff ID don't need special encoding, because it's value not used in computing.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if `data` is empty, or have not enough space.
-    fn push_raw_id(&self, data: &mut Vec<u8>) -> Result<usize> {
-        let pushed = match self.id {
+        let off: usize = match self.id {
             0x00..0x80 => {
-                data.push((self.id & 0x7f) as u8);
+                out[0] = (self.id & 0x7f) as u8;
                 1
             }
             _ => {
                 let buf = self.id.to_le_bytes();
-                data.extend_from_slice(&buf);
+                out[0] = buf[0];
+                out[1] = buf[1];
                 2
             }
         };
-        Ok(pushed)
+        let end: usize = off
+            + match self.size {
+            0..0x80 => {
+                    out[off] = {
+                    // one byte
+                        self.size as u8
+                    };
+                1
+            }
+            0x80..0x4000 => {
+                    out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
+                    out[off + 1] = ((self.size >> 0x07) & 0x0000_007f) as u8;
+                2
+            }
+            0x4000..0x200000 => {
+                cold_path();
+                    out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
+                    out[off + 1] = ((self.size >> 0x07) & 0x7f | 0x80) as u8;
+                    out[off + 2] = ((self.size >> 0x0e) & 0x0000_007f) as u8;
+                3
+            }
+            _ => {
+                cold_path();
+                    out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
+                    out[off + 1] = ((self.size >> 0x07) & 0x7f | 0x80) as u8;
+                    out[off + 2] = ((self.size >> 0x0e) & 0x7f | 0x80) as u8;
+                    out[off + 3] = ((self.size >> 0x15) & 0x0000_007f) as u8;
+                4
+            }
+        };
+
+        (out, end)
+    }
+
+    pub fn push_to(&self, out: &mut Vec<u8>) -> Result<usize> {
+        let (raw, len) = self.as_raw_data();
+        out.extend_from_slice(&raw[..len]);
+        Ok(len)
     }
 
     pub fn write_to(&self, writer: &mut dyn Write) -> Result<usize> {
-        let mut buf = Vec::with_capacity(6);
-
-        let pushed = self.push_raw_id(&mut buf)? + self.push_raw_size(&mut buf)?;
-
-        writer.write(&buf[..pushed]).map_err(Error::BiffWriteFailed)
+        let (raw, len) = self.as_raw_data();
+        writer.write(&raw[..len]).map_err(Error::BiffWriteFailed)
     }
 
     pub fn read_from(reader: &mut dyn BufRead) -> crate::Result<Self> {
