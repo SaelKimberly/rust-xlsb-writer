@@ -1,7 +1,9 @@
+use std::ops::Deref;
+
 use deku::DekuContainerWrite;
 use strum_macros::{Display as EnumDisplay, EnumIter};
 
-use crate::{CheckedBiff, Error, Result, Unchecked, biff::BiffWrite};
+use crate::{BiffHead, CheckedBiff, Error, Result, Unchecked, biff::BiffWrite};
 
 const fn as_biff_id(id: u16) -> u16 {
     if id > 0x00_7f {
@@ -923,67 +925,19 @@ impl RawBiffLiteral {
         }
     }
 
+    #[inline]
+    pub fn as_header<S: Deref<Target = [u8]>>(&self, data: S) -> Result<BiffHead> {
+        BiffHead::new(self.id as u16, data.len() as u32)
+    }
+
     pub fn packed(&self) -> Result<Box<[u8]>> {
-        let data_size = self.data.as_ref().map_or(0, |d| d.len());
-        // println!("Data Size: {}", data_size);
-        let area_size = expected_biff_size(self.id as u16, data_size);
-        let mut area = Box::<[u8]>::new_uninit_slice(area_size);
+        let header = self.as_header(self.data.as_deref().unwrap_or_default())?;
+        let (raw, len) = header.as_raw_data();
 
-        let mut idx = 0_usize;
-
-        match self.id as u16 {
-            0..0x80 => {
-                area[idx].write(self.id as u8);
-                idx += 1;
-            }
-            _ => {
-                area[idx..idx + 2].write_copy_of_slice(&(self.id as u16).to_le_bytes());
-                idx += 2;
-            }
-        }
-
-        const U1: usize = 1 << 7;
-        const U2: usize = 1 << 14;
-        const U3: usize = 1 << 21;
-        const U4: usize = 1 << 28;
-
-        match data_size {
-            0..U1 => {
-                area[idx].write(data_size as u8);
-                idx += 1;
-            }
-            U1..U2 => {
-                area[idx..idx + 2]
-                    .write_copy_of_slice(&[(data_size | 0x80) as u8, (data_size >> 7) as u8]);
-                idx += 2;
-            }
-            U2..U3 => {
-                area[idx..idx + 3].write_copy_of_slice(&[
-                    (data_size | 0x00_00_00_80) as u8,
-                    ((data_size >> 0x7) | 0x80) as u8,
-                    ((data_size >> 0xe) & 0x7f) as u8,
-                ]);
-                idx += 3;
-            }
-            U3..U4 => {
-                area[idx..idx + 3].write_copy_of_slice(
-                    [
-                        (data_size | 0x80) as u8,
-                        ((data_size >> 7) | 0x80) as u8,
-                        ((data_size >> 14) | 0x80) as u8,
-                        ((data_size >> 21) & 0x7f) as u8,
-                    ]
-                    .as_slice(),
-                );
-                idx += 4;
-            }
-            _ => {
-                return Err(Error::TooLargeRecordBody(U4, data_size));
-            }
-        }
-
+        let mut area = Box::<[u8]>::new_uninit_slice(len + header.size() as usize);
+        area[..len].write_copy_of_slice(&raw[..len]);
         if let Some(data) = self.data.as_deref() {
-            area[idx..].write_copy_of_slice(data);
+            area[len..].write_copy_of_slice(data);
         }
 
         Ok(unsafe { area.assume_init() })
