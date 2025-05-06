@@ -918,10 +918,10 @@ impl CheckedBiff for RawBiffLiteral {
 }
 
 impl RawBiffLiteral {
-    pub fn with_data(&self, data: Vec<u8>) -> Self {
+    pub fn with_data(&self, data: Box<[u8]>) -> Self {
         RawBiffLiteral {
             id: self.id,
-            data: Some(data.into_boxed_slice()),
+            data: Some(data),
         }
     }
 
