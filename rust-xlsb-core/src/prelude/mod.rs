@@ -16,8 +16,8 @@ use super::{Checked, Unchecked};
 pub use collection::BrtBeginColInfos;
 pub use record::{BrtColor, BrtWsProp, BrtXF};
 pub use structure::{
-    ACProductVersion, Blxf, Bold, BorderType, CodeName, FontFlags, XlNullableWideString,
-    XlWideString,
+    ACProductVersion, Blxf, Bold, BorderType, CodeName, FontFlags, SimpleRichStr,
+    XlNullableWideString, XlWideString,
 };
 
 pub use scope::{
@@ -106,6 +106,7 @@ mod tests {
     test_biff_export!(structure, CodeName = 4);
     test_biff_export!(structure, XlWideString = 4);
     test_biff_export!(structure, XlNullableWideString = 4);
+    test_biff_export!(structure, SimpleRichStr = 5);
 
     test_biff_export!(record, BrtColor = 8);
     test_biff_export!(record, BrtXF = 16);

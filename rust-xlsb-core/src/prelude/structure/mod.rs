@@ -8,5 +8,7 @@ pub use ac_product_version::ACProductVersion;
 pub use blxf::{Blxf, BorderType};
 pub use bold::Bold;
 pub use font_flags::FontFlags;
-pub use xl_wide_string::{CodeName, XlNullableWideString, XlStringExt, XlWideString};
+pub use xl_wide_string::{
+    CodeName, SimpleRichStr, XlNullableWideString, XlStringExt, XlWideString,
+};
 pub use xnum::Xnum;

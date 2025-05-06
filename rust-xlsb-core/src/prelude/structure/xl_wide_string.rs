@@ -183,6 +183,15 @@ pub struct CodeName {
 
 declare_xl_string!(CodeName);
 
+#[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite, std::hash::Hash)]
+pub struct SimpleRichStr {
+    #[deku(pad_bytes_before = "1")]
+    #[deku(assert = "!inner.is_null()")]
+    inner: XlString,
+}
+
+declare_xl_string!(SimpleRichStr);
+
 #[cfg(test)]
 mod tests {
 
