@@ -154,34 +154,34 @@ impl BiffHead {
         };
         let end: usize = off
             + match self.size {
-            0..0x80 => {
+                0..0x80 => {
                     out[off] = {
-                    // one byte
+                        // one byte
                         self.size as u8
                     };
-                1
-            }
-            0x80..0x4000 => {
+                    1
+                }
+                0x80..0x4000 => {
                     out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
                     out[off + 1] = ((self.size >> 0x07) & 0x0000_007f) as u8;
-                2
-            }
-            0x4000..0x200000 => {
-                cold_path();
+                    2
+                }
+                0x4000..0x200000 => {
+                    cold_path();
                     out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
                     out[off + 1] = ((self.size >> 0x07) & 0x7f | 0x80) as u8;
                     out[off + 2] = ((self.size >> 0x0e) & 0x0000_007f) as u8;
-                3
-            }
-            _ => {
-                cold_path();
+                    3
+                }
+                _ => {
+                    cold_path();
                     out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
                     out[off + 1] = ((self.size >> 0x07) & 0x7f | 0x80) as u8;
                     out[off + 2] = ((self.size >> 0x0e) & 0x7f | 0x80) as u8;
                     out[off + 3] = ((self.size >> 0x15) & 0x0000_007f) as u8;
-                4
-            }
-        };
+                    4
+                }
+            };
 
         (out, end)
     }
@@ -202,5 +202,22 @@ impl BiffHead {
         let (consumed, record) = Self::const_from_data(buf)?;
         reader.consume(consumed);
         Ok(record)
+    }
+
+    #[allow(clippy::uninit_vec)]
+    pub fn read_from_with_data(
+        reader: &mut dyn BufRead,
+    ) -> crate::Result<(Self, Option<Box<[u8]>>)> {
+        let head = Self::read_from(reader)?;
+        if head.size > 0 {
+            let mut buf = Vec::with_capacity(head.size as usize);
+            unsafe { buf.set_len(head.size as usize) };
+            reader
+                .read_exact(&mut buf)
+                .map_err(Error::InputReaderError)?;
+            Ok((head, Some(buf.into_boxed_slice())))
+        } else {
+            Ok((head, None))
+        }
     }
 }
