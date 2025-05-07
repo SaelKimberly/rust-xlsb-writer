@@ -1,10 +1,6 @@
-use std::{
-    ffi::OsStr,
-    io::Write,
-    path::Path,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::{ffi::OsStr, io::Write, path::Path, sync::Arc};
 
+use rusqlite::{fallible_iterator::FallibleIterator, prepare_cached_and_bind};
 use xxhash_rust::xxh3::xxh3_64;
 use zerocopy::IntoBytes;
 
@@ -16,18 +12,10 @@ static PUSH_STMT: &str = "INSERT INTO sst (idx, txt) VALUES (:hash, :data) ON CO
 pub enum SSTHolderError {
     #[error("SSTHolder backend database initialization error: {0}")]
     FailureOnInit(rusqlite::Error),
-    #[error("SSTHolder backend database failed to finalize: {0}")]
-    FinalizeError(rusqlite::Error),
     #[error("SSTHolder backend database failed to set WAL mode")]
     BackendWALError,
     #[error("SSTHolder push failed: {0}")]
     PushFailure(#[from] rusqlite::Error),
-    #[error("SSTHolder is finalized, and cannot be modified")]
-    LockedError,
-    #[error("SSTHolder load failed: {0}")]
-    LoadFailure(rusqlite::Error),
-    #[error("SSTHolder is not finalized yet")]
-    ShouldLocks,
     #[error("SSTHolder write to biff sst failed: {0}")]
     BiffWriteIoError(#[from] std::io::Error),
     #[error("SSTHolder write to biff sst failed: {0}")]
@@ -59,7 +47,6 @@ pub enum SSTHolderError {
 #[derive(Clone, Debug)]
 pub struct SSTHolder {
     conn: Arc<rusqlite::Connection>,
-    lock: Arc<AtomicBool>,
 }
 
 impl SSTHolder {
@@ -99,12 +86,9 @@ impl SSTHolder {
         conn.pragma_update(None, "temp_store", "MEMORY")
             .map_err(SSTHolderError::FailureOnInit)?;
 
-        Self {
-            conn,
-            lock: Arc::new(AtomicBool::new(false)),
-        }
-        .initialize()
-        .map_err(SSTHolderError::FailureOnInit)
+        Self { conn }
+            .initialize()
+            .map_err(SSTHolderError::FailureOnInit)
     }
 
     /// Create a new `SSTHolder` in memory. Useful for testing.
@@ -126,60 +110,9 @@ impl SSTHolder {
             rusqlite::Connection::open_in_memory().map_err(SSTHolderError::FailureOnInit)?,
         );
 
-        Self {
-            conn,
-            lock: Arc::new(AtomicBool::new(false)),
-        }
-        .initialize()
-        .map_err(SSTHolderError::FailureOnInit)
-    }
-
-    /// Finalize the SSTHolder
-    /// This will move the data from `sst` table to `sst_finalized` table
-    /// Does nothing if already finalized
-    ///
-    /// # Errors
-    ///
-    /// * `SSTHolderError::FinalizeError`
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use rust_xlsb_core::SSTHolder;
-    ///
-    /// let holder = SSTHolder::create_in_memory().unwrap();
-    /// let hash = holder.push("foo").unwrap();
-    /// holder.finalize().unwrap();
-    ///
-    /// // then use the hash to retrieve the index
-    ///
-    /// let sst: u32 = holder.load(hash).unwrap().unwrap();
-    /// assert_eq!(sst, 0);
-    /// ```
-    pub fn finalize(&self) -> Result<(), SSTHolderError> {
-        if self.lock.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            Ok(())
-        } else {
-            self
-                .conn
-                .execute_batch(
-                    "
-                    DROP TABLE IF EXISTS sst_finalized;
-                    CREATE TABLE sst_finalized AS SELECT idx, txt, cnt FROM sst ORDER BY cnt DESC, idx ASC;
-                ",
-                )
-                .and_then(|_| self.conn.execute_batch("
-                    DROP TABLE sst;
-                ")).map_err(|e| {
-                    self.lock.store(false, std::sync::atomic::Ordering::SeqCst);
-                    SSTHolderError::FinalizeError(e)
-                })
-        }
-    }
-
-    /// Check if the SSTHolder is finalized
-    pub fn is_finalized(&self) -> bool {
-        self.lock.load(std::sync::atomic::Ordering::SeqCst)
+        Self { conn }
+            .initialize()
+            .map_err(SSTHolderError::FailureOnInit)
     }
 
     /// Push a string to the SSTHolder
@@ -187,7 +120,6 @@ impl SSTHolder {
     ///
     /// # Errors
     ///
-    /// * `SSTHolderError::LockedError`
     /// * `SSTHolderError::PushError`
     ///
     /// # Example
@@ -196,29 +128,17 @@ impl SSTHolder {
     /// # use rust_xlsb_core::SSTHolder;
     ///
     /// let holder = SSTHolder::create_in_memory().unwrap();
-    /// let hash = holder.push("foo").unwrap();
+    /// let sst = holder.push("foo").unwrap();
     ///
-    /// // ... Add more strings
-    /// holder.finalize().unwrap();
-    ///
-    /// // then use the hash to retrieve the index
-    ///
-    /// let sst: u32 = holder.load(hash).unwrap().unwrap();
     /// assert_eq!(sst, 0);
     /// ```
-    pub fn push(&self, data: &str) -> Result<u64, SSTHolderError> {
-        if self.is_finalized() {
-            Err(SSTHolderError::LockedError)
-        } else {
-            let hash: i64 = zerocopy::transmute!(xxh3_64(data.as_bytes()));
+    pub fn push(&self, data: &str) -> Result<u32, SSTHolderError> {
+        let hash: i64 = zerocopy::transmute!(xxh3_64(data.as_bytes()));
 
-            let mut stmt = self.conn.prepare_cached(PUSH_STMT)?;
-            stmt.raw_bind_parameter(c":hash", hash)?;
-            stmt.raw_bind_parameter(c":data", data)?;
-            let _ = stmt.raw_execute()?;
-
-            Ok(zerocopy::transmute!(hash))
-        }
+        Ok(prepare_cached_and_bind!(
+            self.conn,
+            "INSERT INTO sst (idx, txt) VALUES (:hash, :data) ON CONFLICT (idx) DO UPDATE SET cnt = cnt + 1 RETURNING ROWID - 1;"
+        ).raw_query().map(|row| row.get::<_, i64>(0)).next()?.expect("Cannot be null") as u32)
     }
 
     /// Push multiple strings to the SSTHolder
@@ -226,7 +146,6 @@ impl SSTHolder {
     ///
     /// # Errors
     ///
-    /// * `SSTHolderError::LockedError`
     /// * `SSTHolderError::PushError`
     ///
     /// # Example
@@ -235,173 +154,34 @@ impl SSTHolder {
     /// # use rust_xlsb_core::SSTHolder;
     ///
     /// let holder = SSTHolder::create_in_memory().unwrap();
-    /// let hashes = holder.push_batch(["foo", "bar", "bar"]).unwrap();
+    /// let idxs = holder.push_batch(["foo", "bar", "bar"]).unwrap();
     ///
-    /// // ... Add more strings
-    /// holder.finalize().unwrap();
+    /// assert_eq!(idxs, [0, 1, 1]);
     ///
-    /// // then use the hash to retrieve the index
-    ///
-    /// let sst: u32 = holder.load(hashes[0]).unwrap().unwrap();
-    /// assert_eq!(sst, 1);
     /// ```
     pub fn push_batch<S: AsRef<str>>(
         &self,
         data: impl IntoIterator<Item = S>,
-    ) -> Result<Vec<u64>, SSTHolderError> {
-        if self.is_finalized() {
-            Err(SSTHolderError::LockedError)
-        } else {
-            let mut stmt = self.conn.prepare_cached(PUSH_STMT)?;
+    ) -> Result<Vec<u32>, SSTHolderError> {
+        self.conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
 
-            let ret = data
-                .into_iter()
-                .map(|s| s.as_ref().to_owned())
-                .map(|s| {
-                    let hash: i64 = zerocopy::transmute!(xxh3_64(s.as_bytes()));
+        let mut stmt = self.conn.prepare_cached("INSERT INTO sst (idx, txt) VALUES (:hash, :data) ON CONFLICT (idx) DO UPDATE SET cnt = cnt + 1 RETURNING ROWID - 1;")?;
 
-                    stmt.raw_bind_parameter(c":hash", hash)
-                        .and(stmt.raw_bind_parameter(c":data", s))
-                        .and(stmt.raw_execute())
-                        .and(Ok(hash))
-                })
-                .map(|i| i.map(|i| zerocopy::transmute!(i)))
-                .collect::<Result<Vec<u64>, _>>()?;
-            Ok(ret)
-        }
-    }
+        let ret = data
+            .into_iter()
+            .map(|s| s.as_ref().to_owned())
+            .map(|s| {
+                let hash: i64 = zerocopy::transmute!(xxh3_64(s.as_bytes()));
 
-    /// Retrieve the index of a string by its hash
-    /// Returns None if the string is not found
-    ///
-    /// # Errors
-    ///
-    /// * `SSTHolderError::ShouldLocks`
-    /// * `SSTHolderError::LoadFailure`
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use rust_xlsb_core::SSTHolder;
-    ///
-    /// let holder = SSTHolder::create_in_memory().unwrap();
-    /// let hash = holder.push("foo").unwrap();
-    ///
-    /// // ... Add more strings
-    /// holder.finalize().unwrap();
-    ///
-    /// // then use the hash to retrieve the index
-    ///
-    /// let sst: u32 = holder.load(hash).unwrap().unwrap();
-    /// assert_eq!(sst, 0);
-    /// ```
-    pub fn load(&self, hash: u64) -> Result<Option<u32>, SSTHolderError> {
-        if !self.is_finalized() {
-            Err(SSTHolderError::ShouldLocks)
-        } else {
-            let hash: i64 = zerocopy::transmute!(hash);
-            self.conn
-                .prepare_cached("SELECT ROWID - 1 FROM sst_finalized WHERE idx = :hash")
-                .map_err(SSTHolderError::LoadFailure)
-                .and_then(move |mut stmt| {
-                    stmt.raw_bind_parameter(c":hash", hash)
-                        .map_err(SSTHolderError::LoadFailure)
-                        .and(Ok(stmt))
-                })
-                .and_then(move |mut stmt| {
-                    let mut rows = stmt.raw_query();
-                    if let Some(row) = rows.next().map_err(SSTHolderError::LoadFailure)? {
-                        Ok(Some(
-                            row.get(0)
-                                .map(|col: i64| col as u32)
-                                .map_err(SSTHolderError::LoadFailure)?,
-                        ))
-                    } else {
-                        Ok(None)
-                    }
-                })
-        }
-    }
+                stmt.raw_bind_parameter(c":hash", hash)
+                    .and(stmt.raw_bind_parameter(c":data", s))
+                    .and(stmt.raw_query().map(|row| row.get::<_, i64>(0)).next())
+                    .map(|idx| idx.expect("Cannot be null") as u32)
+            })
+            .collect::<Result<Vec<u32>, _>>()?;
 
-    /// Retrieve the index of multiple strings by their hashes
-    /// Returns None for strings not found
-    ///
-    /// # Errors
-    ///
-    /// * `SSTHolderError::ShouldLocks`
-    /// * `SSTHolderError::LoadFailure`
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use rust_xlsb_core::SSTHolder;
-    ///
-    /// let holder = SSTHolder::create_in_memory().unwrap();
-    /// let hashes = holder.push_batch(["foo", "bar", "bar"]).unwrap();
-    ///
-    /// // ... Add more strings
-    /// holder.finalize().unwrap();
-    ///
-    /// // then use the hash to retrieve the index
-    ///
-    /// let sst: Vec<Option<u32>> = holder.load_batch(hashes).unwrap();
-    ///
-    /// // note: strings are sorted by frequency
-    /// assert_eq!(sst, vec![Some(1), Some(0), Some(0)]);
-    /// ```
-    pub fn load_batch(
-        &self,
-        hashes: impl IntoIterator<Item = u64>,
-    ) -> Result<Vec<Option<u32>>, SSTHolderError> {
-        if !self.is_finalized() {
-            Err(SSTHolderError::ShouldLocks)
-        } else {
-            let hashes = hashes
-                .into_iter()
-                .map(|hash| {
-                    let hash: i64 = zerocopy::transmute!(hash);
-                    hash
-                })
-                .collect::<Vec<_>>();
-
-            self.conn
-                .execute_batch("CREATE TEMP TABLE IF NOT EXISTS hashes (idx integer);")
-                .map_err(SSTHolderError::LoadFailure)?;
-
-            let mut placeholders = "(?),".repeat(hashes.len());
-            placeholders.pop();
-
-            let mut stmt = self
-                .conn
-                .prepare_cached(format!("INSERT INTO hashes VALUES {};", placeholders).as_str())
-                .map_err(SSTHolderError::LoadFailure)?;
-
-            stmt.execute(rusqlite::params_from_iter(hashes))
-                .map_err(SSTHolderError::LoadFailure)?;
-
-            let mut stmt = self
-                .conn
-                .prepare_cached(
-                    "SELECT case when dst.txt is null then null else dst.ROWID - 1 end
-                        FROM hashes src 
-                        LEFT OUTER JOIN sst_finalized dst
-                        ON src.idx = dst.idx;",
-                )
-                .map_err(SSTHolderError::LoadFailure)?;
-
-            let ret = stmt
-                .query_map([], |row| {
-                    row.get(0).map(|i: Option<i64>| i.map(|i| i as u32))
-                })
-                .map_err(SSTHolderError::LoadFailure)?
-                .collect::<Result<Vec<_>, _>>()?;
-
-            self.conn
-                .execute_batch("DELETE FROM hashes;")
-                .map_err(SSTHolderError::LoadFailure)?;
-
-            Ok(ret)
-        }
+        self.conn.execute_batch("COMMIT;")?;
+        Ok(ret)
     }
 
     /// Initialize the database
@@ -410,12 +190,11 @@ impl SSTHolder {
             "
             BEGIN;
             DROP TABLE IF EXISTS sst;
-            DROP TABLE IF EXISTS sst_finalized;
             CREATE TABLE IF NOT EXISTS sst (
-                idx integer primary key,
+                idx integer not null unique,
                 txt text not null,
                 cnt integer not null default 1
-            ) WITHOUT ROWID;
+            );
             COMMIT;
             VACUUM;
         ",
@@ -428,7 +207,6 @@ impl SSTHolder {
     ///
     /// # Errors
     ///
-    /// * `SSTHolderError::ShouldLocks`
     /// * `SSTHolderError::BiffWriteError`
     /// * `SSTHolderError::BiffWriteIoError`
     ///
@@ -437,13 +215,9 @@ impl SSTHolder {
     /// ```
     /// # use rust_xlsb_core::SSTHolder;
     /// let holder = SSTHolder::create_in_memory().unwrap();
-    /// let hashes = holder.push_batch(["foo", "bar", "bar"]).unwrap();
-    /// holder.finalize().unwrap();
+    /// let idxs = holder.push_batch(["foo", "bar", "bar"]).unwrap();
     ///
-    /// // then retrieve indexes for BrtCellIsst records, on saving worksheets
-    ///
-    /// let idxs = holder.load_batch(hashes).unwrap();
-    /// assert_eq!(idxs, vec![Some(1), Some(0), Some(0)]);
+    /// assert_eq!(idxs, vec![0, 1, 1]);
     ///
     /// // then write the holder to a BIFF file
     ///
@@ -452,25 +226,22 @@ impl SSTHolder {
     /// ```
     #[allow(non_snake_case)]
     pub fn write_to_biff_sst<W: Write>(&self, writer: &mut W) -> Result<(), SSTHolderError> {
-        if !self.is_finalized() {
-            return Err(SSTHolderError::ShouldLocks);
-        }
         let cstTotal = self
             .conn
-            .query_row("SELECT SUM(cnt) FROM sst_finalized;", [], |row| {
+            .query_row("SELECT SUM(cnt) FROM sst;", [], |row| {
                 row.get(0).map(|val: i64| val as u32)
             })
             .map_err(SSTHolderError::BiffWriteError)?;
         let cstUnique = self
             .conn
-            .query_row("SELECT COUNT(*) FROM sst_finalized;", [], |row| {
-                row.get(0).map(|val: i64| val as u32)
+            .query_row("SELECT COUNT(*) FROM sst;", [], |row| {
+                row.get::<_, i64>(0).map(|val| val as u32)
             })
             .map_err(SSTHolderError::BiffWriteError)?;
 
         let max_capacity = self
             .conn
-            .query_row("SELECT max(length(txt)) FROM sst_finalized;", [], |row| {
+            .query_row("SELECT max(length(txt)) FROM sst;", [], |row| {
                 row.get(0).map(|val: i64| val as usize)
             })
             .map_err(SSTHolderError::BiffWriteError)?;
@@ -486,12 +257,12 @@ impl SSTHolder {
         )
         .map_err(SSTHolderError::BiffWriteIoError)?;
 
-        let mut stmt = self.conn.prepare("SELECT txt FROM sst_finalized;")?;
+        let mut stmt = self.conn.prepare("SELECT txt FROM sst;")?;
         let mut query = stmt.raw_query();
         while let Some(txt) = query
             .next()
             .map_err(SSTHolderError::BiffWriteError)?
-            .and_then(|row| row.get(0).map(|txt: String| txt).ok())
+            .and_then(|row| row.get::<_, String>(0).ok())
             .as_deref()
         {
             buf.truncate(1);
@@ -513,10 +284,7 @@ impl SSTHolder {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        assert_matches::assert_matches,
-        io::{Cursor, Seek},
-    };
+    use std::io::{Cursor, Seek};
 
     use deku::DekuContainerRead;
 
@@ -528,23 +296,19 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_sst_sqlite() {
         let holder = SSTHolder::create_in_memory().unwrap();
-        assert_matches!(holder.load(0), Err(SSTHolderError::ShouldLocks));
-        let unresolved_foo = holder.push("foo").unwrap();
 
-        let _ = holder.push("bar").unwrap();
-        let unresolved_bar = holder.push("bar").unwrap();
+        let foo_idx = holder.push("foo").unwrap();
+        assert_eq!(foo_idx, 0);
 
-        let hashes = holder
+        let bar_idx_1 = holder.push("bar").unwrap();
+        let bar_idx_2 = holder.push("bar").unwrap();
+        assert_eq!(bar_idx_1, 1);
+        assert_eq!(bar_idx_1, bar_idx_2);
+
+        let idxs = holder
             .push_batch(vec!["some", "batched", "some", "batched"])
             .unwrap();
-
-        holder.finalize().expect("Cannot finalize");
-
-        assert_matches!(holder.load(unresolved_foo), Ok(Some(3)));
-        assert_matches!(holder.load(unresolved_bar), Ok(Some(0)));
-
-        let a = holder.load_batch(hashes).expect("Should be ok");
-        println!("{:?}", a);
+        assert_eq!(idxs, vec![2, 3, 2, 3]);
 
         let mut cursor = Cursor::new(Vec::<u8>::with_capacity(1024));
         holder.write_to_biff_sst(&mut cursor).unwrap();
