@@ -53,10 +53,9 @@ Rust 1.100.0, edition 2024, existing `deku` records, `StyleRegistry`,
 - Allowed column pixel widths match the reference: 56, 64, 72, 80, 96, 104,
   120. Other widths return `Error::Parameter`.
 - Calling after adding a worksheet returns `Error::Parameter`.
-- No new public worksheet method; the worksheet default format is workbook
-  state, so per-sheet divergence cannot occur.
-- `Worksheet::set_default_format` remains missing and the gap analysis stays
-  explicit about that.
+- This batch adds no worksheet method; the follow-up
+  [`worksheet default format`](2026-11-18-worksheet-default-format.md) plan
+  adds `Worksheet::set_default_format` for detached worksheets.
 
 ## Change Necessity
 
@@ -131,8 +130,8 @@ Verification: `cargo test -p rust-xlsb-writer`.
 Files: `AGENTS.md`, `docs/gap-analysis-rust-xlsxwriter.md`,
 `docs/aegis/INDEX.md`.
 
-- Mark `Workbook::set_default_format` supported; keep
-  `Worksheet::set_default_format` missing.
+- Mark `Workbook::set_default_format` supported. The worksheet method was
+  added by the follow-up plan.
 - Update test counts.
 - Run `cargo test --workspace`, `cargo clippy --workspace --all-targets`,
   `cargo fmt --all --check`, and `git diff --check`.

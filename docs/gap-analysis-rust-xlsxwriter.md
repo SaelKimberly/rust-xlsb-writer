@@ -61,7 +61,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 193 core + 184 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 193 core + 187 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -137,7 +137,7 @@ Status meanings:
 | `hide_unused_rows` | Supported | Row hiding |
 | `autofit`, `autofit_to_max_width` | Missing | Width calculation |
 | `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
-| `set_default_format` | Missing | Worksheet default format |
+| `set_default_format` | Supported | Worksheet or detached-worksheet default format and dimensions |
 | `set_cell_format`, `set_range_format` | Supported | — |
 | `set_range_format_with_border` | Supported | Border-aware range edit |
 | `clear_cell`, `clear_cell_format` | Supported | — |
@@ -444,7 +444,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 193 core + 184 writer unit tests and 6 doctests; calamine
+- Test evidence: 193 core + 187 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on

@@ -1671,6 +1671,48 @@ impl Worksheet {
         self.set_default_row_height(f64::from(height) * 0.75)
     }
 
+    /// Sets the default cell format and dimensions for a detached worksheet.
+    ///
+    /// A worksheet created independently of a workbook can carry the same
+    /// defaults that [`Workbook::set_default_format`](crate::Workbook::set_default_format)
+    /// applies. The parent workbook must also be given the same format and
+    /// dimensions, otherwise workbook style 0 remains unchanged.
+    ///
+    /// `row_height` and `col_width` are in pixels; supported column widths are
+    /// 56, 64, 72, 80, 96, 104, and 120.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] if any cell or row/column format has
+    /// already been added, or if the column width is unsupported. Returns
+    /// [`Error::ValueNotRepresentable`] if the row height exceeds Excel's
+    /// limit.
+    pub fn set_default_format(
+        &mut self,
+        format: &Format,
+        row_height: u32,
+        col_width: u32,
+    ) -> Result<&mut Self> {
+        if !self.formats.is_empty() {
+            return Err(Error::Parameter(
+                "default format must be set before adding formats".to_owned(),
+            ));
+        }
+        let Some((digit_width, padding)) = default_column_metrics(col_width) else {
+            return Err(Error::Parameter(format!(
+                "unsupported default column width: {col_width}"
+            )));
+        };
+        validate_row_height(f64::from(row_height) * 0.75)?;
+
+        self.initialize_default_format(
+            format,
+            row_height,
+            (f64::from(col_width) - f64::from(padding)) / f64::from(digit_width),
+        );
+        Ok(self)
+    }
+
     pub(crate) fn initialize_default_format(
         &mut self,
         format: &Format,
@@ -2629,6 +2671,23 @@ fn validate_row_height(height: f64) -> Result<()> {
         Err(Error::ValueNotRepresentable(
             "row height is outside 0..=409.5",
         ))
+    }
+}
+
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the workbook default format"
+)]
+pub(crate) const fn default_column_metrics(width: u32) -> Option<(u32, u32)> {
+    match width {
+        56 => Some((6, 5)),
+        64 => Some((7, 5)),
+        72 => Some((8, 5)),
+        80 => Some((9, 7)),
+        96 => Some((11, 7)),
+        104 => Some((12, 7)),
+        120 => Some((13, 9)),
+        _ => None,
     }
 }
 
@@ -3634,6 +3693,54 @@ mod tests {
 
         assert_eq!(worksheet.default_row_height(), Some(18.0));
         assert_eq!(worksheet.default_col_width(), Some(8.0));
+    }
+
+    #[test]
+    fn worksheet_default_format_sets_dimensions_and_hyperlink_style() {
+        let mut worksheet = Worksheet::new();
+        worksheet
+            .write(0, 0, "unformatted data")
+            .expect("unformatted write");
+        worksheet
+            .set_default_format(&Format::new().set_bold(), 24, 80)
+            .expect("sets default format");
+
+        assert_eq!(worksheet.default_row_height(), Some(18.0));
+        assert_eq!(worksheet.default_col_width(), Some(73.0 / 9.0));
+
+        worksheet
+            .write_url(1, 0, "https://example.com")
+            .expect("writes url");
+        let cell = &worksheet.cells()[&1][&0];
+        let style = &worksheet.formats()[usize::try_from(cell.format.expect("format")).unwrap()];
+        assert_eq!(style, &Format::new().set_bold().set_hyperlink());
+    }
+
+    #[test]
+    fn worksheet_default_format_must_precede_formats() {
+        let mut worksheet = Worksheet::new();
+        worksheet
+            .write_with_format(0, 0, "x", &Format::new().set_bold())
+            .expect("formatted write");
+
+        assert!(matches!(
+            worksheet.set_default_format(&Format::new(), 24, 80),
+            Err(Error::Parameter(_))
+        ));
+    }
+
+    #[test]
+    fn worksheet_default_format_validates_dimensions() {
+        let mut worksheet = Worksheet::new();
+
+        assert!(matches!(
+            worksheet.set_default_format(&Format::new(), 24, 65),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.set_default_format(&Format::new(), 547, 80),
+            Err(Error::ValueNotRepresentable(_))
+        ));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 
-use crate::worksheet::{Worksheet, validate_sheet_name};
+use crate::worksheet::{Worksheet, default_column_metrics, validate_sheet_name};
 use crate::{DocProperties, Error, Format, Result};
 
 /// Formula calculation mode for a workbook.
@@ -23,19 +23,6 @@ pub struct WorkbookSettings {
     pub calculation_mode: Option<CalculationMode>,
     pub read_only_recommended: bool,
     pub tab_ratio: Option<u8>,
-}
-
-const fn default_column_metrics(width: u32) -> Option<(u32, u32)> {
-    match width {
-        56 => Some((6, 5)),
-        64 => Some((7, 5)),
-        72 => Some((8, 5)),
-        80 => Some((9, 7)),
-        96 => Some((11, 7)),
-        104 => Some((12, 7)),
-        120 => Some((13, 9)),
-        _ => None,
-    }
 }
 
 /// A workbook that owns one or more worksheets.
