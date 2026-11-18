@@ -1,10 +1,32 @@
 //! Package-level tests through the public writer API and `calamine`.
 
+use std::io::BufReader;
+
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 use chrono::{NaiveDate, NaiveTime, TimeDelta};
-use rust_xlsb_core::prelude::BErr;
+use deku::DekuContainerRead;
+use rust_xlsb_core::prelude::{BErr, BrtBeginCellXFs, BrtBeginFonts, BrtFont};
+use rust_xlsb_core::{BiffHead, CheckedBiff};
 
 use crate::{Format, Workbook};
+
+fn records<T>(part: &[u8]) -> Vec<T>
+where
+    T: for<'a> DekuContainerRead<'a> + Default + CheckedBiff,
+{
+    let target = T::default().id();
+    let mut reader = BufReader::new(part);
+    let mut records = Vec::new();
+    while let Ok((head, body)) = BiffHead::read_from_with_data(&mut reader) {
+        if head.known_id() == Some(target)
+            && let Some(body) = body
+        {
+            let (_, record) = T::from_bytes((&body, 0)).expect("record decodes");
+            records.push(record);
+        }
+    }
+    records
+}
 
 fn range(workbook: &mut Workbook) -> calamine::Range<Data> {
     let bytes = workbook.save_to_buffer().expect("saves");
@@ -102,4 +124,27 @@ fn multiple_sheets_keep_their_values() {
         opened.worksheet_range("Data").expect("reads").get((0, 0)),
         Some(&Data::String("second".to_owned()))
     );
+}
+
+#[test]
+fn styles_deduplicate_and_default_font_is_calibri() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    let bold = Format::new().set_bold();
+    sheet.write_with_format(0, 0, 1_i32, &bold).expect("first");
+    sheet.write_with_format(1, 0, 2_i32, &bold).expect("second");
+    sheet.write(2, 0, 3_i32).expect("default");
+
+    let bytes = workbook.save_to_buffer().expect("saves");
+    let styles = crate::package::part_bytes(&bytes, "xl/styles.bin").expect("styles part");
+    let xfs = records::<BrtBeginCellXFs>(&styles);
+    assert_eq!(xfs[0].count, 2);
+    let fonts = records::<BrtBeginFonts>(&styles);
+    assert_eq!(fonts[0].count, 2);
+    let font_records = records::<BrtFont>(&styles);
+    assert_eq!(
+        font_records[0].name.to_optional_string().as_deref(),
+        Some("Calibri")
+    );
+    assert_eq!(font_records[0].dyHeight, 220);
 }

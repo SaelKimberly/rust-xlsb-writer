@@ -262,6 +262,37 @@ fn part_names(bytes: &[u8]) -> Result<Vec<String>> {
 }
 
 #[cfg(test)]
+pub fn part_bytes(bytes: &[u8], wanted: &str) -> Result<Vec<u8>> {
+    let mut offset = 0;
+    while offset + 30 <= bytes.len() && read_u32(bytes, offset)? == 0x0403_4b50 {
+        let method = read_u16(bytes, offset + 8)?;
+        let name_len = usize::from(read_u16(bytes, offset + 26)?);
+        let extra_len = usize::from(read_u16(bytes, offset + 28)?);
+        let compressed = usize::try_from(read_u32(bytes, offset + 18)?)
+            .map_err(|_| Error::ValueNotRepresentable("ZIP entry too large"))?;
+        let name_start = offset + 30;
+        let name_end = name_start + name_len;
+        let data_start = name_end + extra_len;
+        let data_end = data_start + compressed;
+        let name = std::str::from_utf8(&bytes[name_start..name_end])
+            .map_err(|_| Error::ValueNotRepresentable("ZIP name is not UTF-8"))?;
+        if name == wanted {
+            if method != 0 {
+                return Err(Error::ValueNotRepresentable(
+                    "only stored ZIP entries are supported",
+                ));
+            }
+            return bytes
+                .get(data_start..data_end)
+                .map(<[u8]>::to_vec)
+                .ok_or(Error::ValueNotRepresentable("truncated ZIP entry"));
+        }
+        offset = data_end;
+    }
+    Err(Error::ValueNotRepresentable("ZIP part not found"))
+}
+
+#[cfg(test)]
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
     let value = bytes
         .get(offset..offset + 2)

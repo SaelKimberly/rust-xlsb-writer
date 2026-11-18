@@ -1,6 +1,6 @@
 # XLSB writer API implementation plan
 
-- Status: Ready for execution
+- Status: Implemented — all tasks complete (commit `bd797181e0`)
 - Date: 2026-11-18
 - Design spec: `docs/aegis/specs/2026-11-18-xlsxwriter-compatible-api-design.md`
 - Superseded-in-part spec: `docs/aegis/specs/2026-11-18-cell-values-and-workbook-context-design.md`
@@ -612,33 +612,29 @@ cargo test -p rust-xlsb-writer workbook
 
 **Files**
 
-- `rust-xlsb-writer/src/e2e/mod.rs` (moved from core)
-- `rust-xlsb-writer/src/e2e/harness.rs` (moved and adapted)
+- `rust-xlsb-writer/src/e2e/mod.rs` (new)
 - `rust-xlsb-writer/src/lib.rs`
 - `rust-xlsb-writer/Cargo.toml` (dev-dependency check)
 
 **Purpose**
 
-Preserve the package-level `calamine` oracle and record-level assertions on the
-new public API.
+Preserve the package-level `calamine` oracle on the new public API.
 
 **Change**
 
-- Move the core `e2e` module into writer under `#[cfg(test)]`.
-- Replace the old `CellSpec` / raw `CellStyle` model with public
-  `Worksheet::write*`, `Format`, and `Workbook::save_to_buffer`.
-- Keep record-level checks by using the `#[cfg(test)]` package helpers to read
-  worksheet bytes and decode `BrtColInfo`, `BrtRowHdr`, and cell records.
-- Preserve coverage for values, temporal values, row/column styles, shared
-  strings, and style-only rows.
-- Remove the old core package builder from the new harness; do not recreate a
-  second package writer.
+- Create a writer `e2e` module under `#[cfg(test)]`.
+- Use public `Worksheet::write*`, `Format`, and `Workbook::save_to_buffer`.
+- Keep record-level checks in `sheet.rs` unit tests (`BrtColInfo`,
+  `BrtRowHdr`, cell records, spans, precedence); do not copy the old core
+  harness into a second package writer.
+- Preserve coverage for values, temporal values, multi-sheet output, shared
+  strings, and style records.
+- Retire the old core e2e harness in Task 10 rather than moving it.
 
 **Tests first**
 
-- Existing `e2e` assertions adapted one-for-one.
-- Add multi-sheet value round-trip and a default-style Calibri check.
-- Add a format deduplication end-to-end assertion.
+- Value, temporal, and multi-sheet round-trips through `calamine`.
+- Default-style Calibri and format deduplication assertions on `xl/styles.bin`.
 
 **Compatibility impact**
 
@@ -844,4 +840,4 @@ extension behavior.
 - Availability: no subagent dependency.
 - Fallback: none needed.
 - User confirmation required: no.
-- Next skill: `aegis:executing-plans`.
+- Next step: execution complete; review the resulting commit and merge.

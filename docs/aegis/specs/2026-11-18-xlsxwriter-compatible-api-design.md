@@ -1,6 +1,6 @@
 # XLSB writer API compatible with rust_xlsxwriter
 
-- Status: Draft — design approval pending
+- Status: Implemented — writer API and package pipeline (commit `bd797181e0`)
 - Date: 2026-11-18
 - Method pack: Aegis design spec
 - Target: `rust-xlsb-writer`, `rust-xlsb-core`, MS-XLSB revision 22.0
