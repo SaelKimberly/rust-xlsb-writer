@@ -57,6 +57,41 @@ fn values_roundtrip_through_the_public_api() {
 }
 
 #[test]
+fn non_finite_numbers_roundtrip_as_strings() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write(0, 0, f64::NAN).expect("nan");
+    sheet.write(1, 0, f64::INFINITY).expect("infinity");
+    sheet
+        .write(2, 0, f64::NEG_INFINITY)
+        .expect("negative infinity");
+
+    sheet.set_nan_value("NaN");
+    sheet.set_infinity_value("Infinity");
+    sheet.set_neg_infinity_value("NegInfinity");
+    sheet.write(4, 0, f64::NAN).expect("nan");
+    sheet.write(5, 0, f64::INFINITY).expect("infinity");
+    sheet
+        .write(6, 0, f64::NEG_INFINITY)
+        .expect("negative infinity");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::String("NAN".to_owned())));
+    assert_eq!(range.get((1, 0)), Some(&Data::String("INF".to_owned())));
+    assert_eq!(range.get((2, 0)), Some(&Data::String("-INF".to_owned())));
+    assert_eq!(range.get((4, 0)), Some(&Data::String("NaN".to_owned())));
+    assert_eq!(
+        range.get((5, 0)),
+        Some(&Data::String("Infinity".to_owned()))
+    );
+    assert_eq!(
+        range.get((6, 0)),
+        Some(&Data::String("NegInfinity".to_owned()))
+    );
+}
+
+#[test]
 fn dates_use_number_formats_and_roundtrip() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();

@@ -314,6 +314,18 @@ pub struct Format {
     border_diagonal_color: Option<Color>,
 }
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the worksheet implementation"
+)]
+#[derive(Clone, Copy)]
+pub(crate) enum BorderSide {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum NumFormat {
     Code(String),
@@ -530,6 +542,28 @@ impl Format {
     pub fn set_border_right_color(mut self, color: impl Into<Color>) -> Self {
         self.border_right_color = Some(color.into());
         self
+    }
+
+    /// Copies one border side, including its color, from another format.
+    pub(crate) fn copy_border_side(&mut self, other: &Self, side: BorderSide) {
+        match side {
+            BorderSide::Top => {
+                self.border.blxfTop.border_type = other.border.blxfTop.border_type.clone();
+                self.border_top_color = other.border_top_color;
+            }
+            BorderSide::Bottom => {
+                self.border.blxfBottom.border_type = other.border.blxfBottom.border_type.clone();
+                self.border_bottom_color = other.border_bottom_color;
+            }
+            BorderSide::Left => {
+                self.border.blxfLeft.border_type = other.border.blxfLeft.border_type.clone();
+                self.border_left_color = other.border_left_color;
+            }
+            BorderSide::Right => {
+                self.border.blxfRight.border_type = other.border.blxfRight.border_type.clone();
+                self.border_right_color = other.border_right_color;
+            }
+        }
     }
 
     /// Locks the cell when the sheet is protected.

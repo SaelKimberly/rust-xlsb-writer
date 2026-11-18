@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
+use crate::format::BorderSide;
 use crate::{Color, Error, Format, Result};
 
 pub const MAX_ROW: u32 = 1_048_575;
@@ -283,6 +284,9 @@ pub struct Worksheet {
     outline_symbols_above: bool,
     outline_symbols_to_left: bool,
     hide_unused_rows: bool,
+    nan_value: Option<String>,
+    infinity_value: Option<String>,
+    neg_infinity_value: Option<String>,
 }
 
 impl Worksheet {
@@ -310,6 +314,9 @@ impl Worksheet {
             outline_symbols_above: false,
             outline_symbols_to_left: false,
             hide_unused_rows: false,
+            nan_value: None,
+            infinity_value: None,
+            neg_infinity_value: None,
         }
     }
 
@@ -528,9 +535,15 @@ impl Worksheet {
 
     /// Writes a number.
     ///
+    /// NaN and infinity become display strings because XLSB has no non-finite
+    /// number cell. See [`Self::set_nan_value`] and
+    /// [`Self::set_infinity_value`].
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::RowColumnLimit`] when the row/column is out of range.
+    /// Returns [`Error::RowColumnLimit`] when the row/column is out of range,
+    /// or [`Error::StringTooLong`] when a configured non-finite display string
+    /// exceeds 32,767 UTF-16 code units.
     pub fn write_number(
         &mut self,
         row: RowNum,
@@ -542,9 +555,15 @@ impl Worksheet {
 
     /// Writes a formatted number.
     ///
+    /// NaN and infinity become display strings because XLSB has no non-finite
+    /// number cell. See [`Self::set_nan_value`] and
+    /// [`Self::set_infinity_value`].
+    ///
     /// # Errors
     ///
-    /// Returns [`Error::RowColumnLimit`] when the row/column is out of range.
+    /// Returns [`Error::RowColumnLimit`] when the row/column is out of range,
+    /// or [`Error::StringTooLong`] when a configured non-finite display string
+    /// exceeds 32,767 UTF-16 code units.
     pub fn write_number_with_format(
         &mut self,
         row: RowNum,
@@ -1192,6 +1211,30 @@ impl Worksheet {
         self
     }
 
+    /// Sets the string written for `f64::NAN`.
+    ///
+    /// Defaults to `NAN`; XLSB has no NaN number value.
+    pub fn set_nan_value(&mut self, value: impl Into<String>) -> &mut Self {
+        self.nan_value = Some(value.into());
+        self
+    }
+
+    /// Sets the string written for `f64::INFINITY`.
+    ///
+    /// Defaults to `INF`; XLSB has no infinity number value.
+    pub fn set_infinity_value(&mut self, value: impl Into<String>) -> &mut Self {
+        self.infinity_value = Some(value.into());
+        self
+    }
+
+    /// Sets the string written for `f64::NEG_INFINITY`.
+    ///
+    /// Defaults to `-INF`.
+    pub fn set_neg_infinity_value(&mut self, value: impl Into<String>) -> &mut Self {
+        self.neg_infinity_value = Some(value.into());
+        self
+    }
+
     /// Displays the worksheet right-to-left when `enable` is true.
     pub const fn set_right_to_left(&mut self, enable: bool) -> &mut Self {
         self.view.right_to_left = enable;
@@ -1544,6 +1587,176 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Applies a cell format and a border format to an inclusive rectangular
+    /// range without changing values.
+    ///
+    /// The cell format applies to every cell. The border format supplies only
+    /// top, bottom, left, and right border styles and colors for the range's
+    /// outer edges. Interior borders and diagonal borders come from
+    /// `cell_format`.
+    ///
+    /// Missing cells become formatted blank cells.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when the range is reversed, or
+    /// [`Error::RowColumnLimit`] when it is out of bounds.
+    pub fn set_range_format_with_border(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        cell_format: &Format,
+        border_format: &Format,
+    ) -> Result<&mut Self> {
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+
+        if first_row == last_row && first_col == last_col {
+            let format = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[
+                    BorderSide::Top,
+                    BorderSide::Bottom,
+                    BorderSide::Left,
+                    BorderSide::Right,
+                ],
+            );
+            self.set_cell_format(first_row, first_col, &format)?;
+        } else if first_row == last_row {
+            let left = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Top, BorderSide::Bottom, BorderSide::Left],
+            );
+            let center = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Top, BorderSide::Bottom],
+            );
+            let right = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Top, BorderSide::Bottom, BorderSide::Right],
+            );
+            for col in first_col..=last_col {
+                let format = if col == first_col {
+                    &left
+                } else if col == last_col {
+                    &right
+                } else {
+                    &center
+                };
+                self.set_cell_format(first_row, col, format)?;
+            }
+        } else if first_col == last_col {
+            let top = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Left, BorderSide::Right, BorderSide::Top],
+            );
+            let center = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Left, BorderSide::Right],
+            );
+            let bottom = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Left, BorderSide::Right, BorderSide::Bottom],
+            );
+            for row in first_row..=last_row {
+                let format = if row == first_row {
+                    &top
+                } else if row == last_row {
+                    &bottom
+                } else {
+                    &center
+                };
+                self.set_cell_format(row, first_col, format)?;
+            }
+        } else {
+            let top_left = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Top, BorderSide::Left],
+            );
+            let top_center =
+                Self::combined_border_format(cell_format, border_format, &[BorderSide::Top]);
+            let top_right = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Top, BorderSide::Right],
+            );
+            let center_left =
+                Self::combined_border_format(cell_format, border_format, &[BorderSide::Left]);
+            let center_center = Self::combined_border_format(cell_format, border_format, &[]);
+            let center_right =
+                Self::combined_border_format(cell_format, border_format, &[BorderSide::Right]);
+            let bottom_left = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Bottom, BorderSide::Left],
+            );
+            let bottom_center =
+                Self::combined_border_format(cell_format, border_format, &[BorderSide::Bottom]);
+            let bottom_right = Self::combined_border_format(
+                cell_format,
+                border_format,
+                &[BorderSide::Bottom, BorderSide::Right],
+            );
+
+            for row in first_row..=last_row {
+                for col in first_col..=last_col {
+                    let format = if row == first_row {
+                        if col == first_col {
+                            &top_left
+                        } else if col == last_col {
+                            &top_right
+                        } else {
+                            &top_center
+                        }
+                    } else if row == last_row {
+                        if col == first_col {
+                            &bottom_left
+                        } else if col == last_col {
+                            &bottom_right
+                        } else {
+                            &bottom_center
+                        }
+                    } else if col == first_col {
+                        &center_left
+                    } else if col == last_col {
+                        &center_right
+                    } else {
+                        &center_center
+                    };
+                    self.set_cell_format(row, col, format)?;
+                }
+            }
+        }
+        Ok(self)
+    }
+
+    fn combined_border_format(
+        cell_format: &Format,
+        border_format: &Format,
+        sides: &[BorderSide],
+    ) -> Format {
+        let mut format = cell_format.clone();
+        for &side in sides {
+            format.copy_border_side(border_format, side);
+        }
+        format
+    }
+
     /// Applies a format to an inclusive rectangular range without changing
     /// values.
     ///
@@ -1697,6 +1910,21 @@ impl Worksheet {
         data: CellData,
         format: Option<&Format>,
     ) -> Result<&mut Self> {
+        let data = match data {
+            CellData::Number(value) if value.is_nan() => {
+                CellData::String(self.nan_value.as_deref().unwrap_or("NAN").to_owned())
+            }
+            CellData::Number(value) if value == f64::INFINITY => {
+                CellData::String(self.infinity_value.as_deref().unwrap_or("INF").to_owned())
+            }
+            CellData::Number(value) if value == f64::NEG_INFINITY => CellData::String(
+                self.neg_infinity_value
+                    .as_deref()
+                    .unwrap_or("-INF")
+                    .to_owned(),
+            ),
+            other => other,
+        };
         let format = format.map(|format| self.intern_format(format));
         self.store_with_index(row, col, data, format)?;
         Ok(self)
@@ -1945,6 +2173,44 @@ pub(crate) fn pixels_to_width(pixels: u32) -> f64 {
 mod tests {
     use super::*;
     use crate::data::CellData;
+    use crate::{FormatBorder, FormatDiagonalBorder};
+    use rust_xlsb_core::StyleRegistry;
+    use rust_xlsb_core::prelude::BorderType;
+
+    fn border_sides(worksheet: &Worksheet, row: RowNum, col: ColNum) -> [BorderType; 4] {
+        let format = worksheet
+            .cells()
+            .get(&row)
+            .and_then(|cells| cells.get(&col))
+            .and_then(|cell| cell.format)
+            .expect("cell format");
+        let mut registry = StyleRegistry::new();
+        let style = worksheet.formats()[format as usize]
+            .to_cell_style(&mut registry)
+            .expect("style");
+        [
+            style.border.blxfTop.border_type.clone(),
+            style.border.blxfBottom.border_type.clone(),
+            style.border.blxfLeft.border_type.clone(),
+            style.border.blxfRight.border_type,
+        ]
+    }
+
+    fn assert_border(
+        worksheet: &Worksheet,
+        row: RowNum,
+        col: ColNum,
+        top: BorderType,
+        bottom: BorderType,
+        left: BorderType,
+        right: BorderType,
+    ) {
+        assert_eq!(
+            border_sides(worksheet, row, col),
+            [top, bottom, left, right],
+            "border mismatch at ({row}, {col})"
+        );
+    }
 
     #[test]
     fn writes_cells_and_styles() {
@@ -2527,6 +2793,193 @@ mod tests {
 
         worksheet.set_tab_color(Color::Default);
         assert_eq!(worksheet.tab_color(), None);
+    }
+
+    #[test]
+    fn non_finite_numbers_become_display_strings() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.write(0, 0, f64::NAN).expect("nan");
+        worksheet.write(1, 0, f64::INFINITY).expect("infinity");
+        worksheet
+            .write(2, 0, f64::NEG_INFINITY)
+            .expect("negative infinity");
+
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::String("NAN".to_owned()))
+        );
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&1)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::String("INF".to_owned()))
+        );
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&2)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::String("-INF".to_owned()))
+        );
+    }
+
+    #[test]
+    fn custom_non_finite_strings_preserve_formats() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_nan_value("NaN");
+        worksheet.set_infinity_value("Infinity");
+        worksheet.set_neg_infinity_value("NegInfinity");
+        worksheet
+            .write_with_format(0, 0, f64::NAN, &Format::new().set_bold())
+            .expect("nan");
+
+        let cell = worksheet
+            .cells()
+            .get(&0)
+            .and_then(|row| row.get(&0))
+            .expect("cell");
+        assert_eq!(cell.data, CellData::String("NaN".to_owned()));
+        assert_eq!(cell.format, Some(0));
+
+        worksheet.write(1, 0, f64::INFINITY).expect("infinity");
+        worksheet
+            .write(2, 0, f64::NEG_INFINITY)
+            .expect("negative infinity");
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&1)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::String("Infinity".to_owned()))
+        );
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&2)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::String("NegInfinity".to_owned()))
+        );
+    }
+
+    #[test]
+    fn non_finite_display_strings_obey_the_string_limit() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_nan_value("x".repeat(MAX_STRING_UTF16 + 1));
+
+        assert!(matches!(
+            worksheet.write(0, 0, f64::NAN),
+            Err(Error::StringTooLong)
+        ));
+    }
+
+    #[test]
+    fn range_border_positions_follow_the_rectangle() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let cell_format = Format::new()
+            .set_bold()
+            .set_background_color(Color::Yellow)
+            .set_border_diagonal(FormatBorder::Thin)
+            .set_border_diagonal_color(Color::Blue)
+            .set_border_diagonal_type(FormatDiagonalBorder::BorderUp);
+        let border_format = Format::new()
+            .set_border(FormatBorder::Medium)
+            .set_border_color(Color::Red);
+        worksheet
+            .set_range_format_with_border(0, 0, 2, 2, &cell_format, &border_format)
+            .expect("range");
+
+        let medium = || BorderType::Medium;
+        let none = || BorderType::None;
+        assert_border(&worksheet, 0, 0, medium(), none(), medium(), none());
+        assert_border(&worksheet, 0, 1, medium(), none(), none(), none());
+        assert_border(&worksheet, 0, 2, medium(), none(), none(), medium());
+        assert_border(&worksheet, 1, 0, none(), none(), medium(), none());
+        assert_border(&worksheet, 1, 1, none(), none(), none(), none());
+        assert_border(&worksheet, 1, 2, none(), none(), none(), medium());
+        assert_border(&worksheet, 2, 0, none(), medium(), medium(), none());
+        assert_border(&worksheet, 2, 1, none(), medium(), none(), none());
+        assert_border(&worksheet, 2, 2, none(), medium(), none(), medium());
+
+        let format = worksheet
+            .cells()
+            .get(&1)
+            .and_then(|cells| cells.get(&1))
+            .and_then(|cell| cell.format)
+            .expect("center format");
+        let mut registry = StyleRegistry::new();
+        let style = worksheet.formats()[format as usize]
+            .to_cell_style(&mut registry)
+            .expect("style");
+        assert_eq!(style.font.bls, rust_xlsb_core::prelude::Bold::BLSBOLD);
+        assert_eq!(style.fill.fls, 1);
+        assert!(style.border.fBdrDiagUp);
+        assert_eq!(style.border.blxfDiag.border_type, BorderType::Thin);
+        let format = worksheet
+            .cells()
+            .get(&0)
+            .and_then(|cells| cells.get(&0))
+            .and_then(|cell| cell.format)
+            .expect("corner format");
+        let style = worksheet.formats()[format as usize]
+            .to_cell_style(&mut registry)
+            .expect("style");
+        assert_eq!(
+            style.border.blxfTop.color,
+            Color::Red.to_brt_color().expect("red")
+        );
+    }
+
+    #[test]
+    fn range_border_handles_single_cell_row_and_column() {
+        let border = Format::new().set_border(FormatBorder::Thin);
+        let medium = || BorderType::Thin;
+        let none = || BorderType::None;
+
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet
+            .set_range_format_with_border(1, 1, 1, 1, &Format::new(), &border)
+            .expect("cell");
+        assert_border(&worksheet, 1, 1, medium(), medium(), medium(), medium());
+
+        worksheet
+            .set_range_format_with_border(3, 1, 3, 3, &Format::new(), &border)
+            .expect("row");
+        assert_border(&worksheet, 3, 1, medium(), medium(), medium(), none());
+        assert_border(&worksheet, 3, 2, medium(), medium(), none(), none());
+        assert_border(&worksheet, 3, 3, medium(), medium(), none(), medium());
+
+        worksheet
+            .set_range_format_with_border(5, 1, 7, 1, &Format::new(), &border)
+            .expect("column");
+        assert_border(&worksheet, 5, 1, medium(), none(), medium(), medium());
+        assert_border(&worksheet, 6, 1, none(), none(), medium(), medium());
+        assert_border(&worksheet, 7, 1, none(), medium(), medium(), medium());
+    }
+
+    #[test]
+    fn range_border_rejects_invalid_ranges_before_mutating() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let format = Format::new();
+        let border = Format::new().set_border(FormatBorder::Thin);
+
+        assert!(matches!(
+            worksheet.set_range_format_with_border(2, 0, 1, 0, &format, &border),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.set_range_format_with_border(0, 0, MAX_ROW + 1, 0, &format, &border),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(worksheet.cells().is_empty());
     }
 
     #[test]

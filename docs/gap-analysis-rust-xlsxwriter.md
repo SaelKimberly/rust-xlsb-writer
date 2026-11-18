@@ -2,7 +2,7 @@
 
 - Status: Current-state analysis
 - Date: 2026-11-18
-- Current writer: `rust-xlsb-writer` at commit `f96f942`
+- Current writer: `rust-xlsb-writer` at commit `c9e56a2`
 - Reference: vendored `rust_xlsxwriter` v0.102.0, commit `d850973`
 - Scope: XLSB writer features. Reading and Arrow ingestion are separate
   workstreams and are not scored here.
@@ -43,9 +43,9 @@ the breadth gap.
 |---|---|
 | Workbook | `new`, `add_worksheet`, `worksheet_from_index`, `save`, `save_to_buffer`, `save_to_writer` |
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
-| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
+| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, non-finite display strings |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
-| Cell layout | column width and range width, column autofit-width hint, column format and range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
+| Cell layout | column width and range width, column autofit-width hint, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks |
 | Layout defaults | default row height and pixel variant |
@@ -54,7 +54,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 163 core + 107 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 163 core + 114 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -107,7 +107,7 @@ Status meanings:
 | `write_url`, `write_url_with_text`, `write_url_with_options` | Missing | Hyperlink records and URL options |
 | `write_rich_string_with_format`, `write_url_with_format` | Missing | Formatted rich text and links |
 | `set_formula_result`, `set_formula_result_default` | Missing | Stored formula results |
-| `set_nan_value`, `set_infinity_value`, `set_neg_infinity_value` | Missing | Display text for non-finite numbers |
+| `set_nan_value`, `set_infinity_value`, `set_neg_infinity_value` | Supported | Display text for non-finite numbers |
 | `set_hidden_zeroes` | Supported | — |
 
 ### 3.3 Worksheet Layout, View, And Print
@@ -131,7 +131,7 @@ Status meanings:
 | `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
 | `set_default_format` | Missing | Worksheet default format |
 | `set_cell_format`, `set_range_format` | Supported | — |
-| `set_range_format_with_border` | Missing | Border-aware range edit |
+| `set_range_format_with_border` | Supported | Border-aware range edit |
 | `clear_cell`, `clear_cell_format` | Supported | — |
 | `set_selection`, `set_top_left_cell` | Supported | — |
 | `set_freeze_panes` | Supported | — |
@@ -325,7 +325,7 @@ records; LibreOffice renders merged ranges and links; no stubs.
 | `add_conditional_format` | Reporting and highlighting | L |
 | `add_data_validation` | Input constraints | M |
 | `protect` / `unprotect_range` | Shared-workbook safety | M |
-| `set_formula_result` variants, `set_nan_value`, `set_infinity_value`, hidden zeroes | Finishing touches for computed sheets | S–M |
+| `set_formula_result` variants | Finishing touches for computed sheets | S–M |
 
 **Exit criteria:** filters/tables/validation survive calamine where readable;
 conditional formats and protection visible in LibreOffice; malformed ranges
@@ -430,7 +430,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 163 core + 107 writer unit tests and 6 doctests; calamine
+- Test evidence: 163 core + 114 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
