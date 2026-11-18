@@ -19,7 +19,8 @@ widths/formats, approximate autofit, multi-sheet package assembly with optional 
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range, core/app/custom document properties with explicit creation timestamps,
-and `save`/`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
+user-defined names for literals and absolute A1 references, and
+`save`/`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
 table and emits `BrtCellIsst`; `ToCellValue` remains the low-level core
 contract and still converts `&str`/`String` to inline strings. `KnownID` covers
 860 of the 878 records in revision 22.0; every id it does carry matches the
@@ -160,9 +161,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 394 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 422 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 397 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 426 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -249,7 +250,8 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/record/brt_page_breaks.rs` | manual row/column break records |
 | `rust-xlsb-core/src/prelude/record/brt_calc_prop.rs` | workbook calculation mode and flags |
 | `rust-xlsb-core/src/prelude/record/brt_file_sharing.rs` | read-only recommendation record |
-| `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, document properties, save entry points |
+| `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, defined names, document properties, save entry points |
+| `rust-xlsb-writer/src/defined_name.rs` | User-defined name model, validation, and `NameParsedFormula` token encoding |
 | `rust-xlsb-writer/src/properties.rs` | `DocProperties`, custom values, and chrono creation timestamps |
 | `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, view, and print API |
 | `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
@@ -296,9 +298,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 406 unit tests and 7 doctests in default builds: 193 in core, 213 in writer.
+- 422 unit tests and 7 doctests in default builds: 193 in core, 229 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 410 total. Most core
+  `rust_decimal` adapters, for 426 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
@@ -319,7 +321,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
   package parts, ZIP compression/ZIP64 and readback, multi-sheet save,
   print/header/page-break serialization,
-  print-area/repeat-title defined names, hyperlink records/relationships, workbook
+  print-area/repeat-title/user defined names, hyperlink records/relationships, workbook
   calculation/read-only/tab-ratio records, range protection/ignored-error
   records, and calamine round-trips for values and temporal formats.
 - `criterion` is a dev-dependency in both crates but no benchmark exists.

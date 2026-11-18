@@ -21,15 +21,16 @@ It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no rich strings.
-3. **Worksheet layout and view** — no arbitrary defined names.
+3. **Worksheet layout and view** — user-defined names support literals and
+   absolute A1 references only; arbitrary formulas are missing.
 4. **Analysis features** — no filter conditions, tables, conditional
    formatting, or data validation; an `AutoFilter` range and structural sheet
    protection are present.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
-6. **Workbook metadata and packaging** — DEFLATE ZIP compression is available,
-   but there are no user-defined names, themes, chartsheets, or VBA; core/app/
-   custom document properties and ZIP64 large-file mode are present.
+6. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64, and
+   user-defined names are available, but there are no themes, chartsheets, or
+   VBA; core/app/custom document properties are present.
 7. **Data ecosystem** — no `Formula`, serde, or Polars adapters; optional
    `jiff` and `rust_decimal` features and the native `ExcelDateTime` type are
    present.
@@ -61,7 +62,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, and date/time parse errors |
-| Verification | 193 core + 213 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 193 core + 229 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -85,7 +86,7 @@ Status meanings:
 | `new_worksheet_with_constant_memory`, `new_worksheet_with_low_memory` | Missing | Detached worksheet constructors |
 | `set_tempdir` | Missing | Temp-file policy for streaming |
 | `add_chartsheet` | Missing | Chartsheet packaging |
-| `define_name` | Missing | Defined-name records |
+| `define_name` | Partial | Global/local records; literals and absolute A1 cell/range references |
 | `set_properties` | Supported | Core/app/custom strings, typed values, and chrono, jiff, or `ExcelDateTime` creation times |
 | `set_default_format` | Supported | Workbook default format; set before worksheets |
 | `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
@@ -285,7 +286,7 @@ records or package parts that do not exist yet.
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
-| Defined names | Workbook defined-name records; print-area and print-title names are shipped |
+| Defined names | User literals and absolute A1 references, plus print-area and print-title names |
 | Document properties | Shipped: core/app strings, custom values, and creation timestamps; themes and macros remain |
 | Themes | Theme part and theme color indexes |
 | VBA | Macro project parts and content types |
@@ -378,7 +379,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 
 | Item | Why | Size |
 |---|---|---|
-| Defined names | Formula readability | M |
+| ✅ Defined names | Literals and absolute A1 cell/range references; built-in print names | — |
 | ✅ Document properties | Core/app/custom properties; chrono, jiff, and `ExcelDateTime` creation times | — |
 | Themes and theme colors | Visual parity | M–L |
 | Chartsheets | Dashboard structure | L |
@@ -445,7 +446,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 193 core + 213 writer unit tests and 7 doctests in default
+- Test evidence: 193 core + 229 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.

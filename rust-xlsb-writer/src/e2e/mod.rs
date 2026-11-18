@@ -428,6 +428,51 @@ fn print_ranges_appear_as_defined_names() {
 }
 
 #[test]
+fn user_defined_names_roundtrip_through_calamine() {
+    let mut workbook = Workbook::new();
+    workbook.add_worksheet();
+    workbook
+        .define_name("Exchange_rate", "=0.96")
+        .expect("constant");
+    workbook.define_name("Label", "=\"Hello\"").expect("string");
+    workbook.define_name("Sheet1!Rate", "=$A$1").expect("local");
+    workbook
+        .define_name("Sales", "=Sheet1!$A$1:$B$2")
+        .expect("range");
+
+    let bytes = workbook.save_to_buffer().expect("saves");
+    let opened = open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).expect("opens");
+    assert_eq!(
+        opened.defined_names(),
+        &[
+            ("Exchange_rate".to_owned(), "0.96".to_owned()),
+            ("Label".to_owned(), "\"Hello\"".to_owned()),
+            ("Rate".to_owned(), "Sheet1!$A$1".to_owned()),
+            ("Sales".to_owned(), "Sheet1!$A$1:$B$2".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn quoted_sheet_names_roundtrip_in_defined_names() {
+    let mut workbook = Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("Data Sheet")
+        .expect("sheet name");
+    workbook
+        .define_name("DataCell", "='Data Sheet'!$A$1")
+        .expect("name");
+
+    let bytes = workbook.save_to_buffer().expect("saves");
+    let opened = open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).expect("opens");
+    assert_eq!(
+        opened.defined_names(),
+        &[("DataCell".to_owned(), "Data Sheet!$A$1".to_owned())]
+    );
+}
+
+#[test]
 fn hyperlinks_keep_visible_text() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();

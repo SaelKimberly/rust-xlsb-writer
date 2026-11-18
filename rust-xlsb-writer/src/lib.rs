@@ -25,6 +25,7 @@
 
 mod data;
 mod datetime;
+mod defined_name;
 #[cfg(test)]
 mod e2e;
 mod error;

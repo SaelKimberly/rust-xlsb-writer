@@ -13,6 +13,7 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
+use crate::defined_name::{DefinedName, XtiCollector, area3d, sheet_index};
 use crate::properties::CustomPropertyValue;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
@@ -24,6 +25,7 @@ pub fn build_package(
     settings: WorkbookSettings,
     properties: Option<&DocProperties>,
     default_format: Option<&Format>,
+    defined_names: &[DefinedName],
 ) -> Result<Vec<u8>> {
     let sst = SSTHolder::create_in_memory()?;
     let mut registry = StyleRegistry::new();
@@ -84,7 +86,7 @@ pub fn build_package(
         ),
         (
             "xl/workbook.bin".to_owned(),
-            workbook_part(sheets, settings)?,
+            workbook_part(sheets, settings, defined_names)?,
         ),
         ("xl/styles.bin".to_owned(), styles),
     ];
@@ -160,7 +162,11 @@ const fn visible_state(sheet: &Worksheet, index: usize, active: usize) -> u32 {
     }
 }
 
-fn workbook_part(sheets: &[Worksheet], settings: WorkbookSettings) -> Result<Vec<u8>> {
+fn workbook_part(
+    sheets: &[Worksheet],
+    settings: WorkbookSettings,
+    defined_names: &[DefinedName],
+) -> Result<Vec<u8>> {
     let view = workbook_view(sheets);
     let mut out = Vec::new();
     push_record(&mut out, &BrtBeginBook::default())?;
@@ -215,7 +221,7 @@ fn workbook_part(sheets: &[Worksheet], settings: WorkbookSettings) -> Result<Vec
         )?;
     }
     push_record(&mut out, &BrtEndBundleShs::default())?;
-    write_defined_names(sheets, &mut out)?;
+    write_defined_names(sheets, defined_names, &mut out)?;
     if let Some(mode) = settings.calculation_mode {
         write_calculation_properties(mode, &mut out)?;
     }
@@ -247,55 +253,41 @@ fn write_calculation_properties(mode: CalculationMode, out: &mut Vec<u8>) -> Res
     Ok(())
 }
 
-fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
-    let has_names = sheets.iter().any(|sheet| {
-        sheet.print_area().is_some()
-            || has_repeat_titles(sheet)
-            || sheet.autofilter_range().is_some()
-    });
-    if !has_names {
+fn write_defined_names(
+    sheets: &[Worksheet],
+    defined_names: &[DefinedName],
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    if defined_names.is_empty()
+        && !sheets.iter().any(|sheet| {
+            sheet.print_area().is_some()
+                || has_repeat_titles(sheet)
+                || sheet.autofilter_range().is_some()
+        })
+    {
         return Ok(());
     }
 
-    let mut xti_indexes = vec![None; sheets.len()];
-    let mut xtis = Vec::new();
-    for (index, sheet) in sheets.iter().enumerate() {
-        if sheet.print_area().is_none()
-            && !has_repeat_titles(sheet)
-            && sheet.autofilter_range().is_none()
-        {
-            continue;
-        }
-        let sheet_index = i32::try_from(index)
-            .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?;
-        let xti_index = u16::try_from(xtis.len())
-            .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?;
-        xti_indexes[index] = Some(xti_index);
-        xtis.push(Xti {
-            externalLink: 0,
-            firstSheet: sheet_index,
-            lastSheet: sheet_index,
-        });
-    }
+    let mut xti = XtiCollector::new(sheets.len());
+    let mut names = Vec::new();
 
-    push_record(out, &BrtBeginExternals::default())?;
-    push_record(out, &BrtSupSelf::default())?;
-    push_record(
-        out,
-        &BrtExternSheet {
-            cXti: u32::try_from(xtis.len())
-                .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?,
-            rgXti: xtis,
-        },
-    )?;
-    push_record(out, &BrtEndExternals::default())?;
+    // Preserve the historical Xti order: sheet order, one entry per sheet that
+    // already had built-in name metadata.
+    for (index, sheet) in sheets.iter().enumerate() {
+        if sheet.print_area().is_some()
+            || has_repeat_titles(sheet)
+            || sheet.autofilter_range().is_some()
+        {
+            xti.index(index)?;
+        }
+    }
 
     for (index, sheet) in sheets.iter().enumerate() {
         if let Some((first_row, first_col, last_row, last_col)) = sheet.print_area() {
-            let ixti = xti_indexes[index].expect("print range has an Xti");
+            let ixti = xti.index(index)?;
             push_defined_name(
-                out,
-                index,
+                &mut names,
+                sheet_itab(index)?,
                 "_xlnm.Print_Area",
                 BrtName::F_BUILTIN,
                 area3d(ixti, first_row, first_col, last_row, last_col).to_vec(),
@@ -304,14 +296,14 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
     }
     for (index, sheet) in sheets.iter().enumerate() {
         if let Some(rfx) = sheet.autofilter_range() {
-            let ixti = xti_indexes[index].expect("autofilter has an Xti");
+            let ixti = xti.index(index)?;
             let first_col = u16::try_from(rfx.colFirst)
                 .map_err(|_| Error::ValueNotRepresentable("autofilter column out of range"))?;
             let last_col = u16::try_from(rfx.colLast)
                 .map_err(|_| Error::ValueNotRepresentable("autofilter column out of range"))?;
             push_defined_name(
-                out,
-                index,
+                &mut names,
+                sheet_itab(index)?,
                 "_xlnm._FilterDatabase",
                 BrtName::F_BUILTIN | BrtName::F_HIDDEN,
                 area3d(ixti, rfx.rwFirst, first_col, rfx.rwLast, last_col).to_vec(),
@@ -320,7 +312,7 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
     }
     for (index, sheet) in sheets.iter().enumerate() {
         if has_repeat_titles(sheet) {
-            let ixti = xti_indexes[index].expect("print range has an Xti");
+            let ixti = xti.index(index)?;
             let mut rgce = Vec::with_capacity(31);
             if let Some((first_row, last_row)) = sheet.repeat_rows() {
                 rgce.extend_from_slice(&area3d(ixti, first_row, 0, last_row, MAX_COL));
@@ -331,10 +323,57 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
             if sheet.repeat_rows().is_some() && sheet.repeat_columns().is_some() {
                 rgce.push(0x10);
             }
-            push_defined_name(out, index, "_xlnm.Print_Titles", BrtName::F_BUILTIN, rgce)?;
+            push_defined_name(
+                &mut names,
+                sheet_itab(index)?,
+                "_xlnm.Print_Titles",
+                BrtName::F_BUILTIN,
+                rgce,
+            )?;
         }
     }
+
+    let mut user_names = defined_names.iter().collect::<Vec<_>>();
+    user_names.sort_by(|left, right| left.sort_name.cmp(&right.sort_name));
+    for name in user_names {
+        let itab = match name.scope.as_deref() {
+            Some(scope) => sheet_itab(sheet_index(sheets, scope)?)?,
+            None => u32::MAX,
+        };
+        let rgce = name.encode(sheets, &mut xti)?;
+        push_defined_name(&mut names, itab, &name.name, 0, rgce)?;
+    }
+
+    if !xti.is_empty() {
+        let mut xtis = Vec::with_capacity(xti.sheets().len());
+        for &sheet in xti.sheets() {
+            let sheet = i32::try_from(sheet)
+                .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?;
+            xtis.push(Xti {
+                externalLink: 0,
+                firstSheet: sheet,
+                lastSheet: sheet,
+            });
+        }
+        push_record(out, &BrtBeginExternals::default())?;
+        push_record(out, &BrtSupSelf::default())?;
+        push_record(
+            out,
+            &BrtExternSheet {
+                cXti: u32::try_from(xtis.len())
+                    .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?,
+                rgXti: xtis,
+            },
+        )?;
+        push_record(out, &BrtEndExternals::default())?;
+    }
+
+    out.extend_from_slice(&names);
     Ok(())
+}
+
+fn sheet_itab(index: usize) -> Result<u32> {
+    u32::try_from(index).map_err(|_| Error::ValueNotRepresentable("too many worksheets"))
 }
 
 const fn has_repeat_titles(sheet: &Worksheet) -> bool {
@@ -343,8 +382,8 @@ const fn has_repeat_titles(sheet: &Worksheet) -> bool {
 
 fn push_defined_name(
     out: &mut Vec<u8>,
-    sheet_index: usize,
-    name: &'static str,
+    itab: u32,
+    name: &str,
     flags: u32,
     rgce: Vec<u8>,
 ) -> Result<()> {
@@ -353,8 +392,7 @@ fn push_defined_name(
         &BrtName {
             flags,
             chKey: 0,
-            itab: u32::try_from(sheet_index)
-                .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?,
+            itab,
             name: XlWideString::construct(Some(name)),
             formula: NameParsedFormula {
                 cce: u32::try_from(rgce.len())
@@ -367,17 +405,6 @@ fn push_defined_name(
         },
     )?;
     Ok(())
-}
-
-fn area3d(ixti: u16, first_row: u32, first_col: u16, last_row: u32, last_col: u16) -> [u8; 15] {
-    let mut rgce = [0u8; 15];
-    rgce[0] = 0x3B;
-    rgce[1..3].copy_from_slice(&ixti.to_le_bytes());
-    rgce[3..7].copy_from_slice(&first_row.to_le_bytes());
-    rgce[7..11].copy_from_slice(&last_row.to_le_bytes());
-    rgce[11..13].copy_from_slice(&first_col.to_le_bytes());
-    rgce[13..15].copy_from_slice(&last_col.to_le_bytes());
-    rgce
 }
 
 fn sheet_rels(sheet: &Worksheet) -> Option<String> {
@@ -1067,6 +1094,154 @@ mod tests {
         assert_eq!(names[0].formula.rgce, area3d(0, 2, 0, 3, MAX_COL).to_vec());
         assert_eq!(names[1].itab, 1);
         assert_eq!(names[1].formula.rgce, area3d(1, 0, 2, MAX_ROW, 3).to_vec());
+    }
+
+    #[test]
+    fn user_defined_names_emit_global_and_local_records() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+        workbook
+            .define_name("Exchange_rate", "=0.96")
+            .expect("constant");
+        workbook
+            .define_name("Sheet1!Rate", "=$A$1")
+            .expect("local reference");
+        workbook
+            .define_name("Sales", "=Sheet1!$A$1:$B$2")
+            .expect("global reference");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let names = records::<BrtName>(&workbook_part);
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 1);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(names.len(), 3);
+
+        let constant = names
+            .iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Exchange_rate"))
+            .expect("constant name");
+        assert_eq!(constant.itab, u32::MAX);
+        assert_eq!(constant.flags, 0);
+        let mut expected = vec![0x1F];
+        expected.extend_from_slice(&0.96_f64.to_le_bytes());
+        assert_eq!(constant.formula.rgce, expected);
+
+        let local = names
+            .iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Rate"))
+            .expect("local name");
+        assert_eq!(local.itab, 0);
+        assert_eq!(local.formula.rgce, [0x3A, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+        let global = names
+            .iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Sales"))
+            .expect("global name");
+        assert_eq!(global.itab, u32::MAX);
+        assert_eq!(global.formula.rgce, area3d(0, 0, 0, 1, 1).to_vec());
+    }
+
+    #[test]
+    fn local_name_on_a_second_sheet_uses_its_sheet_index() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.add_worksheet();
+        workbook
+            .define_name("sheet2!Rate", "=$A$1")
+            .expect("case-insensitive scope");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let name = records::<BrtName>(&workbook_part)
+            .into_iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Rate"))
+            .expect("name");
+        assert_eq!(name.itab, 1);
+        assert_eq!(&name.formula.rgce[1..3], &[0, 0]);
+
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 1);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 1);
+    }
+
+    #[test]
+    fn built_in_and_user_names_share_one_extern_sheet_collection() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .set_print_area(0, 0, 1, 1)
+            .expect("print area");
+        workbook.add_worksheet();
+        workbook.define_name("Other", "=Sheet2!$A$1").expect("name");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let names = records::<BrtName>(&workbook_part);
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 2);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(extern_sheets[0].rgXti[1].firstSheet, 1);
+
+        let user = names
+            .iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Other"))
+            .expect("user name");
+        assert_eq!(&user.formula.rgce[1..3], &[1, 0]);
+    }
+
+    #[test]
+    fn constant_only_names_skip_the_external_sheet_block() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.define_name("Rate", "0.5").expect("name");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        assert_eq!(records::<BrtName>(&workbook_part).len(), 1);
+        assert_eq!(records::<BrtExternSheet>(&workbook_part).len(), 0);
+    }
+
+    #[test]
+    fn defined_name_scopes_and_duplicates_are_checked_at_save() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.define_name("Rate", "=1").expect("name");
+        assert!(workbook.define_name("rate", "=2").is_ok());
+        assert!(workbook.save_to_buffer().is_err());
+
+        let mut scoped = crate::Workbook::new();
+        scoped.add_worksheet();
+        scoped.add_worksheet();
+        scoped.define_name("Sheet1!Rate", "=1").expect("local");
+        scoped.define_name("Sheet2!Rate", "=2").expect("local");
+        assert!(scoped.save_to_buffer().is_ok());
+
+        let mut missing = crate::Workbook::new();
+        missing.add_worksheet();
+        missing.define_name("Missing!Rate", "=1").expect("stores");
+        assert!(missing.save_to_buffer().is_err());
+    }
+
+    #[test]
+    fn invalid_names_and_unsupported_formulas_are_rejected() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        assert!(workbook.define_name("A1", "=1").is_err());
+
+        assert!(workbook.define_name("Rate", "=A1").is_ok());
+        assert!(workbook.save_to_buffer().is_err());
+
+        let mut function = crate::Workbook::new();
+        function.add_worksheet();
+        assert!(function.define_name("Rate", "=SUM(1,2)").is_ok());
+        assert!(function.save_to_buffer().is_err());
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 
+use crate::defined_name::{DefinedName, sheet_index};
 use crate::worksheet::{Worksheet, default_column_metrics, validate_sheet_name};
 use crate::{DocProperties, Error, Format, Result};
 
@@ -35,6 +36,7 @@ pub struct Workbook {
     default_format: Option<Format>,
     default_row_height: Option<u32>,
     default_col_width: Option<f64>,
+    defined_names: Vec<DefinedName>,
 }
 
 impl Default for Workbook {
@@ -60,6 +62,7 @@ impl Workbook {
             default_format: None,
             default_row_height: None,
             default_col_width: None,
+            defined_names: Vec::new(),
         }
     }
 
@@ -108,6 +111,22 @@ impl Workbook {
     pub const fn use_zip_large_file(&mut self, enable: bool) -> &mut Self {
         self.settings.zip_large_file = enable;
         self
+    }
+
+    /// Defines a workbook or worksheet-scoped name.
+    ///
+    /// Use `Sheet1!Name` or `'Sheet 1'!Name` for a worksheet-scoped name. The
+    /// formula may be a number, string, boolean, error, or an absolute A1 cell
+    /// or range reference. Global references must include a sheet name; local
+    /// references resolve against the name's worksheet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] when the name violates Excel's naming rules.
+    /// Formula shapes and sheet scopes are validated when the workbook is saved.
+    pub fn define_name(&mut self, name: impl Into<String>, formula: &str) -> Result<&mut Self> {
+        self.defined_names.push(DefinedName::new(name, formula)?);
+        Ok(self)
     }
 
     /// Sets the workbook document properties.
@@ -252,6 +271,7 @@ impl Workbook {
             self.settings,
             self.doc_properties.as_ref(),
             self.default_format.as_ref(),
+            &self.defined_names,
         )
     }
 
@@ -276,6 +296,24 @@ impl Workbook {
             validate_sheet_name(name)?;
             if !names.insert(name.to_lowercase()) {
                 return Err(Error::SheetNameReused(name.to_owned()));
+            }
+        }
+
+        let mut defined_names = HashSet::new();
+        for name in &self.defined_names {
+            if let Some(scope) = name.scope.as_deref() {
+                sheet_index(&self.worksheets, scope)?;
+            }
+            let key = format!(
+                "{}!{}",
+                name.scope.as_deref().unwrap_or("").to_lowercase(),
+                name.name.to_lowercase()
+            );
+            if !defined_names.insert(key) {
+                return Err(Error::Parameter(format!(
+                    "defined name already used: {}",
+                    name.name
+                )));
             }
         }
         Ok(())
