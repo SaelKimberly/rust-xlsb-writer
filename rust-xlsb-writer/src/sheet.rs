@@ -310,6 +310,7 @@ fn active_pane(freeze: Option<(u32, u16)>, selection: Option<UncheckedRfX>) -> u
 fn write_hyperlinks(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     let mut rel_id = 0u32;
     for (&(row, col), link) in sheet.hyperlinks() {
+        // None marks an internal link; its serialized relId is the empty string.
         let rel = if link.is_internal() {
             None
         } else {
