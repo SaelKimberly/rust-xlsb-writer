@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::worksheet::{Worksheet, validate_sheet_name};
-use crate::{DocProperties, Error, Result};
+use crate::{DocProperties, Error, Format, Result};
 
 /// Formula calculation mode for a workbook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,11 +25,27 @@ pub struct WorkbookSettings {
     pub tab_ratio: Option<u8>,
 }
 
+const fn default_column_metrics(width: u32) -> Option<(u32, u32)> {
+    match width {
+        56 => Some((6, 5)),
+        64 => Some((7, 5)),
+        72 => Some((8, 5)),
+        80 => Some((9, 7)),
+        96 => Some((11, 7)),
+        104 => Some((12, 7)),
+        120 => Some((13, 9)),
+        _ => None,
+    }
+}
+
 /// A workbook that owns one or more worksheets.
 pub struct Workbook {
     worksheets: Vec<Worksheet>,
     settings: WorkbookSettings,
     doc_properties: Option<DocProperties>,
+    default_format: Option<Format>,
+    default_row_height: Option<u32>,
+    default_col_width: Option<f64>,
 }
 
 impl Default for Workbook {
@@ -50,6 +66,9 @@ impl Workbook {
                 tab_ratio: None,
             },
             doc_properties: None,
+            default_format: None,
+            default_row_height: None,
+            default_col_width: None,
         }
     }
 
@@ -83,10 +102,52 @@ impl Workbook {
         self
     }
 
+    /// Sets the default cell format and worksheet dimensions.
+    ///
+    /// Must be called before adding worksheets. `row_height` and `col_width`
+    /// are in pixels; supported column widths are 56, 64, 72, 80, 96, 104, and
+    /// 120.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] if a worksheet already exists or the
+    /// column width is unsupported. Returns [`Error::ValueNotRepresentable`]
+    /// if the row height exceeds Excel's limit.
+    pub fn set_default_format(
+        &mut self,
+        format: &Format,
+        row_height: u32,
+        col_width: u32,
+    ) -> Result<&mut Self> {
+        if !self.worksheets.is_empty() {
+            return Err(Error::Parameter(
+                "default format must be set before adding worksheets".to_owned(),
+            ));
+        }
+        let Some((digit_width, padding)) = default_column_metrics(col_width) else {
+            return Err(Error::Parameter(format!(
+                "unsupported default column width: {col_width}"
+            )));
+        };
+        if f64::from(row_height) * 0.75 > 409.5 {
+            return Err(Error::ValueNotRepresentable(
+                "default row height exceeds 409.5 points",
+            ));
+        }
+
+        self.default_format = Some(format.clone());
+        self.default_row_height = Some(row_height);
+        self.default_col_width =
+            Some((f64::from(col_width) - f64::from(padding)) / f64::from(digit_width));
+        Ok(self)
+    }
+
     /// Adds a worksheet with a default `SheetN` name.
     pub fn add_worksheet(&mut self) -> &mut Worksheet {
         let name = format!("Sheet{}", self.worksheets.len() + 1);
-        self.worksheets.push(Worksheet::new_named(name));
+        let mut worksheet = Worksheet::new_named(name);
+        self.apply_default_dimensions(&mut worksheet);
+        self.worksheets.push(worksheet);
         self.worksheets
             .last_mut()
             .expect("worksheet was just pushed")
@@ -103,7 +164,18 @@ impl Workbook {
                 .set_name(name)
                 .expect("default sheet name is valid");
         }
+        self.apply_default_dimensions(&mut worksheet);
         self.worksheets.push(worksheet);
+    }
+
+    fn apply_default_dimensions(&self, worksheet: &mut Worksheet) {
+        if let (Some(format), Some(height), Some(width)) = (
+            self.default_format.as_ref(),
+            self.default_row_height,
+            self.default_col_width,
+        ) {
+            worksheet.initialize_default_format(format, height, width);
+        }
     }
 
     /// Returns a worksheet by zero-based index.
@@ -165,6 +237,7 @@ impl Workbook {
             &self.worksheets,
             self.settings,
             self.doc_properties.as_ref(),
+            self.default_format.as_ref(),
         )
     }
 
@@ -233,6 +306,33 @@ mod tests {
         let bytes = empty.save_to_buffer().expect("saves");
         let opened = open_workbook_auto_from_rs(Cursor::new(bytes)).expect("opens");
         assert_eq!(opened.sheet_names(), ["Sheet1".to_owned()]);
+    }
+
+    #[test]
+    fn default_format_must_precede_worksheets() {
+        let mut workbook = Workbook::new();
+        let format = crate::Format::new().set_bold();
+
+        workbook
+            .set_default_format(&format, 24, 80)
+            .expect("sets before worksheets");
+        workbook.add_worksheet();
+
+        assert!(matches!(
+            workbook.set_default_format(&format, 24, 80),
+            Err(Error::Parameter(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_unsupported_default_column_width() {
+        let mut workbook = Workbook::new();
+        let format = crate::Format::new();
+
+        assert!(matches!(
+            workbook.set_default_format(&format, 24, 65),
+            Err(Error::Parameter(_))
+        ));
     }
 
     #[test]

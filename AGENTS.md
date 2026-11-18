@@ -16,10 +16,10 @@ registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
 public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
 widths/formats, multi-sheet package assembly, workbook calculation mode,
-read-only recommendation, tab ratio, sheet protection with unprotected ranges,
-ignored worksheet errors, an `AutoFilter` range, core/app/custom document
-properties with explicit creation timestamps, and `save`/
-`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
+read-only recommendation, tab ratio, a workbook default cell format, sheet
+protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
+range, core/app/custom document properties with explicit creation timestamps,
+and `save`/`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
 table and emits `BrtCellIsst`; `ToCellValue` remains the low-level core
 contract and still converts `&str`/`String` to inline strings. `KnownID` covers
 860 of the 878 records in revision 22.0; every id it does carry matches the
@@ -81,8 +81,8 @@ state, print state (page setup, text headers/footers, manual page breaks, print
 areas, and repeat titles), hyperlinks with external worksheet relationships,
 unprotected ranges, ignored worksheet errors, an `AutoFilter` range, and a
 worksheet-local format table; `workbook.rs` owns the worksheet vector, document
-properties,
-looks sheets up by index or exact name, and attaches detached `Worksheet::new`
+properties, the optional default format and its row/column dimensions, looks
+sheets up by index or exact name, and attaches detached `Worksheet::new`
 values through `push_worksheet`; `write` stores
 context-free `CellData` and `write_with_format` interns a `Format` by value.
 Non-finite floats become configurable display strings because XLSB has no
@@ -91,10 +91,11 @@ save, the writer creates an `SSTHolder`, turns high-level strings into shared
 strings (`BrtCellIsst`), and converts numbers through `WbContext`.
 
 Formatting is separate again. Core's `StyleRegistry` (`styles.rs`) is seeded
-with the default `BrtXF` at index 0. `CellStyle` pairs a `BrtFont`, `BrtFill`,
-`BrtBorder`, and the direct `BrtXF` attributes; `add_style` interns each
-component, patches `iFont`/`iFill`/`ixBorder`/`ixfeParent`, and deduplicates
-the resulting XF. `add_number_format` allocates custom `iFmt` ids from 164. The
+with the default `BrtXF` at index 0; `set_default_style` can replace cell XF 0
+and the Normal style XF before worksheet formats are registered. `CellStyle`
+pairs a `BrtFont`, `BrtFill`, `BrtBorder`, and the direct `BrtXF` attributes;
+`add_style` interns each component, patches
+`iFont`/`iFill`/`ixBorder`/`ixfeParent`, and deduplicates the resulting XF. `add_number_format` allocates custom `iFmt` ids from 164. The
 public `Format` builder maps to `CellStyle` at save; border-aware range
 formatting copies only the requested border sides; `Worksheet` stores row and
 per-column width/format options; the writer emits coalesced `BrtColInfo`
@@ -155,7 +156,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 371 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 377 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -286,7 +287,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 371 unit tests and 6 doctests total: 192 in core, 179 in writer. Most core
+- 377 unit tests and 6 doctests total: 193 in core, 184 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

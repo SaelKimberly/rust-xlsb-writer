@@ -14,15 +14,20 @@ use crate::properties::CustomPropertyValue;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
-use crate::{DocProperties, Error, Result};
+use crate::{DocProperties, Error, Format, Result};
 
 pub fn build_package(
     sheets: &[Worksheet],
     settings: WorkbookSettings,
     properties: Option<&DocProperties>,
+    default_format: Option<&Format>,
 ) -> Result<Vec<u8>> {
     let sst = SSTHolder::create_in_memory()?;
     let mut registry = StyleRegistry::new();
+    if let Some(format) = default_format {
+        let style = format.to_cell_style(&mut registry)?;
+        registry.set_default_style(style)?;
+    }
     let mut style_indexes = Vec::with_capacity(sheets.len());
 
     for sheet in sheets {
@@ -799,8 +804,9 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginAFilter, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtExternSheet,
-        BrtFileSharing, BrtHLink, BrtName, BrtSheetProtection, BrtXF,
+        Bold, BrtBeginAFilter, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp,
+        BrtExternSheet, BrtFileSharing, BrtFont, BrtHLink, BrtName, BrtSheetProtection,
+        BrtWsFmtInfo, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff};
 
@@ -822,6 +828,34 @@ mod tests {
             }
         }
         records
+    }
+
+    #[test]
+    fn default_format_replaces_style_zero_and_sets_sheet_dimensions() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .set_default_format(&crate::Format::new().set_bold().set_font_size(14.0), 24, 80)
+            .expect("default format");
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        let fonts = records::<BrtFont>(&styles);
+        let xfs = records::<BrtXF>(&styles);
+
+        assert_eq!(fonts.len(), 2);
+        assert_eq!(fonts[1].bls, Bold::BLSBOLD);
+        assert_eq!(fonts[1].dyHeight, 280);
+        assert_eq!(xfs[0].ixfeParent, 0xFFFF);
+        assert_eq!(xfs[0].iFont, 1);
+        assert_eq!(xfs[1].ixfeParent, 0);
+        assert_eq!(xfs[1].iFont, 1);
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let formats = records::<BrtWsFmtInfo>(&sheet);
+        assert_eq!(formats.len(), 1);
+        assert_eq!(formats[0].miyDefRwHeight, 360);
+        assert_eq!(formats[0].dxGCol, 2_076);
     }
 
     #[test]

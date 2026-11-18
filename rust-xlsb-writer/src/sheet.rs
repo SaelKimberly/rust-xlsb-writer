@@ -74,12 +74,15 @@ pub fn write_sheet(
         let row_style = row_options
             .and_then(|options| options.format)
             .map_or(0, |index| mapped_style(index, style_indexes));
+        let default_row_height = sheet
+            .default_row_height()
+            .map_or(DEFAULT_ROW_HEIGHT, height_to_twips);
         let row_height = if row_options.is_some_and(|options| options.hidden) {
             0
         } else {
             row_options
                 .and_then(|options| options.height)
-                .map_or(DEFAULT_ROW_HEIGHT, height_to_twips)
+                .map_or(default_row_height, height_to_twips)
         };
         let cells = sheet.cells().get(&row);
         let spans = cells.map_or_else(Vec::new, |cells| column_spans(cells.keys().copied()));
@@ -247,16 +250,22 @@ fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
 
 fn write_sheet_format(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     let height = sheet.default_row_height();
+    let col_width = sheet.default_col_width();
     let (row_level, col_level) = sheet.outline_levels();
     let hide_unused_rows = sheet.unused_rows_hidden();
-    if height.is_none() && row_level == 0 && col_level == 0 && !hide_unused_rows {
+    if height.is_none()
+        && col_width.is_none()
+        && row_level == 0
+        && col_level == 0
+        && !hide_unused_rows
+    {
         return Ok(());
     }
 
     push(
         out,
         &BrtWsFmtInfo {
-            dxGCol: DEFAULT_COL_WIDTH,
+            dxGCol: col_width.map_or(DEFAULT_COL_WIDTH, width_to_units),
             miyDefRwHeight: height.map_or(DEFAULT_ROW_HEIGHT, height_to_twips),
             fUnsynced: height.is_some(),
             fDyZero: hide_unused_rows,
@@ -598,6 +607,9 @@ fn dimension(sheet: &Worksheet) -> BrtWsDim {
 
 fn column_infos(sheet: &Worksheet, style_indexes: &[u32]) -> Vec<BrtColInfo> {
     let mut infos = Vec::new();
+    let default_width = sheet
+        .default_col_width()
+        .map_or(DEFAULT_COL_WIDTH, width_to_units);
     let mut columns = sheet.column_options().iter().peekable();
 
     while let Some((&first, first_options)) = columns.next() {
@@ -617,20 +629,32 @@ fn column_infos(sheet: &Worksheet, style_indexes: &[u32]) -> Vec<BrtColInfo> {
                 break;
             }
         }
-        infos.push(col_info(first, last, first_options, style_indexes));
+        infos.push(col_info(
+            first,
+            last,
+            first_options,
+            style_indexes,
+            default_width,
+        ));
     }
 
     infos
 }
 
-fn col_info(first: u16, last: u16, options: &ColumnOptions, style_indexes: &[u32]) -> BrtColInfo {
+fn col_info(
+    first: u16,
+    last: u16,
+    options: &ColumnOptions,
+    style_indexes: &[u32],
+    default_width: u32,
+) -> BrtColInfo {
     BrtColInfo {
         colFirst: u32::from(first),
         colLast: u32::from(last),
         coldx: if options.hidden {
             0
         } else {
-            options.width.map_or(DEFAULT_COL_WIDTH, width_to_units)
+            options.width.map_or(default_width, width_to_units)
         },
         ixfe: options
             .format

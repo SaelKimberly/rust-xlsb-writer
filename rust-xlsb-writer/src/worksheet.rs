@@ -298,7 +298,9 @@ pub struct Worksheet {
     active: bool,
     first_tab: bool,
     tab_color: Option<Color>,
+    default_format: Option<Format>,
     default_row_height: Option<f64>,
+    default_col_width: Option<f64>,
     page_setup: PageSetup,
     header_footer: HeaderFooter,
     page_breaks: Vec<u32>,
@@ -353,7 +355,9 @@ impl Worksheet {
             active: false,
             first_tab: false,
             tab_color: None,
+            default_format: None,
             default_row_height: None,
+            default_col_width: None,
             page_setup: PageSetup::default(),
             header_footer: HeaderFooter::default(),
             page_breaks: Vec::new(),
@@ -668,9 +672,15 @@ impl Worksheet {
         format: Option<&Format>,
     ) -> Result<&mut Self> {
         link.initialize()?;
-        let format = format
-            .cloned()
-            .unwrap_or_else(|| Format::new().set_hyperlink());
+        let format = format.map_or_else(
+            || {
+                self.default_format
+                    .clone()
+                    .unwrap_or_default()
+                    .set_hyperlink()
+            },
+            Format::clone,
+        );
         self.write_string_with_format(row, col, link.text.clone(), &format)?;
         self.hyperlinks.insert((row, col), link);
         Ok(self)
@@ -1661,6 +1671,17 @@ impl Worksheet {
         self.set_default_row_height(f64::from(height) * 0.75)
     }
 
+    pub(crate) fn initialize_default_format(
+        &mut self,
+        format: &Format,
+        row_height: u32,
+        col_width: f64,
+    ) {
+        self.default_format = Some(format.clone());
+        self.default_row_height = Some(f64::from(row_height) * 0.75);
+        self.default_col_width = Some(col_width);
+    }
+
     /// Sets the printed page orientation to landscape.
     pub const fn set_landscape(&mut self) -> &mut Self {
         self.page_setup.landscape = true;
@@ -2453,6 +2474,10 @@ impl Worksheet {
 
     pub(crate) const fn default_row_height(&self) -> Option<f64> {
         self.default_row_height
+    }
+
+    pub(crate) const fn default_col_width(&self) -> Option<f64> {
+        self.default_col_width
     }
 
     pub(crate) const fn unused_rows_hidden(&self) -> bool {
@@ -3600,6 +3625,28 @@ mod tests {
             worksheet.formats()[format as usize],
             Format::new().set_bold()
         );
+    }
+
+    #[test]
+    fn default_dimensions_convert_pixels() {
+        let mut worksheet = Worksheet::new();
+        worksheet.initialize_default_format(&Format::new(), 24, 8.0);
+
+        assert_eq!(worksheet.default_row_height(), Some(18.0));
+        assert_eq!(worksheet.default_col_width(), Some(8.0));
+    }
+
+    #[test]
+    fn default_hyperlink_style_keeps_workbook_default_format() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.initialize_default_format(&Format::new().set_bold(), 24, 8.0);
+        worksheet
+            .write_url(0, 0, "https://example.com")
+            .expect("writes url");
+
+        let cell = &worksheet.cells()[&0][&0];
+        let style = &worksheet.formats()[usize::try_from(cell.format.expect("format")).unwrap()];
+        assert_eq!(style, &Format::new().set_bold().set_hyperlink());
     }
 
     #[test]

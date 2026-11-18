@@ -44,7 +44,7 @@ the breadth gap.
 
 | Area | Current capability |
 |---|---|
-| Workbook | `new`, `add_worksheet`, standalone `Worksheet::new` with `push_worksheet`, lookup by index or exact name, collection access, calculation mode, read-only recommendation, tab ratio, `save`, `save_to_buffer`, `save_to_writer` |
+| Workbook | `new`, `add_worksheet`, standalone `Worksheet::new` with `push_worksheet`, lookup by index or exact name, collection access, calculation mode, read-only recommendation, tab ratio, default cell format, `save`, `save_to_buffer`, `save_to_writer` |
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, non-finite display strings |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
@@ -61,7 +61,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 192 core + 179 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 193 core + 184 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -87,7 +87,7 @@ Status meanings:
 | `add_chartsheet` | Missing | Chartsheet packaging |
 | `define_name` | Missing | Defined-name records |
 | `set_properties` | Partial | Core/app/custom strings, typed values, and chrono creation time; no jiff/`ExcelDateTime` inputs |
-| `set_default_format` | Missing | Workbook default format |
+| `set_default_format` | Supported | Workbook default format; set before worksheets |
 | `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
 | `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
 | `use_zip_large_file`, `set_zip_compression_level` | Missing | Deflate/large-file ZIP |
@@ -444,7 +444,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 192 core + 179 writer unit tests and 6 doctests; calamine
+- Test evidence: 193 core + 184 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on

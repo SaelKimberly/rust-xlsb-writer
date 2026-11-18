@@ -68,6 +68,7 @@ pub struct StyleRegistry {
     fills: Vec<BrtFill>,
     borders: Vec<BrtBorder>,
     xfs: Vec<BrtXF>,
+    style_xf: BrtXF,
     format_ids: HashMap<String, u16>,
     font_ids: HashMap<BrtFont, u16>,
     fill_ids: HashMap<BrtFill, u16>,
@@ -91,6 +92,10 @@ impl StyleRegistry {
             fills: Vec::new(),
             borders: Vec::new(),
             xfs: Vec::new(),
+            style_xf: BrtXF {
+                ixfeParent: 0xFFFF,
+                ..CellStyle::default().xf
+            },
             format_ids: HashMap::new(),
             font_ids: HashMap::new(),
             fill_ids: HashMap::new(),
@@ -118,6 +123,45 @@ impl StyleRegistry {
         registry.xfs.push(xf);
 
         registry
+    }
+
+    /// Replaces the default cell style at XF index 0 and the Normal style XF.
+    ///
+    /// Call this before registering worksheet formats. The style's font, fill,
+    /// border and number format are registered in the usual tables, then cell
+    /// XF 0 and the Normal style XF are replaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ValidationError`] if a style table would exceed the
+    /// MS-XLSB record limit, or if the number format is not registered.
+    pub fn set_default_style(&mut self, style: CellStyle) -> Result<()> {
+        if !self.has_number_format(style.xf.iFmt) {
+            return Err(Error::ValidationError(
+                "number format is not registered".to_owned(),
+            ));
+        }
+
+        let i_font = self.add_font(style.font)?;
+        let i_fill = self.add_fill(style.fill)?;
+        let ix_border = self.add_border(style.border)?;
+
+        let mut xf = style.xf;
+        xf.ixfeParent = 0;
+        xf.iFont = i_font;
+        xf.iFill = i_fill;
+        xf.ixBorder = ix_border;
+        xf.xfGrbitAtr = explicit_grbit();
+
+        let old_xf = self.xfs[0].clone();
+        self.xf_ids.remove(&old_xf);
+        self.xf_ids.insert(xf.clone(), 0);
+        self.style_xf = BrtXF {
+            ixfeParent: 0xFFFF,
+            ..xf.clone()
+        };
+        self.xfs[0] = xf;
+        Ok(())
     }
 
     /// Number of cell formats, including the default style.
@@ -303,13 +347,7 @@ impl StyleRegistry {
         push_record(out, &BrtEndBorders::default())?;
 
         push_record(out, &BrtBeginCellStyleXFs { count: 1 })?;
-        push_record(
-            out,
-            &BrtXF {
-                ixfeParent: 0xFFFF,
-                ..CellStyle::default().xf
-            },
-        )?;
+        push_record(out, &self.style_xf)?;
         push_record(out, &BrtEndCellStyleXFs::default())?;
 
         push_record(out, &BrtBeginCellXFs { count: self.len() })?;
@@ -370,6 +408,28 @@ mod tests {
         assert!(!registry.is_empty());
         assert!(registry.xfs[0].fLocked);
         assert!(CellStyle::default().xf.fLocked);
+    }
+
+    #[test]
+    fn default_style_can_be_replaced() {
+        let mut registry = StyleRegistry::new();
+        let style = CellStyle {
+            font: BrtFont {
+                bls: Bold::BLSBOLD,
+                ..BrtFont::default()
+            },
+            ..CellStyle::default()
+        };
+
+        registry
+            .set_default_style(style.clone())
+            .expect("sets default");
+        assert_eq!(registry.style_xf.ixfeParent, 0xFFFF);
+        assert_eq!(registry.style_xf.iFont, 1);
+        assert_eq!(registry.xfs[0].ixfeParent, 0);
+        assert_eq!(registry.xfs[0].iFont, 1);
+        assert_eq!(registry.add(style).expect("deduplicates"), 0);
+        assert_eq!(registry.len(), 1);
     }
 
     #[test]
