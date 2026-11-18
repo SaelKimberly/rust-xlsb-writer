@@ -133,6 +133,12 @@ impl Checked for RichStr {
                 if u32::from(run.cchMom) > self.str.len() {
                     return Err("rich string phonetic-run parent length is outside the string");
                 }
+                if u32::from(run.ichMom)
+                    .checked_add(u32::from(run.cchMom))
+                    .is_none_or(|end| end > self.str.len())
+                {
+                    return Err("rich string phonetic-run parent span is outside the string");
+                }
                 total_cch_mom += u32::from(run.cchMom);
                 last_first = Some(run.ichFirst);
                 last_mom = Some(run.ichMom);

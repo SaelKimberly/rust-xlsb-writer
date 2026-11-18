@@ -300,6 +300,7 @@ pub struct Worksheet {
     filter_conditions: BTreeMap<ColNum, FilterCondition>,
     filter_automatic_off: bool,
     filter_hidden_rows: BTreeSet<RowNum>,
+    has_rich_strings: bool,
     view: SheetView,
     visibility: Visibility,
     active: bool,
@@ -371,6 +372,7 @@ impl Worksheet {
             filter_conditions: BTreeMap::new(),
             filter_automatic_off: false,
             filter_hidden_rows: BTreeSet::new(),
+            has_rich_strings: false,
             view: SheetView::default(),
             visibility: Visibility::Visible,
             active: false,
@@ -695,6 +697,7 @@ impl Worksheet {
             CellData::RichString(RichString { text, runs }),
             format,
         )?;
+        self.has_rich_strings = true;
         Ok(self)
     }
 
@@ -2564,11 +2567,11 @@ impl Worksheet {
         for (index, column) in columns.iter_mut().enumerate() {
             if column.header.is_empty()
                 && table.show_header_row
-                && let Some(CellData::String(text)) = self
-                    .cells
-                    .get(&first_row)
-                    .and_then(|cells| cells.get(&(first_col + u16::try_from(index).ok()?)))
-                    .map(|cell| &cell.data)
+                && let Some(CellData::String(text) | CellData::RichString(RichString { text, .. })) =
+                    self.cells
+                        .get(&first_row)
+                        .and_then(|cells| cells.get(&(first_col + u16::try_from(index).ok()?)))
+                        .map(|cell| &cell.data)
             {
                 column.header.clone_from(text);
             }
@@ -2871,6 +2874,10 @@ impl Worksheet {
 
     pub(crate) const fn filter_hidden_rows(&self) -> &BTreeSet<RowNum> {
         &self.filter_hidden_rows
+    }
+
+    pub(crate) const fn has_rich_strings(&self) -> bool {
+        self.has_rich_strings
     }
 
     pub(crate) fn data_validations(&self) -> &[DataValidationRange] {
@@ -4749,8 +4756,11 @@ mod tests {
     fn add_table_writes_headers_and_uses_existing_header_cells() {
         let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.write_string(1, 0, "Existing").expect("header");
+        worksheet
+            .write_rich_string(1, 2, &[(&Format::new().set_bold(), "Rich")])
+            .expect("rich header");
         let table = Table::new();
-        worksheet.add_table(1, 0, 3, 1, &table).expect("table");
+        worksheet.add_table(1, 0, 3, 2, &table).expect("table");
 
         assert_eq!(
             worksheet.cells()[&1][&0].data,
@@ -4760,7 +4770,12 @@ mod tests {
             worksheet.cells()[&1][&1].data,
             CellData::String("Column2".to_owned())
         );
+        assert_eq!(
+            worksheet.cells()[&1][&2].data,
+            CellData::String("Rich".to_owned())
+        );
         assert_eq!(worksheet.tables()[0].table.columns[1].header, "Column2");
+        assert_eq!(worksheet.tables()[0].table.columns[2].header, "Rich");
     }
 
     #[test]

@@ -47,8 +47,10 @@ pub fn build_package(
         style_indexes.push(indexes);
     }
 
+    // Rebuild from current cells so overwritten rich text cannot leave a stale
+    // font. The worksheet flag skips the pass entirely for plain worksheets.
     let mut rich_fonts = HashMap::new();
-    for sheet in sheets {
+    for sheet in sheets.iter().filter(|sheet| sheet.has_rich_strings()) {
         for row in sheet.cells().values() {
             for cell in row.values() {
                 if let CellData::RichString(rich) = &cell.data {

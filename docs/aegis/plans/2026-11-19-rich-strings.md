@@ -202,3 +202,13 @@ plain text.
 
 Re-review confirmed the filter union arms, phonetic bounds, and 29/43-byte
 golden payloads are correct, with no remaining blocking findings.
+
+Follow-up review hardening:
+
+- Phonetic runs also require `ichMom + cchMom <= str.len`, not only separate
+  bounds.
+- Table header inference reads existing rich-string headers as their flattened
+  text.
+- Package font registration skips the cell scan when a worksheet never wrote a
+  rich string; when it does scan, current cells remain authoritative, so
+  overwrites cannot leave stale fonts.
