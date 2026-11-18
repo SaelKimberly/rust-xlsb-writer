@@ -80,6 +80,14 @@ pub enum Error {
     /// A value cannot be represented exactly in the target encoding.
     #[error("value cannot be represented exactly: {0}")]
     ValueNotRepresentable(&'static str),
+
+    /// A date or time component is outside Excel's supported range.
+    #[error("date/time value out of range: {0}")]
+    DateTimeRangeError(String),
+
+    /// A string could not be parsed as a date or time.
+    #[error("cannot parse date/time: {0}")]
+    DateTimeParseError(String),
 }
 
 /// Writer result type.

@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 use rust_xlsb_core::prelude::BErr;
 
-use crate::{Error, Format, Result, Worksheet};
+use crate::{Error, ExcelDateTime, Format, Result, Worksheet};
 
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
@@ -366,6 +366,18 @@ impl IntoExcelDateTime for &DateTime<Utc> {
     }
 }
 
+impl IntoExcelDateTime for ExcelDateTime {
+    fn into_cell_data(self) -> Result<CellData> {
+        Ok(CellData::Number(self.to_excel()))
+    }
+}
+
+impl IntoExcelDateTime for &ExcelDateTime {
+    fn into_cell_data(self) -> Result<CellData> {
+        Ok(CellData::Number(self.to_excel()))
+    }
+}
+
 macro_rules! impl_datetime_data {
     ($($ty:ty),* $(,)?) => {
         $(
@@ -424,6 +436,7 @@ impl_datetime_data!(
     NaiveDateTime,
     TimeDelta,
     DateTime<Utc>,
+    ExcelDateTime,
 );
 
 #[cfg(feature = "jiff")]
@@ -632,6 +645,31 @@ mod tests {
         let datetime = DateTime::<Utc>::from_timestamp(0, 0).expect("timestamp");
         let data = datetime.into_cell_data().expect("converts");
         assert!(matches!(data, CellData::DateTime(_)));
+    }
+
+    #[test]
+    fn writes_excel_datetimes_as_serial_numbers() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let datetime = ExcelDateTime::from_ymd(2026, 11, 18)
+            .expect("date")
+            .and_hms(12, 30, 0)
+            .expect("time");
+        let format = Format::new();
+
+        (&datetime).write(&mut worksheet, 0, 0).expect("writes");
+        datetime
+            .write_with_format(&mut worksheet, 0, 1, &format)
+            .expect("writes");
+
+        assert_eq!(
+            cell_data(&worksheet, 0, 0),
+            &CellData::Number(46_344.520_833_333_336)
+        );
+        assert_eq!(
+            cell_data(&worksheet, 0, 1),
+            &CellData::Number(46_344.520_833_333_336)
+        );
+        assert_eq!(worksheet.formats(), &[format]);
     }
 
     #[cfg(feature = "jiff")]

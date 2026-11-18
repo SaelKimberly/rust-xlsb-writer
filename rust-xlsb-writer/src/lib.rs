@@ -20,9 +20,11 @@
 //!   values.
 //! - `rust_decimal`: writes `rust_decimal::Decimal` values as Excel numbers.
 //!
-//! Both features are disabled by default.
+//! Both features are disabled by default. Native [`ExcelDateTime`] values and
+//! `chrono` temporal values are always available.
 
 mod data;
+mod datetime;
 #[cfg(test)]
 mod e2e;
 mod error;
@@ -38,6 +40,7 @@ mod worksheet;
 #[doc(hidden)]
 pub use data::CellData;
 pub use data::{IntoExcelData, IntoExcelDateTime};
+pub use datetime::ExcelDateTime;
 pub use error::{Error, Result, XlsbError};
 pub use format::{
     Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,

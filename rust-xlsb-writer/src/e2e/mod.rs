@@ -8,7 +8,7 @@ use deku::DekuContainerRead;
 use rust_xlsb_core::prelude::{BErr, BrtBeginCellXFs, BrtBeginFonts, BrtFont};
 use rust_xlsb_core::{BiffHead, CheckedBiff};
 
-use crate::{Format, Workbook};
+use crate::{ExcelDateTime, Format, Workbook};
 
 fn records<T>(part: &[u8]) -> Vec<T>
 where
@@ -132,6 +132,43 @@ fn dates_use_number_formats_and_roundtrip() {
         range.get((3, 0)),
         Some(&Data::Float(-1_500.0 / 86_400_000.0))
     );
+}
+
+#[test]
+fn excel_datetime_values_roundtrip() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    let format = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
+    let date = ExcelDateTime::from_ymd(2026, 11, 18).expect("date");
+    let datetime = date.clone().and_hms_milli(12, 34, 56, 789).expect("time");
+
+    sheet.write_with_format(0, 0, &date, &format).expect("date");
+    sheet
+        .write_with_format(1, 0, datetime, &format)
+        .expect("datetime");
+
+    let range = range(&mut workbook);
+
+    match range.get((0, 0)) {
+        Some(Data::DateTime(value)) => {
+            assert_eq!(
+                value.as_datetime().expect("date").date(),
+                NaiveDate::from_ymd_opt(2026, 11, 18).expect("date")
+            );
+        }
+        other => panic!("expected a date, got {other:?}"),
+    }
+    match range.get((1, 0)) {
+        Some(Data::DateTime(value)) => {
+            assert_eq!(
+                value.as_datetime(),
+                NaiveDate::from_ymd_opt(2026, 11, 18)
+                    .expect("date")
+                    .and_hms_milli_opt(12, 34, 56, 789)
+            );
+        }
+        other => panic!("expected a datetime, got {other:?}"),
+    }
 }
 
 #[test]
