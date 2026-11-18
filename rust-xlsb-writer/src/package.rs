@@ -10,7 +10,8 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
-use crate::url::{escape_xml, escape_xml_data};
+use crate::properties::CustomPropertyValue;
+use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
 use crate::{DocProperties, Error, Result};
@@ -49,17 +50,25 @@ pub fn build_package(
     }
 
     let has_strings = !sst.is_empty();
+    let has_custom_properties =
+        properties.is_some_and(|properties| !properties.custom_properties.is_empty());
     let mut styles = Vec::new();
     registry.write_to_biff(&mut styles)?;
 
     let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types(sheets.len(), has_strings, properties.is_some()).into_bytes(),
+            content_types(
+                sheets.len(),
+                has_strings,
+                properties.is_some(),
+                has_custom_properties,
+            )
+            .into_bytes(),
         ),
         (
             "_rels/.rels".to_owned(),
-            root_rels(properties.is_some()).into_bytes(),
+            root_rels(properties.is_some(), has_custom_properties).into_bytes(),
         ),
         (
             "xl/_rels/workbook.bin.rels".to_owned(),
@@ -80,6 +89,12 @@ pub fn build_package(
             "docProps/app.xml".to_owned(),
             app_xml(sheets, properties).into_bytes(),
         ));
+        if has_custom_properties {
+            parts.push((
+                "docProps/custom.xml".to_owned(),
+                custom_xml(properties).into_bytes(),
+            ));
+        }
     }
     parts.extend(sheet_parts);
 
@@ -379,7 +394,12 @@ fn sheet_rels(sheet: &Worksheet) -> Option<String> {
     Some(body)
 }
 
-fn content_types(sheet_count: usize, has_strings: bool, has_properties: bool) -> String {
+fn content_types(
+    sheet_count: usize,
+    has_strings: bool,
+    has_properties: bool,
+    has_custom_properties: bool,
+) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
@@ -408,11 +428,16 @@ fn content_types(sheet_count: usize, has_strings: bool, has_properties: bool) ->
             ),
         );
     }
+    if has_custom_properties {
+        body.push_str(
+            r#"<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>"#,
+        );
+    }
     body.push_str("</Types>");
     body
 }
 
-fn root_rels(has_properties: bool) -> String {
+fn root_rels(has_properties: bool, has_custom_properties: bool) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -423,6 +448,11 @@ fn root_rels(has_properties: bool) -> String {
             r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>"#,
             r#"<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>"#,
         ));
+    }
+    if has_custom_properties {
+        body.push_str(
+            r#"<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" Target="docProps/custom.xml"/>"#,
+        );
     }
     body.push_str("</Relationships>");
     body
@@ -448,6 +478,10 @@ fn core_xml(properties: &DocProperties) -> String {
         push_xml_element(&mut body, "dc:description", &properties.comment);
     }
     push_xml_element(&mut body, "cp:lastModifiedBy", &properties.author);
+    if let Some(creation_time) = &properties.creation_time {
+        push_dcterms(&mut body, "dcterms:created", creation_time);
+        push_dcterms(&mut body, "dcterms:modified", creation_time);
+    }
     if !properties.category.is_empty() {
         push_xml_element(&mut body, "cp:category", &properties.category);
     }
@@ -496,6 +530,65 @@ fn app_xml(sheets: &[Worksheet], properties: &DocProperties) -> String {
         "<HyperlinksChanged>false</HyperlinksChanged><AppVersion>12.0000</AppVersion></Properties>",
     );
     body
+}
+
+fn custom_xml(properties: &DocProperties) -> String {
+    let mut body = String::with_capacity(256 + properties.custom_properties.len() * 96);
+    body.push_str(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">"#,
+    ));
+    for (index, property) in properties.custom_properties.iter().enumerate() {
+        body.push_str(r#"<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid=""#);
+        write!(body, "{}", index + 2).expect("writing to String cannot fail");
+        body.push_str(r#"" name=""#);
+        body.push_str(escape_xml_attribute(&property.name).as_ref());
+        body.push_str(r#"">"#);
+        match &property.value {
+            CustomPropertyValue::Text(value) => push_xml_element(&mut body, "vt:lpwstr", value),
+            CustomPropertyValue::Int(value) => {
+                body.push_str("<vt:i4>");
+                write!(body, "{value}").expect("writing to String cannot fail");
+                body.push_str("</vt:i4>");
+            }
+            CustomPropertyValue::Real(value) => push_vt_r8(&mut body, *value),
+            CustomPropertyValue::Bool(value) => {
+                body.push_str("<vt:bool>");
+                body.push_str(if *value { "true" } else { "false" });
+                body.push_str("</vt:bool>");
+            }
+            CustomPropertyValue::DateTime(value) => {
+                push_xml_element(&mut body, "vt:filetime", value);
+            }
+        }
+        body.push_str("</property>");
+    }
+    body.push_str("</Properties>");
+    body
+}
+
+fn push_vt_r8(out: &mut String, value: f64) {
+    out.push_str("<vt:r8>");
+    if value.is_nan() {
+        out.push_str("NaN");
+    } else if value == f64::INFINITY {
+        out.push_str("INF");
+    } else if value == f64::NEG_INFINITY {
+        out.push_str("-INF");
+    } else {
+        write!(out, "{value}").expect("writing to String cannot fail");
+    }
+    out.push_str("</vt:r8>");
+}
+
+fn push_dcterms(out: &mut String, tag: &str, value: &str) {
+    out.push('<');
+    out.push_str(tag);
+    out.push_str(r#" xsi:type="dcterms:W3CDTF">"#);
+    out.push_str(escape_xml_data(value).as_ref());
+    out.push_str("</");
+    out.push_str(tag);
+    out.push('>');
 }
 
 fn push_xml_element(out: &mut String, tag: &str, value: &str) {
@@ -1072,6 +1165,8 @@ mod tests {
         assert!(core.contains("<dc:title>R&amp;D &lt;2026&gt;</dc:title>"));
         assert!(core.contains("<dc:creator>A &lt;B&gt;</dc:creator>"));
         assert!(core.contains("<cp:contentStatus>Final</cp:contentStatus>"));
+        assert!(!core.contains("dcterms:created"));
+        assert!(!core.contains("dcterms:modified"));
 
         let app = String::from_utf8(part_bytes(&bytes, "docProps/app.xml").expect("app"))
             .expect("app UTF-8");
@@ -1092,6 +1187,120 @@ mod tests {
             .expect("rels UTF-8");
         assert!(rels.contains("Target=\"docProps/core.xml\""));
         assert!(rels.contains("Target=\"docProps/app.xml\""));
+    }
+
+    #[test]
+    fn document_custom_properties_add_custom_part() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 11, 18).expect("date");
+        let properties = crate::DocProperties::new()
+            .set_creation_datetime(&date)
+            .set_custom_property("Text", "A & B <C>")
+            .set_custom_property("Checked by", true)
+            .set_custom_property("Document number", 55_301_i32)
+            .set_custom_property("Ratio", 1.5_f64)
+            .set_custom_property("Review date", &date)
+            .set_custom_property("A\u{1}B", "control")
+            .set_custom_property("Quote\"\nLine", "quote");
+        let mut workbook = crate::Workbook::new();
+        workbook.set_properties(&properties);
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(names.contains(&"docProps/custom.xml".to_owned()));
+
+        let custom = String::from_utf8(part_bytes(&bytes, "docProps/custom.xml").expect("custom"))
+            .expect("custom UTF-8");
+        assert!(custom.contains(
+            r#"<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Text"><vt:lpwstr>A &amp; B &lt;C&gt;</vt:lpwstr></property>"#
+        ));
+        assert!(custom.contains(r#"pid="3" name="Checked by"><vt:bool>true</vt:bool>"#));
+        assert!(custom.contains(r#"pid="4" name="Document number"><vt:i4>55301</vt:i4>"#));
+        assert!(custom.contains(r#"pid="5" name="Ratio"><vt:r8>1.5</vt:r8>"#));
+        assert!(custom.contains(
+            r#"pid="6" name="Review date"><vt:filetime>2026-11-18T00:00:00Z</vt:filetime>"#
+        ));
+        assert!(custom.contains(r#"pid="7" name="A_x0001_B"><vt:lpwstr>control</vt:lpwstr>"#));
+        assert!(
+            custom.contains(r#"pid="8" name="Quote&quot;&#xA;Line"><vt:lpwstr>quote</vt:lpwstr>"#)
+        );
+
+        let core = String::from_utf8(part_bytes(&bytes, "docProps/core.xml").expect("core"))
+            .expect("core UTF-8");
+        assert!(core.contains(
+            r#"<dcterms:created xsi:type="dcterms:W3CDTF">2026-11-18T00:00:00Z</dcterms:created>"#
+        ));
+
+        let types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("content types"))
+                .expect("types UTF-8");
+        assert!(types.contains(
+            r#"<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>"#
+        ));
+
+        let rels = String::from_utf8(part_bytes(&bytes, "_rels/.rels").expect("rels"))
+            .expect("rels UTF-8");
+        assert!(rels.contains(
+            r#"<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties" Target="docProps/custom.xml"/>"#
+        ));
+    }
+
+    #[test]
+    fn custom_properties_write_non_finite_real_values() {
+        let properties = crate::DocProperties::new()
+            .set_custom_property("Not a number", f64::NAN)
+            .set_custom_property("Positive infinity", f64::INFINITY)
+            .set_custom_property("Negative infinity", f64::NEG_INFINITY);
+        let mut workbook = crate::Workbook::new();
+        workbook.set_properties(&properties);
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let custom = String::from_utf8(part_bytes(&bytes, "docProps/custom.xml").expect("custom"))
+            .expect("custom UTF-8");
+        assert!(custom.contains(r#"pid="2" name="Not a number"><vt:r8>NaN</vt:r8>"#));
+        assert!(custom.contains(r#"pid="3" name="Positive infinity"><vt:r8>INF</vt:r8>"#));
+        assert!(custom.contains(r#"pid="4" name="Negative infinity"><vt:r8>-INF</vt:r8>"#));
+    }
+
+    #[test]
+    fn custom_properties_part_is_absent_without_custom_values() {
+        let mut workbook = crate::Workbook::new();
+        workbook.set_properties(&crate::DocProperties::new().set_title("Title"));
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(!names.contains(&"docProps/custom.xml".to_owned()));
+
+        let types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("content types"))
+                .expect("types UTF-8");
+        assert!(!types.contains("/docProps/custom.xml"));
+
+        let rels = String::from_utf8(part_bytes(&bytes, "_rels/.rels").expect("rels"))
+            .expect("rels UTF-8");
+        assert!(!rels.contains("Target=\"docProps/custom.xml\""));
+    }
+
+    #[test]
+    fn document_creation_time_adds_created_and_modified() {
+        let date =
+            chrono::NaiveDateTime::parse_from_str("2026-11-18 12:34:56", "%Y-%m-%d %H:%M:%S")
+                .expect("datetime");
+        let mut workbook = crate::Workbook::new();
+        workbook.set_properties(&crate::DocProperties::new().set_creation_datetime(&date));
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let core = String::from_utf8(part_bytes(&bytes, "docProps/core.xml").expect("core"))
+            .expect("core UTF-8");
+        assert!(core.contains(
+            r#"<dcterms:created xsi:type="dcterms:W3CDTF">2026-11-18T12:34:56Z</dcterms:created>"#
+        ));
+        assert!(core.contains(
+            r#"<dcterms:modified xsi:type="dcterms:W3CDTF">2026-11-18T12:34:56Z</dcterms:modified>"#
+        ));
     }
 
     #[test]

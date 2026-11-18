@@ -272,6 +272,55 @@ pub fn escape_xml(input: &str) -> Cow<'_, str> {
     Cow::Owned(escaped)
 }
 
+/// Escapes an XML attribute value, including characters that XML forbids
+/// literally.
+pub fn escape_xml_attribute(input: &str) -> Cow<'_, str> {
+    if !input.chars().any(needs_xml_attribute_escape) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut escaped = String::with_capacity(input.len() + 8);
+    for ch in input.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '"' => escaped.push_str("&quot;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '\t' => escaped.push_str("&#x9;"),
+            '\n' => escaped.push_str("&#xA;"),
+            '\r' => escaped.push_str("&#xD;"),
+            '\u{0000}'..='\u{0008}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000E}'..='\u{001F}'
+            | '\u{FFFE}'
+            | '\u{FFFF}' => {
+                write!(escaped, "_x{:04X}_", u32::from(ch)).expect("writing to String cannot fail");
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    Cow::Owned(escaped)
+}
+
+const fn needs_xml_attribute_escape(ch: char) -> bool {
+    matches!(
+        ch,
+        '&' | '"'
+            | '<'
+            | '>'
+            | '\t'
+            | '\n'
+            | '\r'
+            | '\u{0000}'..='\u{0008}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000E}'..='\u{001F}'
+            | '\u{FFFE}'
+            | '\u{FFFF}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,6 +339,15 @@ mod tests {
             "a_x0001_b_x000D_\nc_xFFFE_d_xFFFF_e"
         );
         assert_eq!(escape_xml_data("<&>"), "&lt;&amp;&gt;");
+    }
+
+    #[test]
+    fn escapes_xml_attributes_and_control_characters() {
+        assert_eq!(escape_xml("plain target"), "plain target");
+        assert_eq!(
+            escape_xml_attribute("a\"b\n\t\r\u{1}c"),
+            "a&quot;b&#xA;&#x9;&#xD;_x0001_c"
+        );
     }
 
     #[test]

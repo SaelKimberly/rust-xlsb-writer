@@ -17,8 +17,8 @@ public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
 widths/formats, multi-sheet package assembly, workbook calculation mode,
 read-only recommendation, tab ratio, sheet protection with unprotected ranges,
-ignored worksheet errors, an `AutoFilter` range, core/app document
-properties, and `save`/
+ignored worksheet errors, an `AutoFilter` range, core/app/custom document
+properties with explicit creation timestamps, and `save`/
 `save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
 table and emits `BrtCellIsst`; `ToCellValue` remains the low-level core
 contract and still converts `&str`/`String` to inline strings. `KnownID` covers
@@ -155,7 +155,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 357 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 364 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -243,6 +243,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/record/brt_calc_prop.rs` | workbook calculation mode and flags |
 | `rust-xlsb-core/src/prelude/record/brt_file_sharing.rs` | read-only recommendation record |
 | `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, document properties, save entry points |
+| `rust-xlsb-writer/src/properties.rs` | `DocProperties`, custom values, and chrono creation timestamps |
 | `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, view, and print API |
 | `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
 | `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
@@ -285,7 +286,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 357 unit tests and 6 doctests total: 192 in core, 165 in writer. Most core
+- 364 unit tests and 6 doctests total: 192 in core, 172 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

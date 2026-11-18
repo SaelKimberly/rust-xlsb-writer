@@ -35,7 +35,7 @@ pub use format::{
     Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,
     FormatScript, FormatUnderline,
 };
-pub use properties::DocProperties;
+pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};
