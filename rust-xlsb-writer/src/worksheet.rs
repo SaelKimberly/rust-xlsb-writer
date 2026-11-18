@@ -18,6 +18,7 @@ const MAX_ZOOM: u16 = 400;
 const DEFAULT_PRINT_SCALE: u16 = 100;
 const MAX_PAGE_DIMENSION: u16 = 32_767;
 const MAX_MARGIN: f64 = 49.0;
+const MAX_AUTOFIT_WIDTH_PIXELS: u32 = 1790;
 const MAX_OUTLINE_LEVEL: u8 = 7;
 const DEFAULT_MARGIN_LEFT: f64 = 0.7;
 const DEFAULT_MARGIN_RIGHT: f64 = 0.7;
@@ -321,6 +322,8 @@ pub struct Worksheet {
     unprotected_ranges: Vec<UnprotectedRange>,
     ignored_errors: BTreeMap<IgnoreError, Vec<UncheckedRfX>>,
     ignored_error_ranges: BTreeSet<(RowNum, ColNum, RowNum, ColNum)>,
+    max_autofit_row: RowNum,
+    max_autofit_width: u32,
 }
 
 impl Default for Worksheet {
@@ -378,6 +381,8 @@ impl Worksheet {
             unprotected_ranges: Vec::new(),
             ignored_errors: BTreeMap::new(),
             ignored_error_ranges: BTreeSet::new(),
+            max_autofit_row: MAX_ROW,
+            max_autofit_width: MAX_AUTOFIT_WIDTH_PIXELS,
         }
     }
 
@@ -899,6 +904,18 @@ impl Worksheet {
         Ok(self)
     }
 
+    fn store_autofit_width(&mut self, col: ColNum, pixels: u32) {
+        let width = pixels_to_width(pixels);
+        let options = self.columns.entry(col).or_default();
+        if options
+            .width
+            .is_none_or(|existing| options.best_fit || width > existing)
+        {
+            options.width = Some(width);
+            options.best_fit = true;
+        }
+    }
+
     /// Sets one column width in pixels.
     ///
     /// A width of `0` hides the column.
@@ -961,6 +978,79 @@ impl Worksheet {
             return self.set_column_range_hidden(first, last);
         }
         self.set_column_range_width(first, last, pixels_to_width(width))
+    }
+
+    /// Autofits column widths to the widest cell in each column.
+    ///
+    /// Widths use approximate Calibri 11 character metrics, matching the
+    /// reference writer. Multi-line strings use their widest line. A manual
+    /// column width is preserved unless the calculated width is wider. Columns
+    /// containing only blank or error cells are left unchanged.
+    ///
+    /// Use [`set_autofit_max_row`](Self::set_autofit_max_row) and
+    /// [`set_autofit_max_width`](Self::set_autofit_max_width) to bound the
+    /// calculation.
+    pub fn autofit(&mut self) -> &mut Self {
+        let mut max_widths: BTreeMap<ColNum, u32> = BTreeMap::new();
+
+        for (&row, cells) in &self.cells {
+            if row >= self.max_autofit_row {
+                break;
+            }
+            for (&col, cell) in cells {
+                let mut width = autofit_cell_width(&cell.data);
+                if width == 0 {
+                    continue;
+                }
+                if self.autofilter.is_some_and(|range| {
+                    row == range.rwFirst
+                        && u32::from(col) >= range.colFirst
+                        && u32::from(col) <= range.colLast
+                }) {
+                    width += 16;
+                }
+                width = (width + 7).min(self.max_autofit_width);
+                if width == 0 {
+                    continue;
+                }
+                max_widths
+                    .entry(col)
+                    .and_modify(|max| *max = (*max).max(width))
+                    .or_insert(width);
+            }
+        }
+
+        for (col, pixels) in max_widths {
+            self.store_autofit_width(col, pixels);
+        }
+        self
+    }
+
+    /// Sets the row limit for [`autofit`](Self::autofit).
+    ///
+    /// Rows at or above `max_row` are ignored. The default limit is
+    /// [`MAX_ROW`], so the last worksheet row is not measured.
+    pub fn set_autofit_max_row(&mut self, max_row: RowNum) -> &mut Self {
+        self.max_autofit_row = max_row.min(MAX_ROW);
+        self
+    }
+
+    /// Sets the maximum column width in pixels used by [`autofit`](Self::autofit).
+    ///
+    /// The value is capped at Excel's 1790-pixel autofit limit.
+    pub fn set_autofit_max_width(&mut self, max_width: u32) -> &mut Self {
+        self.max_autofit_width = max_width.min(MAX_AUTOFIT_WIDTH_PIXELS);
+        self
+    }
+
+    /// Autofits columns up to a maximum width.
+    #[deprecated(
+        since = "0.1.0",
+        note = "use `set_autofit_max_width()` and `autofit()` instead"
+    )]
+    pub fn autofit_to_max_width(&mut self, max_width: u32) -> &mut Self {
+        self.set_autofit_max_width(max_width);
+        self.autofit()
     }
 
     /// Sets one column format.
@@ -2705,6 +2795,94 @@ pub(crate) fn pixels_to_width(pixels: u32) -> f64 {
     }
 }
 
+fn autofit_cell_width(data: &CellData) -> u32 {
+    match data {
+        CellData::String(text) => text.lines().map(pixel_width).max().unwrap_or(0),
+        CellData::Integer(value) => 7 * integer_digits(*value) + if *value < 0 { 7 } else { 0 },
+        CellData::Number(value) => 7 * display_len(*value),
+        CellData::Bool(true) => 31,
+        CellData::Bool(false) => 36,
+        CellData::Date(_) | CellData::Time(_) | CellData::DateTime(_) | CellData::Duration(_) => 68,
+        CellData::Blank | CellData::Error(_) => 0,
+    }
+}
+
+// Approximate Calibri 11 character widths taken from Excel.
+fn pixel_width(text: &str) -> u32 {
+    if text.chars().count() > 233 {
+        return MAX_AUTOFIT_WIDTH_PIXELS;
+    }
+
+    let mut width = 0;
+    for character in text.chars() {
+        width += match character {
+            ' ' | '\'' => 3,
+            ',' | '.' | ':' | ';' | 'I' | '`' | 'i' | 'j' | 'l' => 4,
+            '!' | '(' | ')' | '-' | 'J' | '[' | ']' | 'f' | 'r' | 't' | '{' | '}' => 5,
+            '"' | '/' | 'L' | '\\' | 'c' | 's' | 'z' => 6,
+            '#'
+            | '$'
+            | '*'
+            | '+'
+            | '0'..='9'
+            | '<'
+            | '='
+            | '>'
+            | '?'
+            | 'E'
+            | 'F'
+            | 'S'
+            | 'T'
+            | 'Y'
+            | 'Z'
+            | '^'
+            | '_'
+            | 'a'
+            | 'g'
+            | 'k'
+            | 'v'
+            | 'x'
+            | 'y'
+            | '|'
+            | '~' => 7,
+            'A' | 'D' | 'G' | 'H' | 'U' | 'V' => 9,
+            '&' | 'N' | 'O' | 'Q' => 10,
+            '%' | 'w' => 11,
+            'M' | 'm' => 12,
+            '@' | 'W' => 13,
+            _ => 8,
+        };
+    }
+    width
+}
+
+const fn integer_digits(value: i64) -> u32 {
+    let mut value = value.unsigned_abs();
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+fn display_len(value: f64) -> u32 {
+    struct Counter(usize);
+
+    impl std::fmt::Write for Counter {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.0 += text.len();
+            Ok(())
+        }
+    }
+
+    use std::fmt::Write as _;
+
+    let mut counter = Counter(0);
+    let _ = write!(&mut counter, "{value}");
+    u32::try_from(counter.0).unwrap_or(u32::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3741,6 +3919,124 @@ mod tests {
             worksheet.set_default_format(&Format::new(), 547, 80),
             Err(Error::ValueNotRepresentable(_))
         ));
+    }
+
+    #[test]
+    fn autofit_sizes_columns_from_cell_data() {
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "Hello").expect("string");
+        worksheet.write(0, 1, 123_456).expect("integer");
+        worksheet.write(0, 2, true).expect("boolean");
+        worksheet.write(1, 0, "Hello World").expect("longer string");
+        worksheet.write(2, 0, "short").expect("shorter string");
+
+        worksheet.autofit();
+
+        assert_eq!(worksheet.column_options()[&0].width, Some(76.0 / 7.0));
+        assert_eq!(worksheet.column_options()[&1].width, Some(44.0 / 7.0));
+        assert_eq!(worksheet.column_options()[&2].width, Some(33.0 / 7.0));
+        assert!(worksheet.column_options()[&0].best_fit);
+    }
+
+    #[test]
+    fn autofit_preserves_wider_manual_widths_and_widens_narrow_ones() {
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "Hello").expect("cell");
+        worksheet.set_column_width(0, 20).expect("manual");
+        worksheet.write(0, 1, "Hello").expect("cell");
+        worksheet.set_column_width(1, 2).expect("narrow");
+
+        worksheet.autofit();
+
+        assert_eq!(worksheet.column_options()[&0].width, Some(20.0));
+        assert_eq!(worksheet.column_options()[&1].width, Some(5.0));
+        assert!(!worksheet.column_options()[&0].best_fit);
+        assert!(worksheet.column_options()[&1].best_fit);
+    }
+
+    #[test]
+    fn autofit_honors_row_and_width_limits() {
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "short").expect("cell");
+        worksheet.write(10, 0, "Much longer text").expect("cell");
+        worksheet.set_autofit_max_row(10);
+        worksheet.autofit();
+        assert_eq!(worksheet.column_options()[&0].width, Some(34.0 / 7.0));
+
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "MMMMMMMMMMMMMMMMMMMM").expect("cell");
+        worksheet.set_autofit_max_width(100);
+        worksheet.autofit();
+        assert_eq!(worksheet.column_options()[&0].width, Some(95.0 / 7.0));
+    }
+
+    #[test]
+    fn autofit_handles_multiline_autofilter_and_other_types() {
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "short\nHello World").expect("cell");
+        worksheet.write(0, 1, false).expect("boolean");
+        worksheet
+            .write(0, 2, chrono::NaiveDate::from_ymd_opt(2026, 11, 18).unwrap())
+            .expect("date");
+        worksheet.autofit();
+        assert_eq!(worksheet.column_options()[&0].width, Some(76.0 / 7.0));
+        assert_eq!(worksheet.column_options()[&1].width, Some(38.0 / 7.0));
+        assert_eq!(worksheet.column_options()[&2].width, Some(10.0));
+
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "A").expect("header");
+        worksheet.autofilter(0, 0, 0, 0).expect("autofilter");
+        worksheet.autofit();
+        assert_eq!(worksheet.column_options()[&0].width, Some(27.0 / 7.0));
+    }
+
+    #[test]
+    fn autofit_handles_float_and_integer_extremes() {
+        let mut worksheet = Worksheet::new();
+        let number = 1.234_567_890_123_456_7_f64;
+        worksheet.write(0, 0, number).expect("number");
+        worksheet.write(0, 1, i64::MIN).expect("integer");
+        worksheet.write(0, 2, -123).expect("negative integer");
+        worksheet.autofit();
+
+        let digits = u32::try_from(number.to_string().len()).unwrap();
+        assert_eq!(
+            worksheet.column_options()[&0].width,
+            Some(pixels_to_width(7 * digits + 7))
+        );
+        assert_eq!(
+            worksheet.column_options()[&1].width,
+            Some(pixels_to_width(147))
+        );
+        assert_eq!(
+            worksheet.column_options()[&2].width,
+            Some(pixels_to_width(35))
+        );
+    }
+
+    #[test]
+    fn autofit_ignores_blank_columns() {
+        let mut worksheet = Worksheet::new();
+        worksheet
+            .set_cell_format(0, 0, &Format::new().set_bold())
+            .expect("blank");
+        worksheet.autofit();
+        assert!(!worksheet.column_options().contains_key(&0));
+
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "Hello").expect("cell");
+        worksheet.set_autofit_max_width(0);
+        worksheet.autofit();
+        assert!(!worksheet.column_options().contains_key(&0));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn autofit_to_max_width_delegates_to_limit_and_autofit() {
+        let mut worksheet = Worksheet::new();
+        worksheet.write(0, 0, "MMMMMMMMMMMMMMMMMMMM").expect("cell");
+        worksheet.autofit_to_max_width(100);
+        assert_eq!(worksheet.column_options()[&0].width, Some(95.0 / 7.0));
     }
 
     #[test]

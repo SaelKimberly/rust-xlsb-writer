@@ -28,6 +28,7 @@
 - [Format merge and hyperlink-style reset](plans/2026-11-18-format-merge-and-hyperlink-reset.md)
 - [Workbook default format](plans/2026-11-18-workbook-default-format.md)
 - [Worksheet default format](plans/2026-11-18-worksheet-default-format.md)
+- [Worksheet autofit and limits](plans/2026-11-18-worksheet-autofit.md)
 
 ## Analysis
 

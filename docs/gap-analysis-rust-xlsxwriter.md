@@ -21,8 +21,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no rich strings.
-3. **Worksheet layout and view** — no full autofit or arbitrary defined
-   names.
+3. **Worksheet layout and view** — no arbitrary defined names.
 4. **Analysis features** — no filter conditions, tables, conditional
    formatting, or data validation; an `AutoFilter` range and structural sheet
    protection are present.
@@ -48,7 +47,7 @@ the breadth gap.
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, non-finite display strings |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
-| Cell layout | column width and range width, column autofit-width hint, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
+| Cell layout | column width and range width, approximate autofit with row/width limits, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
 | Analysis | worksheet `AutoFilter` range; filter conditions are missing |
 | Metadata | core, app, and custom document properties; explicit creation timestamp |
@@ -61,7 +60,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 193 core + 187 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 193 core + 194 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -135,8 +134,8 @@ Status meanings:
 | `group_columns`, `group_columns_collapsed` | Supported | Column outline groups |
 | `group_symbols_above`, `group_symbols_to_left` | Supported | Outline display |
 | `hide_unused_rows` | Supported | Row hiding |
-| `autofit`, `autofit_to_max_width` | Missing | Width calculation |
-| `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
+| `autofit`, `autofit_to_max_width` | Supported | Approximate Calibri 11 width; deprecated wrapper |
+| `set_autofit_max_row`, `set_autofit_max_width` | Supported | Calculation limits |
 | `set_default_format` | Supported | Worksheet or detached-worksheet default format and dimensions |
 | `set_cell_format`, `set_range_format` | Supported | — |
 | `set_range_format_with_border` | Supported | Border-aware range edit |
@@ -354,7 +353,7 @@ rejected before output.
 | Print area, repeat rows/columns | Open | Multi-page reports | M |
 | Manual page breaks | ✅ | Multi-page reports | S |
 | Group rows/columns, outline symbols | ✅ | Collapsible reports | M |
-| Full autofit | Open | Width calculation; `set_column_autofit_width` hint is shipped | M |
+| Full autofit | ✅ | Approximate Calibri 11 metrics, row/width limits | M |
 
 **Exit criteria:** PDF/print preview through LibreOffice shows the expected
 page layout; record-level tests cover print/view records.
@@ -431,8 +430,8 @@ spec:
 4. Array and dynamic-array formulas.
 
 Hyperlinks, worksheet state, page setup, text headers/footers, manual page
-breaks, outline groups, print areas, and repeat titles are shipped; full
-autofit remains in P2.
+breaks, outline groups, print areas, repeat titles, and approximate autofit are
+shipped.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -444,7 +443,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 193 core + 187 writer unit tests and 6 doctests; calamine
+- Test evidence: 193 core + 194 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
