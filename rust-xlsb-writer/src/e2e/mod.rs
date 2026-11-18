@@ -352,3 +352,21 @@ fn print_ranges_appear_as_defined_names() {
         Some(&Data::String("second".to_owned()))
     );
 }
+
+#[test]
+fn hyperlinks_keep_visible_text() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_url(0, 0, "https://example.com").expect("url");
+    sheet
+        .write_url_with_text(1, 0, "internal:Sheet1!B2", "Jump")
+        .expect("internal");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(
+        range.get((0, 0)),
+        Some(&Data::String("https://example.com".to_owned()))
+    );
+    assert_eq!(range.get((1, 0)), Some(&Data::String("Jump".to_owned())));
+}

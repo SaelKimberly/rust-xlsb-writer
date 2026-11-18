@@ -75,6 +75,7 @@ fn write_showcase(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let rows = [
         "&str", "String", "i32", "f64", "bool", "error", "date", "time", "datetime", "duration",
+        "url", "internal",
     ];
 
     let fill = |index: usize| {
@@ -125,6 +126,9 @@ fn write_showcase(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         duration,
         &value_format(fill(9)).set_num_format("[h]:mm:ss.000"),
     )?;
+
+    sheet.write_url_with_text(row(10), 1, "https://www.rust-lang.org", "Rust language")?;
+    sheet.write_url_with_text(row(11), 1, "internal:Showcase!B2", "Jump to B2")?;
 
     workbook.save(path)?;
     Ok(())

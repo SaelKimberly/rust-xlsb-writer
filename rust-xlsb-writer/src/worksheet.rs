@@ -6,7 +6,7 @@ use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
 use crate::format::BorderSide;
-use crate::{Color, Error, Format, Result};
+use crate::{Color, Error, Format, Result, Url};
 
 pub const MAX_ROW: u32 = 1_048_575;
 pub const MAX_COL: u16 = 16_383;
@@ -290,6 +290,7 @@ pub struct Worksheet {
     nan_value: Option<String>,
     infinity_value: Option<String>,
     neg_infinity_value: Option<String>,
+    hyperlinks: BTreeMap<(RowNum, ColNum), Url>,
 }
 
 impl Worksheet {
@@ -323,6 +324,7 @@ impl Worksheet {
             nan_value: None,
             infinity_value: None,
             neg_infinity_value: None,
+            hyperlinks: BTreeMap::new(),
         }
     }
 
@@ -537,6 +539,92 @@ impl Worksheet {
         format: &Format,
     ) -> Result<&mut Self> {
         self.write_with_format(row, col, value.into(), format)
+    }
+
+    /// Writes a hyperlink.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row/column is out of range, the URL type is
+    /// unknown, a URL or tooltip exceeds Excel's length limit, or the text is
+    /// too long.
+    pub fn write_url(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        link: impl Into<Url>,
+    ) -> Result<&mut Self> {
+        self.store_url(row, col, link.into(), None)
+    }
+
+    /// Writes a hyperlink with alternative visible text.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row/column is out of range, the URL type is
+    /// unknown, a URL or tooltip exceeds Excel's length limit, or the text is
+    /// too long.
+    pub fn write_url_with_text(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        link: impl Into<Url>,
+        text: impl Into<String>,
+    ) -> Result<&mut Self> {
+        self.store_url(row, col, link.into().set_text(text), None)
+    }
+
+    /// Writes a hyperlink with a caller-supplied cell format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row/column is out of range, the URL type is
+    /// unknown, a URL or tooltip exceeds Excel's length limit, or the text is
+    /// too long.
+    pub fn write_url_with_format(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        link: impl Into<Url>,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        self.store_url(row, col, link.into(), Some(format))
+    }
+
+    /// Writes a hyperlink with text, tooltip, and an optional format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row/column is out of range, the URL type is
+    /// unknown, a URL or tooltip exceeds Excel's length limit, or the text is
+    /// too long.
+    pub fn write_url_with_options(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        link: impl Into<Url>,
+        text: impl Into<String>,
+        tip: impl Into<String>,
+        format: Option<&Format>,
+    ) -> Result<&mut Self> {
+        let link = link.into().set_text(text).set_tip(tip);
+        self.store_url(row, col, link, format)
+    }
+
+    fn store_url(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        mut link: Url,
+        format: Option<&Format>,
+    ) -> Result<&mut Self> {
+        link.initialize()?;
+        let format = format
+            .cloned()
+            .unwrap_or_else(|| Format::new().set_hyperlink());
+        self.write_string_with_format(row, col, link.text.clone(), &format)?;
+        self.hyperlinks.insert((row, col), link);
+        Ok(self)
     }
 
     /// Writes a number.
@@ -2020,6 +2108,10 @@ impl Worksheet {
         Ok(())
     }
 
+    pub(crate) const fn hyperlinks(&self) -> &BTreeMap<(RowNum, ColNum), Url> {
+        &self.hyperlinks
+    }
+
     pub(crate) fn merged_ranges(&self) -> &[MergeRange] {
         &self.merged_ranges
     }
@@ -3107,6 +3199,76 @@ mod tests {
         ));
         assert_eq!(worksheet.repeat_rows(), Some((3, 4)));
         assert_eq!(worksheet.repeat_columns(), Some((1, 2)));
+    }
+
+    #[test]
+    fn hyperlinks_validate_before_storing() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+
+        assert!(matches!(
+            worksheet.write_url(0, 0, "not a url"),
+            Err(Error::UnknownUrlType(_))
+        ));
+        assert!(worksheet.cells().is_empty());
+        assert!(worksheet.hyperlinks().is_empty());
+
+        assert!(matches!(
+            worksheet.write_url(MAX_ROW + 1, 0, "https://example.com"),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(worksheet.cells().is_empty());
+        assert!(worksheet.hyperlinks().is_empty());
+    }
+
+    #[test]
+    fn hyperlink_variants_store_text_tooltip_and_format() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet
+            .write_url_with_options(0, 0, "https://example.com", "Example", "Open example", None)
+            .expect("url");
+        let link = worksheet.hyperlinks().get(&(0, 0)).expect("hyperlink");
+        assert_eq!(link.text, "Example");
+        assert_eq!(link.tooltip, "Open example");
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::String("Example".to_owned()))
+        );
+
+        let format = worksheet
+            .cells()
+            .get(&0)
+            .and_then(|row| row.get(&0))
+            .and_then(|cell| cell.format)
+            .expect("default hyperlink format");
+        let mut registry = StyleRegistry::new();
+        let style = worksheet.formats()[format as usize]
+            .to_cell_style(&mut registry)
+            .expect("style");
+        assert_eq!(style.font.uls, 1);
+        assert_eq!(
+            style.font.brtColor,
+            Color::RGB(0x0005_63C1)
+                .to_brt_color()
+                .expect("hyperlink color")
+        );
+
+        worksheet
+            .write_url_with_format(1, 0, "https://example.com", &Format::new().set_bold())
+            .expect("formatted url");
+        let format = worksheet
+            .cells()
+            .get(&1)
+            .and_then(|row| row.get(&0))
+            .and_then(|cell| cell.format)
+            .expect("formatted hyperlink");
+        assert_eq!(
+            worksheet.formats()[format as usize],
+            Format::new().set_bold()
+        );
     }
 
     #[test]

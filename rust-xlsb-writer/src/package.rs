@@ -9,6 +9,7 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
+use crate::url::escape_xml;
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
 use crate::{Error, Result};
 
@@ -33,6 +34,12 @@ pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
         let selected = index == view.active && (view.explicit_active || view.active != 0);
         crate::sheet::write_sheet(sheet, &style_indexes[index], &sst, selected, &mut bytes)?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
+        if let Some(rels) = sheet_rels(sheet) {
+            sheet_parts.push((
+                format!("xl/worksheets/_rels/sheet{}.bin.rels", index + 1),
+                rels.into_bytes(),
+            ));
+        }
     }
 
     let has_strings = !sst.is_empty();
@@ -260,6 +267,32 @@ fn area3d(ixti: u16, first_row: u32, first_col: u16, last_row: u32, last_col: u1
     rgce[11..13].copy_from_slice(&first_col.to_le_bytes());
     rgce[13..15].copy_from_slice(&last_col.to_le_bytes());
     rgce
+}
+
+fn sheet_rels(sheet: &Worksheet) -> Option<String> {
+    if sheet.hyperlinks().values().all(crate::Url::is_internal) {
+        return None;
+    }
+
+    let mut body = String::from(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    ));
+    let mut rel_id = 0u32;
+    for link in sheet.hyperlinks().values() {
+        if link.is_internal() {
+            continue;
+        }
+        rel_id += 1;
+        write!(
+            body,
+            r#"<Relationship Id="rId{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
+            escape_xml(&link.target)
+        )
+        .expect("writing to String cannot fail");
+    }
+    body.push_str("</Relationships>");
+    Some(body)
 }
 
 fn content_types(sheet_count: usize, has_strings: bool) -> String {
@@ -495,7 +528,7 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtExternSheet, BrtName,
+        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtExternSheet, BrtHLink, BrtName,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff};
 
@@ -584,6 +617,105 @@ mod tests {
         assert_eq!(names[0].formula.rgce, area3d(0, 2, 0, 3, MAX_COL).to_vec());
         assert_eq!(names[1].itab, 1);
         assert_eq!(names[1].formula.rgce, area3d(1, 0, 2, MAX_ROW, 3).to_vec());
+    }
+
+    #[test]
+    fn hyperlinks_emit_records_and_relationships() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet
+            .write_url(0, 0, "https://example.com/a?x=1&y=2")
+            .expect("url");
+        sheet
+            .write_url_with_text(1, 0, "internal:Sheet1!B2", "Jump")
+            .expect("internal");
+        sheet
+            .write_url_with_options(
+                2,
+                0,
+                "https://example.com/docs#intro",
+                "Docs",
+                "Open docs",
+                None,
+            )
+            .expect("options");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let links = records::<BrtHLink>(&sheet_part);
+
+        assert_eq!(links.len(), 3);
+        assert_eq!(
+            links[0].rfx,
+            rust_xlsb_core::prelude::UncheckedRfX {
+                rwFirst: 0,
+                rwLast: 0,
+                colFirst: 0,
+                colLast: 0,
+            }
+        );
+        assert_eq!(links[0].relId.to_optional_string().as_deref(), Some("rId1"));
+        assert!(links[0].location.is_empty());
+        assert!(links[0].tooltip.is_empty());
+        assert!(links[0].display.is_empty());
+
+        assert_eq!(links[1].relId.to_optional_string().as_deref(), Some(""));
+        assert_eq!(
+            links[1].location.to_optional_string().as_deref(),
+            Some("Sheet1!B2")
+        );
+        assert_eq!(
+            links[1].display.to_optional_string().as_deref(),
+            Some("Jump")
+        );
+
+        assert_eq!(links[2].relId.to_optional_string().as_deref(), Some("rId2"));
+        assert_eq!(
+            links[2].location.to_optional_string().as_deref(),
+            Some("intro")
+        );
+        assert_eq!(
+            links[2].tooltip.to_optional_string().as_deref(),
+            Some("Open docs")
+        );
+
+        let rels = part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels");
+        let rels = String::from_utf8(rels).expect("xml");
+        assert!(rels.contains(
+            r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/a?x=1&amp;y=2" TargetMode="External""#
+        ));
+        assert!(rels.contains(r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/docs" TargetMode="External""#));
+        assert!(!rels.contains("Sheet1!B2"));
+    }
+
+    #[test]
+    fn internal_hyperlinks_omit_sheet_relationships() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write_url(0, 0, "internal:Sheet1!A1")
+            .expect("internal");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(!names.contains(&"xl/worksheets/_rels/sheet1.bin.rels".to_owned()));
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let links = records::<BrtHLink>(&sheet);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].relId.to_optional_string().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn hyperlinks_are_absent_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(!names.iter().any(|name| name.contains("_rels/sheet")));
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        assert_eq!(records::<BrtHLink>(&sheet).len(), 0);
     }
 
     #[test]

@@ -57,6 +57,18 @@ pub enum Error {
     #[error("string exceeds 32,767 UTF-16 code units")]
     StringTooLong,
 
+    /// A URL or internal location exceeds Excel's 2,080 UTF-16 code-unit limit.
+    #[error("URL exceeds 2,080 UTF-16 code units")]
+    MaxUrlLengthExceeded,
+
+    /// A URL type is not a supported URL, file, mailto, or internal link.
+    #[error("unknown URL type: {0}")]
+    UnknownUrlType(String),
+
+    /// A hyperlink tooltip exceeds Excel's 255 UTF-16 code-unit limit.
+    #[error("hyperlink tooltip exceeds 255 UTF-16 code units")]
+    TooltipTooLong,
+
     /// A value cannot be represented exactly in the target encoding.
     #[error("value cannot be represented exactly: {0}")]
     ValueNotRepresentable(&'static str),

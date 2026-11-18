@@ -21,6 +21,7 @@ mod error;
 mod format;
 mod package;
 mod sheet;
+mod url;
 mod workbook;
 mod worksheet;
 
@@ -32,6 +33,7 @@ pub use format::{
     Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,
     FormatScript, FormatUnderline,
 };
+pub use url::Url;
 pub use workbook::Workbook;
 pub use worksheet::{ColNum, RowNum, Worksheet};
 

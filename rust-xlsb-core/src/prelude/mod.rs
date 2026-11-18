@@ -13,9 +13,10 @@ pub use record::{
     BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCellBlank, BrtCellBool,
     BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor,
     BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView,
-    BrtExternSheet, BrtFill, BrtFmt, BrtFont, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup,
-    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtSupSelf, BrtWsDim,
-    BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
+    BrtExternSheet, BrtFill, BrtFmt, BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName,
+    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtSupSelf,
+    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder,
+    VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
@@ -129,6 +130,7 @@ mod tests {
     #[case::brt_begin_merge_cells(|| checked_test::<BrtBeginMergeCells>(4))]
     #[case::brt_end_merge_cells(|| checked_test::<BrtEndMergeCells>(0))]
     #[case::brt_font(|| checked_test::<BrtFont>(39))]
+    #[case::brt_hlink(|| checked_test::<BrtHLink>(32))]
     #[case::brt_fill(|| checked_test::<BrtFill>(68))]
     #[case::brt_border(|| checked_test::<BrtBorder>(51))]
     #[case::brt_style(|| checked_test::<BrtStyle>(24))]

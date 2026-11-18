@@ -19,7 +19,7 @@ and the three save entry points.
 It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
-2. **Cell-level structural features** — no hyperlinks or rich strings.
+2. **Cell-level structural features** — no rich strings.
 3. **Worksheet layout and view** — no full autofit or arbitrary defined
    names.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
@@ -28,7 +28,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    sparklines.
 6. **Workbook metadata and packaging** — no user-defined names, document
    properties, themes, chartsheets, VBA, or compressed ZIP.
-7. **Data ecosystem** — no `Formula`, `Url`, `ExcelDateTime`, jiff,
+7. **Data ecosystem** — no `Formula`, `ExcelDateTime`, jiff,
    `rust_decimal`, serde, or Polars adapters.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
@@ -47,6 +47,7 @@ the breadth gap.
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, column autofit-width hint, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
+| Hyperlinks | `write_url` and text/format/tooltip variants, internal and external targets, default hyperlink style, worksheet relationships |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks, print areas, repeat rows/columns |
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
@@ -54,7 +55,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 171 core + 120 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 173 core + 129 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -104,8 +105,9 @@ Status meanings:
 | `write_array_formula`, `write_dynamic_array_formula` | Missing | Array/dynamic formula records |
 | `write_dynamic_formula` | Missing | Dynamic formula records |
 | `write_rich_string` | Missing | Rich-string cell records |
-| `write_url`, `write_url_with_text`, `write_url_with_options` | Missing | Hyperlink records and URL options |
-| `write_rich_string_with_format`, `write_url_with_format` | Missing | Formatted rich text and links |
+| `write_url`, `write_url_with_text`, `write_url_with_options` | Supported | `BrtHLink` plus worksheet relationships |
+| `write_rich_string_with_format` | Missing | Formatted rich text |
+| `write_url_with_format` | Supported | Caller-supplied link format |
 | `set_formula_result`, `set_formula_result_default` | Missing | Stored formula results |
 | `set_nan_value`, `set_infinity_value`, `set_neg_infinity_value` | Supported | Display text for non-finite numbers |
 | `set_hidden_zeroes` | Supported | — |
@@ -197,7 +199,8 @@ Status meanings:
 | `set_underline`, `set_font_strikethrough`, `set_font_script` | Supported | — |
 | `set_indent`, `set_rotation`, `set_reading_direction`, `set_shrink`, `unset_shrink` | Supported | — |
 | `set_border_diagonal`, diagonal color/type | Supported | — |
-| `set_hyperlink`, `unset_hyperlink_style` | Missing | Hyperlink style |
+| `set_hyperlink` | Supported | Default blue underline style |
+| `unset_hyperlink_style` | Missing | Reverting hyperlink formatting |
 | `set_unlocked` | Supported | — |
 | `set_quote_prefix`, `unset_quote_prefix` | Supported | — |
 | `set_checkbox`, `unset_checkbox` | Missing | Checkbox format |
@@ -216,7 +219,7 @@ Status meanings:
 | jiff civil types | Missing | Optional feature |
 | `rust_decimal::Decimal` | Missing | Optional feature |
 | `Formula` | Missing | Formula value type |
-| `Url` | Missing | Hyperlink value type |
+| `Url` | Supported | Text, tooltip, internal/file/URL targets |
 | Serde serialization | Missing | Optional feature |
 | Polars integration | Missing | Optional feature |
 
@@ -266,7 +269,7 @@ records or package parts that do not exist yet.
 | Feature area | Missing implementation |
 |---|---|
 | Formulas | Formula token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError`-class records, cached results, shared/array formula state |
-| Hyperlinks | Hyperlink records, URL/relationship plumbing, tooltip/display options |
+| Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
 | Rich strings | Rich-string cell records and run formatting |
 | Tables | Table parts, table styles, column metadata, autofilter integration |
 | Conditional formats | DXF styles and conditional-format record groups |
@@ -296,7 +299,7 @@ objects.
 |---|---|---|---|
 | `IntoExcelData for Result<T, E>` | ✅ P0a | Common fallible-data pattern; cheap parity win | S |
 | `merge_range` | ✅ | Very common layout feature; also unblocks styled reports | M |
-| `write_url` + formatted variants | Open | Common in reports and dashboards | M |
+| `write_url` + formatted variants | ✅ | Common in reports and dashboards | M |
 | Row/column hidden | ✅ P0a | Basic worksheet state; low record complexity | S |
 | Default row height, sheet visibility, tab color | Open | Basic worksheet state | S–M |
 | `set_freeze_panes`, `set_selection`, `set_top_left_cell` | ✅ | Basic view usability | S–M |
@@ -310,7 +313,7 @@ the format-only parity setters. **Merge status:** `merge_range` and the three
 MS-XLSB merge records are shipped. **View status:** freeze panes, frozen-pane top cell, selection,
 top-left cell, zoom, display flags, pixel-unit layout setters, and the
 `WSVIEWS2` records are shipped. **P0b** remains the
-formula engine; hyperlinks and worksheet state are the next smaller P0 gaps.
+formula engine. Hyperlinks and worksheet state are shipped.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
 cached results where supported; record-level tests assert formula/merge/link
@@ -416,9 +419,9 @@ spec:
 3. Cached `set_formula_result` values.
 4. Array and dynamic-array formulas.
 
-The remaining smaller P0 gap is `write_url`. Worksheet state, page setup,
-text headers/footers, manual page breaks, outline groups, print areas, and
-repeat titles are shipped; full autofit remains in P2.
+Hyperlinks, worksheet state, page setup, text headers/footers, manual page
+breaks, outline groups, print areas, and repeat titles are shipped; full
+autofit remains in P2.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -430,14 +433,16 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 171 core + 120 writer unit tests and 6 doctests; calamine
-  round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
+- Test evidence: 173 core + 129 writer unit tests and 6 doctests; calamine
+  round-trips; LibreOffice render and XLSX round-trip of
+  `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
   rendered freeze. It preserves orientation, page order, margins, print
   gridlines/headings/centering, fit-to-page, first page number, text
-  headers/footers, and manual page breaks; it normalizes paper size and drops
-  black-and-white and draft state. A generated 60-row workbook with breaks at
+  headers/footers, manual page breaks, and hyperlinks; it normalizes paper size
+  and drops black-and-white and draft state. The XLSX round-trip keeps both an
+  external relationship and an internal `location`. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through
   `Report 3 of 3` in the header. Grouped rows preserve outline levels and
   hidden rows on XLSX round-trip; collapsed rows disappear from the PDF. Real Excel fixtures decode through

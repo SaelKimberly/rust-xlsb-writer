@@ -381,6 +381,15 @@ impl Format {
         self
     }
 
+    /// Applies Excel's blue, single-underlined hyperlink font style.
+    #[must_use]
+    pub const fn set_hyperlink(mut self) -> Self {
+        self.font_color = Some(Color::RGB(0x0005_63C1));
+        self.font.uls = 0x01;
+        self.font.bFontScheme = 0;
+        self
+    }
+
     /// Sets the font name.
     #[must_use]
     pub fn set_font_name(mut self, name: impl Into<String>) -> Self {

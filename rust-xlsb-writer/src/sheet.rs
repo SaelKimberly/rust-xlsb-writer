@@ -7,9 +7,10 @@ use rust_xlsb_core::prelude::{
     BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank,
     BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
     BrtEndColBrk, BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
-    BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane,
-    BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
-    HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlStringExt, Xnum,
+    BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtHLink, BrtMargins, BrtMergeCell, BrtPageSetup,
+    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
+    HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
+    XlWideString, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -143,6 +144,7 @@ pub fn write_sheet(
         push(out, &BrtEndMergeCells::default())?;
     }
 
+    write_hyperlinks(sheet, out)?;
     write_print_settings(sheet, out)?;
     write_header_footer(sheet, out)?;
     write_page_breaks(sheet, out)?;
@@ -303,6 +305,41 @@ fn active_pane(freeze: Option<(u32, u16)>, selection: Option<UncheckedRfX>) -> u
         (false, true) => TOP_RIGHT,
         (false, false) => TOP_LEFT,
     }
+}
+
+fn write_hyperlinks(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let mut rel_id = 0u32;
+    for (&(row, col), link) in sheet.hyperlinks() {
+        let rel = if link.is_internal() {
+            None
+        } else {
+            rel_id = rel_id
+                .checked_add(1)
+                .ok_or(Error::ValueNotRepresentable("too many hyperlinks"))?;
+            Some(format!("rId{rel_id}"))
+        };
+        let display = if link.is_internal() {
+            link.text.as_str()
+        } else {
+            ""
+        };
+        push(
+            out,
+            &BrtHLink {
+                rfx: UncheckedRfX {
+                    rwFirst: row,
+                    rwLast: row,
+                    colFirst: u32::from(col),
+                    colLast: u32::from(col),
+                },
+                relId: XlNullableWideString::construct(Some(rel.as_deref().unwrap_or_default())),
+                location: XlWideString::construct(Some(link.location.as_str())),
+                tooltip: XlWideString::construct(Some(link.tooltip.as_str())),
+                display: XlWideString::construct(Some(display)),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn write_print_settings(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
