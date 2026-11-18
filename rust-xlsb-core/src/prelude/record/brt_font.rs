@@ -33,7 +33,7 @@ impl Default for BrtFont {
             unused: 0,
             brtColor: BrtColor::default(),
             bFontScheme: 2,
-            name: XlWideString::construct(Some("Arial")),
+            name: XlWideString::construct(Some("Calibri")),
         }
     }
 }
@@ -41,3 +41,16 @@ impl Default for BrtFont {
 impl Unchecked for BrtFont {}
 
 assign_id!(BrtFont);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_font_matches_excel() {
+        let font = BrtFont::default();
+
+        assert_eq!(font.dyHeight, 220);
+        assert_eq!(font.name.to_optional_string().as_deref(), Some("Calibri"));
+    }
+}

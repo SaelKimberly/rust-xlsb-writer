@@ -133,7 +133,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 144 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 145 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -250,7 +250,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers, plus the `#[cfg(test)] mod e2e` package suite (`src/e2e/`). There
   is no `tests/`, `benches/`, or fixture directory. `examples/showcase.rs` is a
   runnable demo, not a test; it includes the `e2e` harness by path.
-- 144 unit tests and 6 doctests total. Most unit tests are rstest cases in the
+- 145 unit tests and 6 doctests total. Most unit tests are rstest cases in the
   `test_biff_export` table in `prelude/mod.rs`, each calling the generic
   `checked_test::<T>`: `Default` → `to_bytes` → exact byte-size assert →
   `from_bytes` → `check()` on both → `PartialEq`, `Hash`, and `Debug` equality.

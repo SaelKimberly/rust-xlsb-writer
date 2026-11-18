@@ -100,7 +100,7 @@ mod tests {
     #[case::brt_begin_sst(|| checked_test::<BrtBeginSst>(8))]
     #[case::brt_end_sst(|| checked_test::<BrtEndSst>(0))]
     #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]
-    #[case::brt_font(|| checked_test::<BrtFont>(35))]
+    #[case::brt_font(|| checked_test::<BrtFont>(39))]
     #[case::brt_fill(|| checked_test::<BrtFill>(68))]
     #[case::brt_border(|| checked_test::<BrtBorder>(51))]
     #[case::brt_style(|| checked_test::<BrtStyle>(24))]

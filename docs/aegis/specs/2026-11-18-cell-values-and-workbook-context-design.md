@@ -1,6 +1,9 @@
 # Cell values, workbook context, and shared-string ids
 
 - Status: Implemented (slices 1–7; `e2e` migration and temporal values included)
+- Superseded in part by: `2026-11-18-xlsxwriter-compatible-api-design.md`
+  (§2 ownership; §3 inline-string rule is low-level only; §5.7 ownership; §11
+  performance levers; §13 item 1 constructor)
 - Date: 2026-11-18
 - Method pack: Aegis design spec
 - Target: `rust-xlsb-core`, MS-XLSB revision 22.0
@@ -36,6 +39,9 @@ exists, keeps the contract small: no migration of user code is required, the
 
 ## 2. Goals
 
+> Superseded for the public writer: core no longer owns `Workbook` /
+> `Worksheet`; those types move to `rust-xlsb-writer`.
+
 - One conversion contract from Rust values to semantic cell values
   (`ToCellValue`), taking the target workbook context.
 - Shared strings as a workbook-agnostic `SharedString { id: u32 }`, validated
@@ -47,6 +53,9 @@ exists, keeps the contract small: no migration of user code is required, the
 - End-to-end tests prove each conversion through `calamine`, as today.
 
 ## 3. Non-goals
+
+> Superseded for the public writer: `IntoExcelData` strings intern to the SST.
+> This low-level inline rule remains for `ToCellValue` only.
 
 - Number formats and styles. A cell's style index stays an orthogonal field
   next to `CellValue`; temporal tests keep using the harness' style slot.
@@ -557,6 +566,10 @@ warnings), `cargo fmt --all --check`.
 
 ## 11. Performance levers
 
+> Superseded for the public writer by
+> `2026-11-18-xlsxwriter-compatible-api-design.md`: high-level strings use the
+> SST and ZIP output is store-only.
+
 Requirements for the writer work that follows this spec. They do not change the
 `CellValue` contract.
 
@@ -590,6 +603,8 @@ Requirements for the writer work that follows this spec. They do not change the
 ## 13. Open questions — resolved during implementation
 
 1. `Workbook::new()` returns `Result`; the fallible constructor was kept.
+   Superseded by the public writer: `rust_xlsb_writer::Workbook::new()` is
+   infallible and defers SQLite errors to `save`.
 2. `store_integer` rejects integers above `2^53` with
    `Error::ValueNotRepresentable`; strictness was kept.
 3. Temporal precision is one millisecond and sub-millisecond components are
