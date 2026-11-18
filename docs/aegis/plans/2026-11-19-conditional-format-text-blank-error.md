@@ -59,7 +59,7 @@ wire contracts that package tests must pin.
     `iParam` in `0..=3`, non-null `strParam` of 1..=255 UTF-16 code units.
   - Blank/error: `iType=CF_TYPE_EXPRESSION`, template in `0x09..=0x0C`,
     `iParam=0`, null `strParam`.
-  - Both require a non-empty `formula1` whose `cce` matches `cbFmla1`,
+  - Both require a non-empty `formula1` with a nonzero `cbFmla1` marker,
     reject `formula2`/`formula3`, and allow only the stop flag.
 - Existing rule families must still reject non-null `strParam`.
 
@@ -108,7 +108,8 @@ follows:
 | errors | `0x0B` | 0 | null |
 | non-errors | `0x0C` | 0 | null |
 
-`cbFmla1` is set to `formula1.cce`; `cbFmla2` and `cbFmla3` are zero.
+`cbFmla1` is `1`; `cbFmla2` and `cbFmla3` are zero. MS-XLSB treats
+`cbFmla1` as a nonzero presence marker and ignores its value.
 `flags` contains only `F_STOP_TRUE` when enabled. `dxfId` is the registered
 DXF id or `0xFFFFFFFF`.
 
@@ -153,9 +154,9 @@ DXF id or `0xFFFFFFFF`.
 
 ## Verification
 
-- `cargo test --workspace`: 580 tests pass (573 unit + 7 doctests; 269 core,
+- `cargo test --workspace`: 581 tests pass (574 unit + 7 doctests; 270 core,
   304 writer).
-- `cargo test --workspace --all-features`: 584 tests pass (577 unit + 7
+- `cargo test --workspace --all-features`: 585 tests pass (578 unit + 7
   doctests).
 - `cargo clippy --workspace --all-targets --all-features`: clean.
 - `cargo fmt --all --check` and `git diff --check`: clean.
@@ -184,6 +185,12 @@ Four coverage findings and two non-blocking observations were fixed:
    `PtgStr` encoder.
 6. `push_formula_string` rejects text over 255 UTF-16 units, and text
    `begin_rule` calls `validate` so an empty rule cannot bypass the bound.
+7. Formula markers follow MS-XLSB: the writer emits `cbFmla1=1`, and core
+   accepts any nonzero marker instead of requiring it to equal `cce`. This
+   also relaxes the existing cell-rule check to the spec behavior.
+8. `MarkerDeltaReview` re-checked that delta with no blocking defects and two
+   P3 coverage/wording findings. Core now tests the zero-marker rejection, and
+   the stale "second formula size" message says "marker".
 
 ## Risks
 
@@ -193,5 +200,5 @@ Four coverage findings and two non-blocking observations were fixed:
   token parsing are the available oracles.
 - MS-XLSB requires `strParam` for text rules and null otherwise; the core check
   enforces both so malformed records cannot be written silently.
-- Excel's `cbFmla1` is an ignored nonzero marker, but this writer uses `cce` to
-  stay consistent with its existing cell-rule records.
+- `cbFmla1` is an ignored nonzero marker. This writer emits `1`, matching
+  Excel; core validation accepts any nonzero value.

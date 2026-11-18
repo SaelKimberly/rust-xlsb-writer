@@ -358,7 +358,6 @@ fn formula_rule(
     str_param: XlNullableWideString,
     formula: CFParsedFormula,
 ) -> BrtBeginCFRule {
-    let cb_fmla1 = formula.cce;
     BrtBeginCFRule {
         iType: CF_TYPE_EXPRESSION,
         iTemplate: template,
@@ -366,7 +365,7 @@ fn formula_rule(
         iPri: priority,
         iParam: parameter,
         flags: stop_flag(stop_if_true),
-        cbFmla1: cb_fmla1,
+        cbFmla1: 1,
         strParam: str_param,
         formula1: Some(formula),
         ..BrtBeginCFRule::default()
@@ -2408,7 +2407,7 @@ mod tests {
             assert_eq!(record.strParam.to_optional_string().as_deref(), Some("foo"));
             let parsed = record.formula1.as_ref().expect("formula");
             assert_eq!(parsed.cce, u32::try_from(formula.len()).expect("length"));
-            assert_eq!(record.cbFmla1, parsed.cce);
+            assert_eq!(record.cbFmla1, 1);
             assert_eq!(parsed.rgce, formula);
             assert_eq!(parsed.cb, 0);
             assert_eq!(parsed.rgcb.len(), 0);
@@ -2486,7 +2485,7 @@ mod tests {
         assert!(record.stop_if_true());
         assert!(record.strParam.is_null());
         let parsed = record.formula1.as_ref().expect("formula");
-        assert_eq!(record.cbFmla1, parsed.cce);
+        assert_eq!(record.cbFmla1, 1);
         assert_eq!(parsed.rgce, formula);
         assert_eq!(record.cbFmla2, 0);
         assert!(record.formula2.is_none());

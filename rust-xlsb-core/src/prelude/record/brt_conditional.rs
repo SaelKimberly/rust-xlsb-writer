@@ -259,20 +259,20 @@ impl BrtBeginCFRule {
             return Err("conditional-format first formula is required");
         };
         formula1.check()?;
-        if self.cbFmla1 != formula1.cce {
-            return Err("conditional-format first formula size is inconsistent");
+        if self.cbFmla1 == 0 {
+            return Err("conditional-format first formula marker must be nonzero");
         }
         match (self.iParam, &self.formula2) {
             (1 | 2, Some(formula2)) => {
                 formula2.check()?;
-                if self.cbFmla2 != formula2.cce {
-                    return Err("conditional-format second formula size is inconsistent");
+                if self.cbFmla2 == 0 {
+                    return Err("conditional-format second formula marker must be nonzero");
                 }
             }
             (1 | 2, None) => return Err("between rules require a second formula"),
             (_, Some(_)) => return Err("only between rules may have a second formula"),
             (_, None) if self.cbFmla2 != 0 => {
-                return Err("conditional-format second formula size must be zero");
+                return Err("conditional-format second formula marker must be zero");
             }
             (_, None) => {}
         }
@@ -310,8 +310,8 @@ impl BrtBeginCFRule {
             return Err("conditional-format first formula is required");
         };
         formula1.check()?;
-        if self.cbFmla1 != formula1.cce {
-            return Err("conditional-format first formula size is inconsistent");
+        if self.cbFmla1 == 0 {
+            return Err("conditional-format first formula marker must be nonzero");
         }
         if self.cbFmla2 != 0 || self.formula2.is_some() {
             return Err("this conditional format must not contain a second formula");
@@ -1058,6 +1058,28 @@ mod tests {
     }
 
     #[test]
+    fn formula_markers_are_presence_flags_not_sizes() {
+        let rule = BrtBeginCFRule {
+            dxfId: 0,
+            iPri: 1,
+            iParam: 1,
+            cbFmla1: 1,
+            cbFmla2: 1,
+            formula1: Some(number(1.0)),
+            formula2: Some(number(2.0)),
+            ..BrtBeginCFRule::default()
+        };
+        rule.check().expect("markers are ignored sizes");
+
+        let invalid = BrtBeginCFRule {
+            cbFmla1: 0,
+            formula1: Some(number(1.0)),
+            ..BrtBeginCFRule::default()
+        };
+        assert!(invalid.check().is_err());
+    }
+
+    #[test]
     fn text_blank_and_error_rules_validate_template_parameters() {
         for (template, parameter) in [
             (CF_TEMPLATE_CONTAINS_TEXT, CF_TEXTOPER_CONTAINS),
@@ -1071,12 +1093,13 @@ mod tests {
                 dxfId: 0,
                 iPri: 1,
                 iParam: parameter,
-                cbFmla1: 9,
+                cbFmla1: 1,
                 strParam: XlNullableWideString::construct(Some("rust")),
                 formula1: Some(number(1.0)),
                 ..BrtBeginCFRule::default()
             };
-            rule.check().expect("valid text rule");
+            rule.check()
+                .expect("valid text rule with an ignored size marker");
         }
 
         for template in [
@@ -1125,7 +1148,7 @@ mod tests {
                 ..text.clone()
             },
             BrtBeginCFRule {
-                cbFmla1: 1,
+                cbFmla1: 0,
                 ..text.clone()
             },
             BrtBeginCFRule {

@@ -1338,7 +1338,7 @@ mod tests {
             Some("rust")
         );
         let formula = rules[0].formula1.as_ref().expect("text formula");
-        assert_eq!(rules[0].cbFmla1, formula.cce);
+        assert_eq!(rules[0].cbFmla1, 1);
         assert_eq!(formula.rgce[0], 0x17);
         assert_eq!(&formula.rgce[1..3], &[4, 0]);
         assert_eq!(&formula.rgce[3..11], &[b'r', 0, b'u', 0, b's', 0, b't', 0]);
@@ -1351,7 +1351,7 @@ mod tests {
         assert_eq!(rules[1].iPri, 2);
         assert!(rules[1].strParam.is_null());
         let formula = rules[1].formula1.as_ref().expect("blank formula");
-        assert_eq!(rules[1].cbFmla1, formula.cce);
+        assert_eq!(rules[1].cbFmla1, 1);
         assert_eq!(
             formula.rgce,
             [
@@ -1366,7 +1366,7 @@ mod tests {
         assert_eq!(rules[2].iPri, 3);
         assert!(rules[2].strParam.is_null());
         let formula = rules[2].formula1.as_ref().expect("error formula");
-        assert_eq!(rules[2].cbFmla1, formula.cce);
+        assert_eq!(rules[2].cbFmla1, 1);
         assert_eq!(
             formula.rgce,
             [0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 3, 0, 0x41, 0x26, 0]
