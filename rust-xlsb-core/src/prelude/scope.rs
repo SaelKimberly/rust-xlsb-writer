@@ -34,6 +34,7 @@ macro_rules! declare_scopes {
 declare_scopes!(
     Book,
     BookViews,
+    Externals,
     BundleShs,
     Sheet,
     SheetData,

@@ -313,3 +313,42 @@ fn merged_range_keeps_top_left_value() {
 
     assert_eq!(range.get((0, 0)), Some(&Data::String("Merged".to_owned())));
 }
+
+#[test]
+fn print_ranges_appear_as_defined_names() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_print_area(0, 0, 4, 2).expect("print area");
+    sheet.set_repeat_rows(0, 1).expect("repeat rows");
+    sheet.set_repeat_columns(1, 2).expect("repeat columns");
+    sheet.write(0, 0, "printable").expect("write");
+    let second = workbook.add_worksheet();
+    second.set_print_area(10, 10, 12, 12).expect("print area");
+    second.write(0, 0, "second").expect("write");
+
+    let bytes = workbook.save_to_buffer().expect("saves");
+    let mut opened = open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).expect("opens");
+    assert_eq!(
+        opened.defined_names(),
+        &[
+            ("_xlnm.Print_Area".to_owned(), "Sheet1!$A$1:$C$5".to_owned()),
+            (
+                "_xlnm.Print_Area".to_owned(),
+                "Sheet2!$K$11:$M$13".to_owned()
+            ),
+            (
+                "_xlnm.Print_Titles".to_owned(),
+                "Sheet1!$A$1:$XFD$2,Sheet1!$B$1:$C$1048576".to_owned()
+            ),
+        ]
+    );
+
+    assert_eq!(
+        opened.worksheet_range("Sheet1").expect("reads").get((0, 0)),
+        Some(&Data::String("printable".to_owned()))
+    );
+    assert_eq!(
+        opened.worksheet_range("Sheet2").expect("reads").get((0, 0)),
+        Some(&Data::String("second".to_owned()))
+    );
+}

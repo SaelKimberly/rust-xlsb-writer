@@ -279,6 +279,9 @@ pub struct Worksheet {
     header_footer: HeaderFooter,
     page_breaks: Vec<u32>,
     vertical_page_breaks: Vec<u32>,
+    print_area: Option<(RowNum, ColNum, RowNum, ColNum)>,
+    repeat_rows: Option<(RowNum, RowNum)>,
+    repeat_columns: Option<(ColNum, ColNum)>,
     outline_row_level: u8,
     outline_col_level: u8,
     outline_symbols_above: bool,
@@ -309,6 +312,9 @@ impl Worksheet {
             header_footer: HeaderFooter::default(),
             page_breaks: Vec::new(),
             vertical_page_breaks: Vec::new(),
+            print_area: None,
+            repeat_rows: None,
+            repeat_columns: None,
             outline_row_level: 0,
             outline_col_level: 0,
             outline_symbols_above: false,
@@ -1559,6 +1565,69 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Sets the range printed by default.
+    ///
+    /// A range covering the entire worksheet clears the print area.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when an endpoint is out of range, or
+    /// [`Error::RowColumnOrder`] when the first endpoint follows the last.
+    pub fn set_print_area(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+    ) -> Result<&mut Self> {
+        Self::check_row(first_row)?;
+        Self::check_col(first_col)?;
+        Self::check_row(last_row)?;
+        Self::check_col(last_col)?;
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        self.print_area =
+            if first_row == 0 && first_col == 0 && last_row == MAX_ROW && last_col == MAX_COL {
+                None
+            } else {
+                Some((first_row, first_col, last_row, last_col))
+            };
+        Ok(self)
+    }
+
+    /// Repeats rows at the top of each printed page.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a row is above [`MAX_ROW`], or
+    /// [`Error::RowColumnOrder`] when the first row follows the last.
+    pub fn set_repeat_rows(&mut self, first_row: RowNum, last_row: RowNum) -> Result<&mut Self> {
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        if first_row > last_row {
+            return Err(Error::RowColumnOrder);
+        }
+        self.repeat_rows = Some((first_row, last_row));
+        Ok(self)
+    }
+
+    /// Repeats columns at the left of each printed page.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a column is above [`MAX_COL`], or
+    /// [`Error::RowColumnOrder`] when the first column follows the last.
+    pub fn set_repeat_columns(&mut self, first_col: ColNum, last_col: ColNum) -> Result<&mut Self> {
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+        if first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        self.repeat_columns = Some((first_col, last_col));
+        Ok(self)
+    }
+
     /// Applies a format to one cell without changing its value.
     ///
     /// A missing cell becomes a formatted blank cell.
@@ -1953,6 +2022,18 @@ impl Worksheet {
 
     pub(crate) fn merged_ranges(&self) -> &[MergeRange] {
         &self.merged_ranges
+    }
+
+    pub(crate) const fn print_area(&self) -> Option<(RowNum, ColNum, RowNum, ColNum)> {
+        self.print_area
+    }
+
+    pub(crate) const fn repeat_rows(&self) -> Option<(RowNum, RowNum)> {
+        self.repeat_rows
+    }
+
+    pub(crate) const fn repeat_columns(&self) -> Option<(ColNum, ColNum)> {
+        self.repeat_columns
     }
 
     pub(crate) const fn view(&self) -> &SheetView {
@@ -2980,6 +3061,52 @@ mod tests {
             Err(Error::RowColumnLimit)
         ));
         assert!(worksheet.cells().is_empty());
+    }
+
+    #[test]
+    fn print_area_validates_and_clears_the_full_sheet() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_print_area(1, 2, 3, 4).expect("area");
+        assert_eq!(worksheet.print_area(), Some((1, 2, 3, 4)));
+
+        assert!(matches!(
+            worksheet.set_print_area(3, 0, 1, 0),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.set_print_area(0, 0, MAX_ROW + 1, 0),
+            Err(Error::RowColumnLimit)
+        ));
+        assert_eq!(worksheet.print_area(), Some((1, 2, 3, 4)));
+
+        worksheet
+            .set_print_area(0, 0, MAX_ROW, MAX_COL)
+            .expect("full sheet");
+        assert_eq!(worksheet.print_area(), None);
+    }
+
+    #[test]
+    fn repeat_rows_and_columns_are_independent() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_repeat_rows(0, 1).expect("rows");
+        worksheet.set_repeat_columns(1, 2).expect("columns");
+        assert_eq!(worksheet.repeat_rows(), Some((0, 1)));
+        assert_eq!(worksheet.repeat_columns(), Some((1, 2)));
+
+        worksheet.set_repeat_rows(3, 4).expect("new rows");
+        assert_eq!(worksheet.repeat_rows(), Some((3, 4)));
+        assert_eq!(worksheet.repeat_columns(), Some((1, 2)));
+
+        assert!(matches!(
+            worksheet.set_repeat_rows(2, 1),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.set_repeat_columns(0, MAX_COL + 1),
+            Err(Error::RowColumnLimit)
+        ));
+        assert_eq!(worksheet.repeat_rows(), Some((3, 4)));
+        assert_eq!(worksheet.repeat_columns(), Some((1, 2)));
     }
 
     #[test]

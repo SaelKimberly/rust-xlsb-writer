@@ -74,8 +74,8 @@ The public writer has its own `IntoExcelData` / `IntoExcelDateTime` path.
 `Worksheet` owns sparse cells, row/column options with outline levels and
 autofit-width hints, merged ranges, worksheet view/display state (including
 normal, page-layout, and page-break-preview modes and hidden unused rows), tab
-state, print state (page setup, text headers/footers, and manual page breaks),
-and a worksheet-local format table; `write` stores
+state, print state (page setup, text headers/footers, manual page breaks, print
+areas, and repeat titles), and a worksheet-local format table; `write` stores
 context-free `CellData` and `write_with_format` interns a `Format` by value.
 Non-finite floats become configurable display strings because XLSB has no
 NaN or infinity number cell. At
@@ -147,7 +147,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 277 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 291 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -275,7 +275,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 277 unit tests and 6 doctests total: 163 in core, 114 in writer. Most core
+- 291 unit tests and 6 doctests total: 171 in core, 120 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
@@ -294,8 +294,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - Hand-written writer tests cover `Format` mapping/dedup/validation,
   `IntoExcelData`, worksheet bounds and overrides, sheet record layout
   (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
-  package parts, multi-sheet save, print/header/page-break serialization, and
-  calamine round-trips for values and temporal formats.
+  package parts, multi-sheet save, print/header/page-break serialization,
+  print-area/repeat-title defined names, and calamine round-trips for values
+  and temporal formats.
 - `criterion` is a dev-dependency in both crates but no benchmark exists.
 - No CI runs any of this. Run `cargo test --workspace` before claiming a change
   works, and update the affected size literal rather than loosening the

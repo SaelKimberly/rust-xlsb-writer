@@ -3,12 +3,13 @@
 use std::fmt::Write as _;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBookView, BrtBundleSh, BrtEndBook,
-    BrtEndBookViews, BrtEndBundleShs, XlNullableWideString, XlStringExt, XlWideString,
+    BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBeginExternals, BrtBookView,
+    BrtBundleSh, BrtEndBook, BrtEndBookViews, BrtEndBundleShs, BrtEndExternals, BrtExternSheet,
+    BrtName, BrtSupSelf, NameParsedFormula, XlNullableWideString, XlStringExt, XlWideString, Xti,
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
-use crate::worksheet::{Visibility, Worksheet};
+use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
 use crate::{Error, Result};
 
 pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
@@ -146,8 +147,119 @@ fn workbook_part(sheets: &[Worksheet]) -> Result<Vec<u8>> {
         )?;
     }
     push_record(&mut out, &BrtEndBundleShs::default())?;
+    write_defined_names(sheets, &mut out)?;
     push_record(&mut out, &BrtEndBook::default())?;
     Ok(out)
+}
+
+fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
+    let has_names = sheets
+        .iter()
+        .any(|sheet| sheet.print_area().is_some() || has_repeat_titles(sheet));
+    if !has_names {
+        return Ok(());
+    }
+
+    let mut xti_indexes = vec![None; sheets.len()];
+    let mut xtis = Vec::new();
+    for (index, sheet) in sheets.iter().enumerate() {
+        if sheet.print_area().is_none() && !has_repeat_titles(sheet) {
+            continue;
+        }
+        let sheet_index = i32::try_from(index)
+            .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?;
+        let xti_index = u16::try_from(xtis.len())
+            .map_err(|_| Error::ValueNotRepresentable("too many print ranges"))?;
+        xti_indexes[index] = Some(xti_index);
+        xtis.push(Xti {
+            externalLink: 0,
+            firstSheet: sheet_index,
+            lastSheet: sheet_index,
+        });
+    }
+
+    push_record(out, &BrtBeginExternals::default())?;
+    push_record(out, &BrtSupSelf::default())?;
+    push_record(
+        out,
+        &BrtExternSheet {
+            cXti: u32::try_from(xtis.len())
+                .map_err(|_| Error::ValueNotRepresentable("too many print ranges"))?,
+            rgXti: xtis,
+        },
+    )?;
+    push_record(out, &BrtEndExternals::default())?;
+
+    for (index, sheet) in sheets.iter().enumerate() {
+        if let Some((first_row, first_col, last_row, last_col)) = sheet.print_area() {
+            let ixti = xti_indexes[index].expect("print range has an Xti");
+            push_defined_name(
+                out,
+                index,
+                "_xlnm.Print_Area",
+                area3d(ixti, first_row, first_col, last_row, last_col).to_vec(),
+            )?;
+        }
+    }
+    for (index, sheet) in sheets.iter().enumerate() {
+        if has_repeat_titles(sheet) {
+            let ixti = xti_indexes[index].expect("print range has an Xti");
+            let mut rgce = Vec::with_capacity(31);
+            if let Some((first_row, last_row)) = sheet.repeat_rows() {
+                rgce.extend_from_slice(&area3d(ixti, first_row, 0, last_row, MAX_COL));
+            }
+            if let Some((first_col, last_col)) = sheet.repeat_columns() {
+                rgce.extend_from_slice(&area3d(ixti, 0, first_col, MAX_ROW, last_col));
+            }
+            if sheet.repeat_rows().is_some() && sheet.repeat_columns().is_some() {
+                rgce.push(0x10);
+            }
+            push_defined_name(out, index, "_xlnm.Print_Titles", rgce)?;
+        }
+    }
+    Ok(())
+}
+
+const fn has_repeat_titles(sheet: &Worksheet) -> bool {
+    sheet.repeat_rows().is_some() || sheet.repeat_columns().is_some()
+}
+
+fn push_defined_name(
+    out: &mut Vec<u8>,
+    sheet_index: usize,
+    name: &'static str,
+    rgce: Vec<u8>,
+) -> Result<()> {
+    push_record(
+        out,
+        &BrtName {
+            flags: BrtName::F_BUILTIN,
+            chKey: 0,
+            itab: u32::try_from(sheet_index)
+                .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?,
+            name: XlWideString::construct(Some(name)),
+            formula: NameParsedFormula {
+                cce: u32::try_from(rgce.len())
+                    .map_err(|_| Error::ValueNotRepresentable("formula too long"))?,
+                rgce,
+                cb: 0,
+                rgcb: Vec::new(),
+            },
+            comment: XlNullableWideString::construct(None::<&str>),
+        },
+    )?;
+    Ok(())
+}
+
+fn area3d(ixti: u16, first_row: u32, first_col: u16, last_row: u32, last_col: u16) -> [u8; 15] {
+    let mut rgce = [0u8; 15];
+    rgce[0] = 0x3B;
+    rgce[1..3].copy_from_slice(&ixti.to_le_bytes());
+    rgce[3..7].copy_from_slice(&first_row.to_le_bytes());
+    rgce[7..11].copy_from_slice(&last_row.to_le_bytes());
+    rgce[11..13].copy_from_slice(&first_col.to_le_bytes());
+    rgce[13..15].copy_from_slice(&last_col.to_le_bytes());
+    rgce
 }
 
 fn content_types(sheet_count: usize, has_strings: bool) -> String {
@@ -382,7 +494,9 @@ mod tests {
     use std::io::BufReader;
 
     use deku::DekuContainerRead;
-    use rust_xlsb_core::prelude::{BrtBeginWsView, BrtBookView, BrtBundleSh};
+    use rust_xlsb_core::prelude::{
+        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtExternSheet, BrtName,
+    };
     use rust_xlsb_core::{BiffHead, CheckedBiff};
 
     use super::*;
@@ -403,6 +517,73 @@ mod tests {
             }
         }
         records
+    }
+
+    #[test]
+    fn print_ranges_are_absent_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        assert_eq!(records::<BrtName>(&workbook_part).len(), 0);
+        assert_eq!(records::<BrtExternSheet>(&workbook_part).len(), 0);
+    }
+
+    #[test]
+    fn print_ranges_emit_scoped_defined_names() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_print_area(0, 0, 4, 2).expect("print area");
+        sheet.set_repeat_rows(0, 1).expect("repeat rows");
+        sheet.set_repeat_columns(0, 1).expect("repeat columns");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let names = records::<BrtName>(&workbook_part);
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 1);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].itab, 0);
+        assert_eq!(names[0].flags, BrtName::F_BUILTIN);
+        assert_eq!(
+            names[0].name.to_optional_string().as_deref(),
+            Some("_xlnm.Print_Area")
+        );
+        assert_eq!(names[0].formula.rgce, area3d(0, 0, 0, 4, 2).to_vec());
+        assert_eq!(
+            names[1].name.to_optional_string().as_deref(),
+            Some("_xlnm.Print_Titles")
+        );
+        let mut expected = area3d(0, 0, 0, 1, MAX_COL).to_vec();
+        expected.extend_from_slice(&area3d(0, 0, 0, MAX_ROW, 1));
+        expected.push(0x10);
+        assert_eq!(names[1].formula.rgce, expected);
+    }
+
+    #[test]
+    fn print_titles_emit_single_axis_formulas_with_sheet_scope() {
+        let mut workbook = crate::Workbook::new();
+        let rows = workbook.add_worksheet();
+        rows.set_repeat_rows(2, 3).expect("repeat rows");
+        let columns = workbook.add_worksheet();
+        columns.set_repeat_columns(2, 3).expect("repeat columns");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let names = records::<BrtName>(&workbook_part);
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(extern_sheets[0].rgXti[1].firstSheet, 1);
+        assert_eq!(names[0].itab, 0);
+        assert_eq!(names[0].formula.rgce, area3d(0, 2, 0, 3, MAX_COL).to_vec());
+        assert_eq!(names[1].itab, 1);
+        assert_eq!(names[1].formula.rgce, area3d(1, 0, 2, MAX_ROW, 3).to_vec());
     }
 
     #[test]

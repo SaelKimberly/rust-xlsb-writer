@@ -13,9 +13,9 @@ pub use record::{
     BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCellBlank, BrtCellBool,
     BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor,
     BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView,
-    BrtFill, BrtFmt, BrtFont, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr,
-    HAlign, ReadingOrder, VAlign,
+    BrtExternSheet, BrtFill, BrtFmt, BrtFont, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup,
+    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtSupSelf, BrtWsDim,
+    BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
@@ -86,6 +86,10 @@ mod tests {
     #[case::header_footer_string(|| checked_test::<HeaderFooterString>(4))]
     #[case::simple_rich_str(|| checked_test::<SimpleRichStr>(5))]
     #[case::brt_color(|| checked_test::<BrtColor>(8))]
+    #[case::brt_name(|| checked_test::<BrtName>(25))]
+    #[case::brt_extern_sheet(|| checked_test::<BrtExternSheet>(4))]
+    #[case::xti(|| checked_test::<Xti>(12))]
+    #[case::brt_sup_self(|| checked_test::<BrtSupSelf>(0))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
     #[case::brt_ws_prop(|| checked_test::<BrtWsProp>(23))]
     #[case::brt_ws_fmt_info(|| checked_test::<BrtWsFmtInfo>(12))]
@@ -133,6 +137,8 @@ mod tests {
     #[case::brt_end_book(|| checked_test::<BrtEndBook>(0))]
     #[case::brt_begin_book_views(|| checked_test::<BrtBeginBookViews>(0))]
     #[case::brt_end_book_views(|| checked_test::<BrtEndBookViews>(0))]
+    #[case::brt_begin_externals(|| checked_test::<BrtBeginExternals>(0))]
+    #[case::brt_end_externals(|| checked_test::<BrtEndExternals>(0))]
     #[case::brt_begin_bundle_shs(|| checked_test::<BrtBeginBundleShs>(0))]
     #[case::brt_end_bundle_shs(|| checked_test::<BrtEndBundleShs>(0))]
     #[case::brt_begin_style_sheet(|| checked_test::<BrtBeginStyleSheet>(0))]

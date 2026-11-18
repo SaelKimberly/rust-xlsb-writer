@@ -18,6 +18,7 @@
 - [Worksheet outline groups](plans/2026-11-18-worksheet-outline-groups.md)
 - [Worksheet display modes, unused-row hiding, and autofit-width hints](plans/2026-11-18-worksheet-display-and-autofit-hints.md)
 - [Cell display strings and range border formatting](plans/2026-11-18-cell-display-and-range-border-formatting.md)
+- [Print areas and print titles](plans/2026-11-18-print-areas-and-print-titles.md)
 
 ## Analysis
 
