@@ -1,7 +1,10 @@
-//! XLSB package assembly: parts, relationships, and store-only ZIP.
+//! XLSB package assembly: parts, relationships, and ZIP packaging.
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 
+use flate2::Compression;
+use flate2::write::DeflateEncoder;
 use rust_xlsb_core::prelude::{
     BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBeginExternals, BrtBookView,
     BrtBundleSh, BrtCalcProp, BrtEndBook, BrtEndBookViews, BrtEndBundleShs, BrtEndExternals,
@@ -109,7 +112,7 @@ pub fn build_package(
         parts.push(("xl/sharedStrings.bin".to_owned(), shared_strings));
     }
 
-    zip_store(&parts)
+    zip_store(&parts, settings.zip_compression_level)
 }
 
 struct WorkbookView {
@@ -636,7 +639,7 @@ fn workbook_rels(sheet_count: usize, has_strings: bool) -> String {
     body
 }
 
-fn zip_store(parts: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
+fn zip_store(parts: &[(String, Vec<u8>)], compression_level: Option<u8>) -> Result<Vec<u8>> {
     const DOS_DATE: u16 = 0x0021; // 1980-01-01, the earliest representable date.
 
     let mut body = Vec::new();
@@ -645,33 +648,55 @@ fn zip_store(parts: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
     for (name, data) in parts {
         let crc = crc32(data);
         let size = as_u32(data.len())?;
+        let name = name.as_bytes();
         let name_len = u16::try_from(name.len())
             .map_err(|_| Error::ValueNotRepresentable("ZIP entry name is too long"))?;
         let offset = as_u32(body.len())?;
+        let method = if compression_level.is_some() {
+            8_u16
+        } else {
+            0
+        };
+        let header_offset = body.len();
+        body.resize(header_offset + 30 + name.len(), 0);
 
-        put_u32(&mut body, 0x0403_4b50);
-        put_u16(&mut body, 20);
-        put_u16(&mut body, 0);
-        put_u16(&mut body, 0);
-        put_u16(&mut body, 0);
-        put_u16(&mut body, DOS_DATE);
-        put_u32(&mut body, crc);
-        put_u32(&mut body, size);
-        put_u32(&mut body, size);
-        put_u16(&mut body, name_len);
-        put_u16(&mut body, 0);
-        body.extend_from_slice(name.as_bytes());
-        body.extend_from_slice(data);
+        let compressed = if let Some(level) = compression_level {
+            let data_start = body.len();
+            {
+                let mut encoder =
+                    DeflateEncoder::new(&mut body, Compression::new(u32::from(level)));
+                encoder.write_all(data)?;
+                encoder.finish()?;
+            }
+            as_u32(body.len() - data_start)?
+        } else {
+            body.extend_from_slice(data);
+            size
+        };
+
+        let header = &mut body[header_offset..header_offset + 30];
+        header[0..4].copy_from_slice(&0x0403_4b50_u32.to_le_bytes());
+        header[4..6].copy_from_slice(&20_u16.to_le_bytes());
+        header[6..8].copy_from_slice(&0_u16.to_le_bytes());
+        header[8..10].copy_from_slice(&method.to_le_bytes());
+        header[10..12].copy_from_slice(&0_u16.to_le_bytes());
+        header[12..14].copy_from_slice(&DOS_DATE.to_le_bytes());
+        header[14..18].copy_from_slice(&crc.to_le_bytes());
+        header[18..22].copy_from_slice(&compressed.to_le_bytes());
+        header[22..26].copy_from_slice(&size.to_le_bytes());
+        header[26..28].copy_from_slice(&name_len.to_le_bytes());
+        header[28..30].copy_from_slice(&0_u16.to_le_bytes());
+        body[header_offset + 30..header_offset + 30 + name.len()].copy_from_slice(name);
 
         put_u32(&mut central, 0x0201_4b50);
         put_u16(&mut central, 20);
         put_u16(&mut central, 20);
         put_u16(&mut central, 0);
-        put_u16(&mut central, 0);
+        put_u16(&mut central, method);
         put_u16(&mut central, 0);
         put_u16(&mut central, DOS_DATE);
         put_u32(&mut central, crc);
-        put_u32(&mut central, size);
+        put_u32(&mut central, compressed);
         put_u32(&mut central, size);
         put_u16(&mut central, name_len);
         put_u16(&mut central, 0);
@@ -680,7 +705,7 @@ fn zip_store(parts: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
         put_u16(&mut central, 0);
         put_u32(&mut central, 0);
         put_u32(&mut central, offset);
-        central.extend_from_slice(name.as_bytes());
+        central.extend_from_slice(name);
     }
 
     let count = u16::try_from(parts.len())
@@ -765,15 +790,23 @@ pub fn part_bytes(bytes: &[u8], wanted: &str) -> Result<Vec<u8>> {
         let name = std::str::from_utf8(&bytes[name_start..name_end])
             .map_err(|_| Error::ValueNotRepresentable("ZIP name is not UTF-8"))?;
         if name == wanted {
-            if method != 0 {
-                return Err(Error::ValueNotRepresentable(
-                    "only stored ZIP entries are supported",
-                ));
-            }
-            return bytes
+            let data = bytes
                 .get(data_start..data_end)
-                .map(<[u8]>::to_vec)
-                .ok_or(Error::ValueNotRepresentable("truncated ZIP entry"));
+                .ok_or(Error::ValueNotRepresentable("truncated ZIP entry"))?;
+            return match method {
+                0 => Ok(data.to_vec()),
+                8 => {
+                    let mut decoded = Vec::new();
+                    std::io::Read::read_to_end(
+                        &mut flate2::read::DeflateDecoder::new(data),
+                        &mut decoded,
+                    )?;
+                    Ok(decoded)
+                }
+                _ => Err(Error::ValueNotRepresentable(
+                    "unsupported ZIP compression method",
+                )),
+            };
         }
         offset = data_end;
     }
@@ -1610,5 +1643,67 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 2]
         );
+    }
+
+    #[test]
+    fn zip_compression_level_uses_deflate_entries() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "compress me")
+            .expect("cell");
+        let stored = workbook.save_to_buffer().expect("stored");
+        workbook.set_zip_compression_level(6);
+
+        let compressed = workbook.save_to_buffer().expect("saves");
+        assert_eq!(read_u16(&compressed, 8).expect("method"), 8);
+        let names = part_names(&stored).expect("stored parts");
+        assert_eq!(names, part_names(&compressed).expect("compressed parts"));
+        for name in names {
+            assert_eq!(
+                part_bytes(&stored, &name).expect("stored part"),
+                part_bytes(&compressed, &name).expect("compressed part")
+            );
+        }
+    }
+
+    #[test]
+    fn zip_compression_is_stored_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "store me")
+            .expect("cell");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert_eq!(read_u16(&bytes, 8).expect("method"), 0);
+    }
+
+    #[test]
+    fn invalid_zip_compression_level_is_ignored_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "store me")
+            .expect("cell");
+        workbook.set_zip_compression_level(0);
+        workbook.set_zip_compression_level(10);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert_eq!(read_u16(&bytes, 8).expect("method"), 0);
+    }
+
+    #[test]
+    fn invalid_zip_compression_level_keeps_previous_setting() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "compress me")
+            .expect("cell");
+        workbook.set_zip_compression_level(3);
+        workbook.set_zip_compression_level(10);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert_eq!(read_u16(&bytes, 8).expect("method"), 8);
     }
 }

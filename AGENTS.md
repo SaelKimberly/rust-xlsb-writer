@@ -15,7 +15,7 @@ value-conversion contract (`ToCellValue`/`CellValue`), the workbook context
 registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
 public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
-widths/formats, approximate autofit, multi-sheet package assembly, workbook calculation mode,
+widths/formats, approximate autofit, multi-sheet package assembly with optional DEFLATE ZIP compression, workbook calculation mode,
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range, core/app/custom document properties with explicit creation timestamps,
@@ -256,7 +256,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
 | `rust-xlsb-writer/src/datetime.rs` | Native `ExcelDateTime`, validation, parsing, and serial conversion |
 | `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, autofilter, print records |
-| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only ZIP |
+| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
 | `rust-xlsb-writer/examples/showcase.rs` | Public-API showcase with row bands, fills, alignment, borders, temporal formats |
@@ -276,17 +276,17 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   dependency resolution to drift between checkouts.
 - `rusqlite` uses the `bundled` feature, so a C compiler is needed and the first
   build compiles SQLite from source.
-- `rust-xlsb-writer` depends on `rust-xlsb-core`, `mimalloc`, `thiserror`, and
-  `chrono`; optional `jiff` and `rust_decimal` dependencies are enabled by the
-  same-named features. Its dev-dependencies add `calamine`, `deku`, `criterion`,
+- `rust-xlsb-writer` depends on `rust-xlsb-core`, `mimalloc`, `thiserror`,
+  `chrono`, and `flate2`; optional `jiff` and `rust_decimal` dependencies are
+  enabled by the same-named features. Its dev-dependencies add `calamine`, `deku`, `criterion`,
   and `rstest`. Core no longer depends on `calamine`.
 - Dependency set, latest major/minor for this toolchain: `deku 0.20`,
   `rusqlite 0.43`, `strum 0.28`, `criterion 0.8`, `zerocopy 0.8.63`,
   `thiserror 2.0.21`, `num_enum 0.7.6`, `xxhash-rust 0.8.21`,
   `concat-idents 1.1.5`, `chrono 0.4` (no `clock`, `std` only),
-  `mimalloc 0.1.52`, `rstest 0.28` (dev), `calamine 0.38` (writer dev,
-  `chrono` feature enabled), `jiff 0.2` (optional), `rust_decimal 1.40`
-  (optional).
+  `mimalloc 0.1.52`, `flate2 1.1` (`zlib-rs` backend), `rstest 0.28` (dev),
+  `calamine 0.38` (writer dev, `chrono` feature enabled), `jiff 0.2`
+  (optional), `rust_decimal 1.40` (optional).
 - No release tooling, changelog, or publish workflow. Version is `0.1.0` and the
   README defers `1.0.0-alpha` to community adoption.
 
@@ -296,9 +296,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 394 unit tests and 7 doctests in default builds: 193 in core, 201 in writer.
+- 399 unit tests and 7 doctests in default builds: 193 in core, 206 in writer.
   `--all-features` adds 3 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 397 total. Most core
+  `rust_decimal` adapters, for 402 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
@@ -317,7 +317,8 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - Hand-written writer tests cover `Format` mapping/dedup/validation,
   `IntoExcelData`, worksheet bounds and overrides, sheet record layout
   (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
-  package parts, multi-sheet save, print/header/page-break serialization,
+  package parts, ZIP compression and readback, multi-sheet save,
+  print/header/page-break serialization,
   print-area/repeat-title defined names, hyperlink records/relationships, workbook
   calculation/read-only/tab-ratio records, range protection/ignored-error
   records, and calamine round-trips for values and temporal formats.

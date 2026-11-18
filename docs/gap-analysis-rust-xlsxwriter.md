@@ -27,9 +27,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    protection are present.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
-6. **Workbook metadata and packaging** — no user-defined names, themes,
-   chartsheets, VBA, or compressed ZIP; core/app/custom document properties are
-   present.
+6. **Workbook metadata and packaging** — DEFLATE ZIP compression is available,
+   but there are no user-defined names, themes, chartsheets, VBA, or ZIP64
+   large-file support; core/app/custom document properties are present.
 7. **Data ecosystem** — no `Formula`, serde, or Polars adapters; optional
    `jiff` and `rust_decimal` features and the native `ExcelDateTime` type are
    present.
@@ -61,7 +61,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, and date/time parse errors |
-| Verification | 193 core + 201 writer unit tests, 7 doctests; 3 optional-adapter tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 193 core + 206 writer unit tests, 7 doctests; 3 optional-adapter tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -90,7 +90,8 @@ Status meanings:
 | `set_default_format` | Supported | Workbook default format; set before worksheets |
 | `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
 | `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
-| `use_zip_large_file`, `set_zip_compression_level` | Missing | Deflate/large-file ZIP |
+| `set_zip_compression_level` | Supported | Deflate levels 1–9; default store-only |
+| `use_zip_large_file` | Missing | ZIP64/large-file mode |
 | `read_only_recommended` | Supported | `BrtFileSharing` flag |
 | `set_calculation_mode` | Supported | `BrtCalcProp` mode and flags |
 | `set_tab_ratio` | Supported | `BrtBookView.iTabRatio` |
@@ -238,9 +239,9 @@ Status meanings:
 | Styles part | Supported | — |
 | Shared strings part | Supported | — |
 | Content types and relationships | Supported | — |
-| Store-only ZIP | Supported | No compression |
-| Deflate compression | Missing | ZIP strategy |
-| ZIP compression level / large-file mode | Missing | Archive options |
+| Store-only ZIP | Supported | Default; no compression |
+| Deflate compression | Supported | `set_zip_compression_level` |
+| ZIP compression level / large-file mode | Partial | Levels 1–9 supported; ZIP64 missing |
 | Constant-memory writer | Missing | Streaming worksheet |
 | Low-memory writer | Missing | Reduced cell retention |
 | Temp-dir control | Missing | Streaming scratch space |
@@ -266,7 +267,7 @@ These are not necessarily missing features, but they matter for ports.
 | Row/column writes | formatted and unformatted variants | both variants |
 | Worksheet collection | full mutable/immutable access | index, exact-name, and collection access |
 | Memory modes | constant/low-memory | cell-retaining in-memory model |
-| ZIP | deflate, compression controls | store-only |
+| ZIP | deflate, compression controls | deflate levels 1–9; store-only default; no ZIP64 |
 
 ## 5. Hidden Implementation Gaps
 
@@ -289,7 +290,7 @@ records or package parts that do not exist yet.
 | Themes | Theme part and theme color indexes |
 | VBA | Macro project parts and content types |
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
-| Deflate | Compression strategy and ZIP writer options |
+| Deflate | Shipped: method 8, levels 1–9, streamed local headers; ZIP64 and per-entry strategy remain |
 | Workbook behavior | Shipped: `BrtCalcProp`, `BrtFileSharing`, and `BrtBookView.iTabRatio` |
 | Worksheet protection | Shipped: `BrtSheetProtection`, `BrtRangeProtection`, legacy password verifier, permission options |
 
@@ -383,7 +384,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 | Chartsheets | Dashboard structure | L |
 | VBA project/signature | Macro-enabled workbooks | XL |
 | ✅ Calculation mode, read-only recommended, tab ratio | Workbook behavior | S |
-| Deflate/compression controls, large-file ZIP | Output size and scale | M |
+| ✅ Deflate compression controls | Output size; ZIP64/large-file mode remains | S |
 
 **Exit criteria:** workbook-level parts and relationships are complete;
 calamine/Excel opens metadata; macro-enabled output is tested only with a

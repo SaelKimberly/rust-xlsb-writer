@@ -23,6 +23,7 @@ pub struct WorkbookSettings {
     pub calculation_mode: Option<CalculationMode>,
     pub read_only_recommended: bool,
     pub tab_ratio: Option<u8>,
+    pub zip_compression_level: Option<u8>,
 }
 
 /// A workbook that owns one or more worksheets.
@@ -51,6 +52,7 @@ impl Workbook {
                 calculation_mode: None,
                 read_only_recommended: false,
                 tab_ratio: None,
+                zip_compression_level: None,
             },
             doc_properties: None,
             default_format: None,
@@ -80,6 +82,20 @@ impl Workbook {
             return self;
         }
         self.settings.tab_ratio = Some(ratio);
+        self
+    }
+
+    /// Sets the ZIP compression level for the XLSB package.
+    ///
+    /// Valid levels are 1 through 9, where 1 is fastest and 9 is smallest.
+    /// Values outside that range are ignored. The default is uncompressed
+    /// storage.
+    pub fn set_zip_compression_level(&mut self, level: u8) -> &mut Self {
+        if !(1..=9).contains(&level) {
+            eprintln!("Zip compression level {level} outside range: 1 <= level <= 9.");
+            return self;
+        }
+        self.settings.zip_compression_level = Some(level);
         self
     }
 

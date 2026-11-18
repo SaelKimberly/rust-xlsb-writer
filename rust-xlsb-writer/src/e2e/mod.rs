@@ -57,6 +57,25 @@ fn values_roundtrip_through_the_public_api() {
 }
 
 #[test]
+fn compressed_workbook_roundtrips() {
+    let mut workbook = Workbook::new();
+    workbook.set_zip_compression_level(6);
+    let sheet = workbook.add_worksheet();
+    sheet.write(0, 0, "compressed").expect("string");
+    sheet.write(1, 0, 42_i32).expect("integer");
+    sheet.write(2, 0, 12.5_f64).expect("number");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(
+        range.get((0, 0)),
+        Some(&Data::String("compressed".to_owned()))
+    );
+    assert_eq!(range.get((1, 0)), Some(&Data::Int(42)));
+    assert_eq!(range.get((2, 0)), Some(&Data::Float(12.5)));
+}
+
+#[test]
 fn non_finite_numbers_roundtrip_as_strings() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();

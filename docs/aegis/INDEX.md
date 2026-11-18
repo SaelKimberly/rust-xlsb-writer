@@ -31,6 +31,7 @@
 - [Worksheet autofit and limits](plans/2026-11-18-worksheet-autofit.md)
 - [Optional jiff and rust_decimal adapters](plans/2026-11-18-optional-jiff-and-decimal-adapters.md)
 - [ExcelDateTime value type](plans/2026-11-18-excel-datetime.md)
+- [ZIP compression level](plans/2026-11-18-zip-compression-level.md)
 
 ## Analysis
 
