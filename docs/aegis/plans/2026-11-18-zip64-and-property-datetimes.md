@@ -171,8 +171,9 @@ Also validate a generated ZIP64 archive with Python `zipfile` or `unzip -t`.
 strict `>` comparisons while the standard EOCD writes `0xffff`/`0xffff_ffff`
 sentinels. The branch now uses `>=` at all three thresholds, and non-ZIP64
 entries reject values at or above `0xffff_ffff` instead of writing an
-unbacked sentinel. `zip64_end_records_cover_threshold_values` pins the exact
-boundary. The reviewer found no other defects.
+unbacked sentinel. `zip64_end_records_cover_threshold_values` pins the EOCD
+boundary, and `zip32_fields_reject_zip64_sentinels` pins the per-entry limit and
+names `use_zip_large_file(true)` in the error. The reviewer found no other defects.
 
 ## Risks
 

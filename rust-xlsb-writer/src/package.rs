@@ -644,6 +644,8 @@ fn workbook_rels(sheet_count: usize, has_strings: bool) -> String {
 }
 
 const ZIP64_LIMIT: u64 = u32::MAX as u64;
+const ZIP_ENTRY_ZIP64: &str = "ZIP entry exceeds 32-bit limit; call use_zip_large_file(true)";
+const ZIP_ARCHIVE_ZIP64: &str = "ZIP archive exceeds 32-bit limit; call use_zip_large_file(true)";
 
 fn zip_store(
     parts: &[(String, Vec<u8>)],
@@ -687,17 +689,17 @@ fn zip_store(
         let compressed32 = if large_file {
             u32::MAX
         } else {
-            zip_u32(compressed, "ZIP part is too large")?
+            zip_u32(compressed, ZIP_ENTRY_ZIP64)?
         };
         let uncompressed32 = if large_file {
             u32::MAX
         } else {
-            zip_u32(uncompressed, "ZIP part is too large")?
+            zip_u32(uncompressed, ZIP_ENTRY_ZIP64)?
         };
         let offset32 = if large_file && offset >= ZIP64_LIMIT {
             u32::MAX
         } else {
-            zip_u32(offset, "ZIP archive is too large")?
+            zip_u32(offset, ZIP_ARCHIVE_ZIP64)?
         };
         let version = if large_file { 45_u16 } else { 20 };
 
@@ -1813,6 +1815,19 @@ mod tests {
         let bytes = workbook.save_to_buffer().expect("saves");
 
         assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn zip32_fields_reject_zip64_sentinels() {
+        let error = zip_u32(ZIP64_LIMIT, ZIP_ENTRY_ZIP64).expect_err("sentinel rejected");
+        assert!(matches!(
+            error,
+            Error::ValueNotRepresentable(ZIP_ENTRY_ZIP64)
+        ));
+        assert_eq!(
+            zip_u32(ZIP64_LIMIT - 1, ZIP_ENTRY_ZIP64).expect("largest non-sentinel"),
+            u32::MAX - 1
+        );
     }
 
     #[test]
