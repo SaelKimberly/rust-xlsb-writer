@@ -23,9 +23,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
 2. **Cell-level structural features** — no rich strings.
 3. **Worksheet layout and view** — user-defined names support literals and
    absolute A1 references only; arbitrary formulas are missing.
-4. **Analysis features** — no tables, conditional formatting, or data
-   validation; `AutoFilter` ranges, list/custom filter conditions, and
-   structural sheet protection are present.
+4. **Analysis features** — no tables or conditional formatting; `AutoFilter`
+   ranges, list/custom filter conditions, data validation for non-formula
+   rules, and structural sheet protection are present.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 6. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64, and
@@ -62,7 +62,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, and date/time parse errors |
-| Verification | 204 core + 241 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 212 core + 252 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -172,7 +172,7 @@ Status meanings:
 | `filter_column`, `filter_automatic_off` | Partial | List/custom string and number filters, blanks, AND/OR; temporal and boolean cells stay unmatched |
 | `add_table` | Missing | Table records/styles and column metadata |
 | `add_conditional_format` | Missing | DXF and conditional-format records |
-| `add_data_validation` | Missing | Validation records |
+| `add_data_validation` | Partial | List, whole/decimal, date/time, and text-length rules plus prompt/error options; formula-valued rules and multi-range input missing |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
 | `protect`, `protect_with_password`, `protect_with_options` | Supported | `BrtSheetProtection`; legacy verifier, no encryption |
 | `unprotect_range`, `unprotect_range_with_options` | Supported | `BrtRangeProtection` records |
@@ -283,7 +283,7 @@ records or package parts that do not exist yet.
 | Tables | Table parts, table styles, and table autofilter integration |
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
 | Conditional formats | DXF styles and conditional-format record groups |
-| Data validation | Validation records and prompt/error options |
+| Data validation | Shipped `DVALS` records for non-formula rules and prompt/error options; formula-valued rules and multi-range input remain |
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
@@ -339,14 +339,14 @@ records; LibreOffice renders merged ranges and links; no stubs.
 | `filter_column` ✅ | List/custom filters, blanks, AND/OR, automatic row hiding | M |
 | `add_table` | Structured tables and table styles | L |
 | `add_conditional_format` | Reporting and highlighting | L |
-| `add_data_validation` | Input constraints | M |
+| `add_data_validation` ✅ | List/number/date/time/text-length rules, prompt/error options | M |
 | `unprotect_range` ✅ | Shared-workbook safety | M |
 | `ignore_error` ✅ | Suppress worksheet error indicators | S |
 | `set_formula_result` variants | Finishing touches for computed sheets | S–M |
 
-**Exit criteria:** filters/tables/validation survive calamine where readable;
-conditional formats and protection visible in LibreOffice; malformed ranges
-rejected before output.
+**Exit criteria:** filters and validation survive calamine where readable;
+tables and conditional formats remain open; malformed ranges rejected before
+output.
 
 ### P2 — Print and view
 
@@ -447,7 +447,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 204 core + 241 writer unit tests and 7 doctests in default
+- Test evidence: 212 core + 252 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
@@ -466,8 +466,11 @@ parts.
   read; SheetJS reports `!autofilter.ref`, the filter-database name, and the
   expected hidden rows for list plus custom filters. LibreOffice also preserves
   those hidden rows when importing the XLSB, though it drops the filter
-  controls. It also
-  drops all defined-name formulas on XLSB import, including print areas.
+  controls. LibreOffice reads the data-validation records on XLSB import and
+  writes the expected list source, prompt/error text, error style, allow-blank,
+  dropdown, operator, and numeric/date bounds on XLSX export; the records remain
+  proven by package decode tests. It also drops all defined-name formulas on
+  XLSB import, including print areas.
   The XLSX round-trip keeps both an
   external relationship and an internal `location`. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through

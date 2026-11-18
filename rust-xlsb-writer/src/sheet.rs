@@ -4,16 +4,16 @@ use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
     BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
-    BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter,
-    BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
-    BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
-    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtCustomFilter, BrtEndAFilter,
-    BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndCustomFilters, BrtEndFilterColumn,
-    BrtEndFilters, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData,
-    BrtEndWsView, BrtEndWsViews, BrtFilter, BrtHLink, BrtMargins, BrtMergeCell, BrtPageSetup,
-    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
-    HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
-    XlWideString, Xnum,
+    BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
+    BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet, BrtBeginSheetData,
+    BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool, BrtCellError,
+    BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtCustomFilter,
+    BrtEndAFilter, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndCustomFilters,
+    BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndMergeCells,
+    BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtHLink,
+    BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim,
+    BrtWsFmtInfo, BrtWsProp, Cell, HeaderFooterString, UncheckedRfX, UncheckedSqRfX,
+    XlNullableWideString, XlStringExt, XlWideString, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -162,6 +162,7 @@ pub fn write_sheet(
         push(out, &BrtEndMergeCells::default())?;
     }
 
+    write_data_validations(sheet, out)?;
     write_hyperlinks(sheet, out)?;
     write_print_settings(sheet, out)?;
     write_header_footer(sheet, out)?;
@@ -691,6 +692,26 @@ fn column_spans(columns: impl Iterator<Item = u16>) -> Vec<BrtColSpan> {
 
 fn push<T: BiffWrite>(out: &mut Vec<u8>, record: &T) -> Result<()> {
     push_record(out, record).map_err(Error::from)
+}
+
+fn write_data_validations(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let validations = sheet.data_validations();
+    if validations.is_empty() {
+        return Ok(());
+    }
+
+    push(
+        out,
+        &BrtBeginDVals::new(
+            u32::try_from(validations.len())
+                .map_err(|_| Error::ValueNotRepresentable("too many data validations"))?,
+        ),
+    )?;
+    for item in validations {
+        push(out, &item.validation.record(item.range)?)?;
+    }
+    push(out, &BrtEndDVals::default())?;
+    Ok(())
 }
 
 fn write_filter_columns(sheet: &Worksheet, range: UncheckedRfX, out: &mut Vec<u8>) -> Result<()> {

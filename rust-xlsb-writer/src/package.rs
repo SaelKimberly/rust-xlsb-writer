@@ -975,10 +975,10 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        Bold, BrtBeginAFilter, BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters,
-        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtCustomFilter, BrtExternSheet,
-        BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtName, BrtRowHdr, BrtSheetProtection,
-        BrtWsFmtInfo, BrtXF,
+        Bold, BrtBeginAFilter, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
+        BrtBeginFilters, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtCustomFilter,
+        BrtDVal, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtName, BrtRowHdr,
+        BrtSheetProtection, BrtWsFmtInfo, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1545,6 +1545,112 @@ mod tests {
         assert!(!hidden(1));
         assert!(hidden(2));
         assert!(hidden(3));
+    }
+
+    #[test]
+    fn data_validations_reach_the_sheet_part() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        let list = crate::DataValidation::new()
+            .allow_list_strings(&["East", "West"])
+            .expect("list")
+            .set_input_title("Region")
+            .expect("input title")
+            .set_input_message("Pick one")
+            .expect("input message");
+        worksheet
+            .add_data_validation(1, 2, 2, 2, &list)
+            .expect("list validation");
+
+        let whole = crate::DataValidation::new()
+            .allow_whole_number(crate::DataValidationRule::Between(1, 10))
+            .ignore_blank(false)
+            .set_error_style(crate::DataValidationErrorStyle::Warning);
+        worksheet
+            .add_data_validation(4, 2, 4, 2, &whole)
+            .expect("whole validation");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let begin = records::<BrtBeginDVals>(&sheet);
+        assert_eq!(begin.len(), 1);
+        assert_eq!(begin[0].dVals.idvMac, 2);
+
+        let validations = records::<BrtDVal>(&sheet);
+        assert_eq!(validations.len(), 2);
+        assert_eq!(validations[0].val_type(), 3);
+        assert_eq!(validations[0].operator(), 0);
+        assert_eq!(validations[0].sqrfx.rgRefx[0].rwFirst, 1);
+        assert_eq!(validations[0].sqrfx.rgRefx[0].colFirst, 2);
+        assert_eq!(
+            validations[0]
+                .strings
+                .strPromptTitle
+                .to_optional_string()
+                .as_deref(),
+            Some("Region")
+        );
+        assert_eq!(
+            validations[0]
+                .strings
+                .strPrompt
+                .to_optional_string()
+                .as_deref(),
+            Some("Pick one")
+        );
+        assert_eq!(validations[0].formula1.rgce[0], 0x17);
+        assert_eq!(&validations[0].formula1.rgce[1..3], &9_u16.to_le_bytes());
+        let units = validations[0].formula1.rgce[3..]
+            .chunks(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        assert_eq!(String::from_utf16(&units).expect("utf16"), "East,West");
+
+        assert_eq!(validations[1].val_type(), 1);
+        assert_eq!(validations[1].operator(), 0);
+        assert_eq!(validations[1].flags & BrtDVal::F_ALLOW_BLANK, 0);
+        assert_eq!(validations[1].err_style(), 1);
+        assert_eq!(
+            f64::from_le_bytes(
+                validations[1].formula1.rgce[1..9]
+                    .try_into()
+                    .expect("8 bytes")
+            ),
+            1.0
+        );
+        assert_eq!(
+            f64::from_le_bytes(
+                validations[1].formula2.rgce[1..9]
+                    .try_into()
+                    .expect("8 bytes")
+            ),
+            10.0
+        );
+
+        let ids = record_ids(&sheet);
+        let position = |id: KnownID| {
+            ids.iter()
+                .position(|record_id| *record_id == id)
+                .expect("record")
+        };
+        assert!(position(KnownID::BrtBeginDVals) < position(KnownID::BrtDVal));
+        assert!(position(KnownID::BrtDVal) < position(KnownID::BrtEndDVals));
+    }
+
+    #[test]
+    fn invalid_any_and_unused_validations_emit_no_dvals() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_data_validation(0, 0, 0, 0, &crate::DataValidation::new())
+            .expect("empty any");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        assert!(record_ids(&sheet).iter().all(|id| !matches!(
+            id,
+            KnownID::BrtBeginDVals | KnownID::BrtDVal | KnownID::BrtEndDVals
+        )));
     }
 
     #[test]

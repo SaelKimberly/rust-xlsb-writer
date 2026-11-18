@@ -35,6 +35,7 @@
 - [ZIP64 mode and extended property datetime inputs](plans/2026-11-18-zip64-and-property-datetimes.md)
 - [Defined names](plans/2026-11-19-defined-names.md)
 - [Autofilter conditions](plans/2026-11-19-autofilter-conditions.md)
+- [Data validation](plans/2026-11-19-data-validation.md)
 
 ## Analysis
 

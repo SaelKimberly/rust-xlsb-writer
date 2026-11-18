@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
+use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
@@ -326,6 +327,7 @@ pub struct Worksheet {
     unprotected_ranges: Vec<UnprotectedRange>,
     ignored_errors: BTreeMap<IgnoreError, Vec<UncheckedRfX>>,
     ignored_error_ranges: BTreeSet<(RowNum, ColNum, RowNum, ColNum)>,
+    data_validations: Vec<DataValidationRange>,
     max_autofit_row: RowNum,
     max_autofit_width: u32,
 }
@@ -388,6 +390,7 @@ impl Worksheet {
             unprotected_ranges: Vec::new(),
             ignored_errors: BTreeMap::new(),
             ignored_error_ranges: BTreeSet::new(),
+            data_validations: Vec::new(),
             max_autofit_row: MAX_ROW,
             max_autofit_width: MAX_AUTOFIT_WIDTH_PIXELS,
         }
@@ -2408,6 +2411,54 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Adds a data validation for a cell range.
+    ///
+    /// Multiple validations can be added; each keeps its own range and options.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a corner is out of range, or
+    /// [`Error::RowColumnOrder`] when the first corner is after the last.
+    pub fn add_data_validation(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        data_validation: &DataValidation,
+    ) -> Result<&mut Self> {
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        if data_validation.is_invalid_any() {
+            return Ok(self);
+        }
+
+        let range = UncheckedRfX {
+            rwFirst: first_row,
+            rwLast: last_row,
+            colFirst: u32::from(first_col),
+            colLast: u32::from(last_col),
+        };
+        if let Some(existing) = self
+            .data_validations
+            .iter_mut()
+            .find(|item| item.range == range)
+        {
+            existing.validation = data_validation.clone();
+        } else {
+            self.data_validations.push(DataValidationRange {
+                range,
+                validation: data_validation.clone(),
+            });
+        }
+        Ok(self)
+    }
+
     /// Adds or replaces a filter condition for an autofilter column.
     ///
     /// Rows that do not match all column conditions are hidden when the
@@ -2613,6 +2664,10 @@ impl Worksheet {
 
     pub(crate) const fn filter_hidden_rows(&self) -> &BTreeSet<RowNum> {
         &self.filter_hidden_rows
+    }
+
+    pub(crate) fn data_validations(&self) -> &[DataValidationRange] {
+        &self.data_validations
     }
 
     pub(crate) const fn print_area(&self) -> Option<(RowNum, ColNum, RowNum, ColNum)> {
@@ -4338,6 +4393,73 @@ mod tests {
             Err(Error::RowColumnOrder)
         ));
         assert!(worksheet.ignored_errors().is_empty());
+    }
+
+    #[test]
+    fn data_validations_store_ranges_and_clone_input() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let validation =
+            DataValidation::new().allow_whole_number(crate::DataValidationRule::Between(1, 10));
+        worksheet
+            .add_data_validation(1, 2, 3, 4, &validation)
+            .expect("validation");
+        worksheet
+            .add_data_validation(5, 0, 5, 0, &validation)
+            .expect("second validation");
+        worksheet
+            .add_data_validation(5, 0, 5, 0, &DataValidation::new().allow_any_value())
+            .expect("empty any is ignored");
+
+        assert_eq!(worksheet.data_validations().len(), 2);
+        assert_eq!(
+            worksheet.data_validations()[0].range,
+            UncheckedRfX {
+                rwFirst: 1,
+                rwLast: 3,
+                colFirst: 2,
+                colLast: 4,
+            }
+        );
+
+        worksheet
+            .add_data_validation(
+                1,
+                2,
+                3,
+                4,
+                &DataValidation::new()
+                    .allow_list_strings(&["x"])
+                    .expect("list"),
+            )
+            .expect("replaces same range");
+        assert_eq!(worksheet.data_validations().len(), 2);
+        assert_eq!(
+            worksheet.data_validations()[0]
+                .validation
+                .record(worksheet.data_validations()[0].range)
+                .expect("record")
+                .val_type(),
+            3
+        );
+    }
+
+    #[test]
+    fn data_validations_validate_range_limits_and_order() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let validation = DataValidation::new().allow_any_value();
+        assert!(matches!(
+            worksheet.add_data_validation(MAX_ROW + 1, 0, MAX_ROW + 1, 0, &validation),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.add_data_validation(1, 0, 0, 0, &validation),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.add_data_validation(0, 0, 0, MAX_COL + 1, &validation),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(worksheet.data_validations().is_empty());
     }
 
     #[test]

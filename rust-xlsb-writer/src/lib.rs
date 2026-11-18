@@ -24,6 +24,7 @@
 //! `chrono` temporal values are always available.
 
 mod data;
+mod data_validation;
 mod datetime;
 mod defined_name;
 #[cfg(test)]
@@ -42,6 +43,9 @@ mod worksheet;
 #[doc(hidden)]
 pub use data::CellData;
 pub use data::{IntoExcelData, IntoExcelDateTime};
+pub use data_validation::{
+    DataValidation, DataValidationErrorStyle, DataValidationRule, IntoDataValidationValue,
+};
 pub use datetime::ExcelDateTime;
 pub use error::{Error, Result, XlsbError};
 pub use filter::{FilterCondition, FilterCriteria, FilterData, IntoFilterData};

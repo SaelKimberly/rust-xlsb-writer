@@ -9,17 +9,17 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginAFilter, BrtBeginColBrk, BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters,
-    BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView,
-    BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
-    BrtColor, BrtCustomFilter, BrtEndAFilter, BrtEndColBrk, BrtEndCustomFilters,
-    BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst,
-    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt,
-    BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
-    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder,
-    VAlign, Xti,
+    BrtBeginAFilter, BrtBeginColBrk, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
+    BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
+    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt,
+    BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtEndAFilter, BrtEndColBrk,
+    BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
+    BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing,
+    BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup,
+    BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
+    BrtSheetProtection, BrtStyle, BrtSupSelf, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
+    DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
@@ -135,6 +135,9 @@ mod tests {
     #[case::brt_begin_custom_filters(|| checked_test::<BrtBeginCustomFilters>(4))]
     #[case::brt_end_custom_filters(|| checked_test::<BrtEndCustomFilters>(0))]
     #[case::brt_custom_filter_number(|| checked_test::<BrtCustomFilter>(10))]
+    #[case::brt_begin_dvals(|| checked_test::<BrtBeginDVals>(18))]
+    #[case::brt_end_dvals(|| checked_test::<BrtEndDVals>(0))]
+    #[case::brt_dval(|| checked_test::<BrtDVal>(56))]
     #[case::brt_range_protection(|| checked_test::<BrtRangeProtection>(32))]
     #[case::brt_cell_ignore_ec(|| checked_test::<BrtCellIgnoreEC>(8))]
     #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]
