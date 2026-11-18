@@ -10,13 +10,13 @@ use super::{Checked, Unchecked};
 pub use collection::*;
 pub use record::{
     BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
-    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor,
-    BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView,
-    BrtExternSheet, BrtFill, BrtFmt, BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName,
-    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtSupSelf,
-    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder,
-    VAlign, Xti,
+    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
+    BrtColor, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
+    BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt, BrtFont, BrtHLink, BrtMargins,
+    BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel,
+    BrtStyle, BrtSupSelf, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign,
+    NameParsedFormula, ReadingOrder, VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
@@ -118,6 +118,8 @@ mod tests {
     #[case::brt_begin_sst(|| checked_test::<BrtBeginSst>(8))]
     #[case::brt_end_sst(|| checked_test::<BrtEndSst>(0))]
     #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]
+    #[case::brt_calc_prop(|| checked_test::<BrtCalcProp>(26))]
+    #[case::brt_file_sharing(|| checked_test::<BrtFileSharing>(8))]
     #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]
     #[case::brt_begin_ws_view(|| checked_test::<BrtBeginWsView>(30))]
     #[case::brt_end_ws_view(|| checked_test::<BrtEndWsView>(0))]

@@ -4,16 +4,18 @@ use std::fmt::Write as _;
 
 use rust_xlsb_core::prelude::{
     BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBeginExternals, BrtBookView,
-    BrtBundleSh, BrtEndBook, BrtEndBookViews, BrtEndBundleShs, BrtEndExternals, BrtExternSheet,
-    BrtName, BrtSupSelf, NameParsedFormula, XlNullableWideString, XlStringExt, XlWideString, Xti,
+    BrtBundleSh, BrtCalcProp, BrtEndBook, BrtEndBookViews, BrtEndBundleShs, BrtEndExternals,
+    BrtExternSheet, BrtFileSharing, BrtName, BrtSupSelf, NameParsedFormula, XlNullableWideString,
+    XlStringExt, XlWideString, Xnum, Xti,
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
 use crate::url::escape_xml;
+use crate::workbook::{CalculationMode, WorkbookSettings};
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
 use crate::{Error, Result};
 
-pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
+pub fn build_package(sheets: &[Worksheet], settings: WorkbookSettings) -> Result<Vec<u8>> {
     let sst = SSTHolder::create_in_memory()?;
     let mut registry = StyleRegistry::new();
     let mut style_indexes = Vec::with_capacity(sheets.len());
@@ -56,7 +58,10 @@ pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
             "xl/_rels/workbook.bin.rels".to_owned(),
             workbook_rels(sheets.len(), has_strings).into_bytes(),
         ),
-        ("xl/workbook.bin".to_owned(), workbook_part(sheets)?),
+        (
+            "xl/workbook.bin".to_owned(),
+            workbook_part(sheets, settings)?,
+        ),
         ("xl/styles.bin".to_owned(), styles),
     ];
     parts.extend(sheet_parts);
@@ -111,11 +116,21 @@ const fn visible_state(sheet: &Worksheet, index: usize, active: usize) -> u32 {
     }
 }
 
-fn workbook_part(sheets: &[Worksheet]) -> Result<Vec<u8>> {
+fn workbook_part(sheets: &[Worksheet], settings: WorkbookSettings) -> Result<Vec<u8>> {
     let view = workbook_view(sheets);
     let mut out = Vec::new();
     push_record(&mut out, &BrtBeginBook::default())?;
-    if view.first != 0 || view.active != 0 {
+    if settings.read_only_recommended {
+        push_record(
+            &mut out,
+            &BrtFileSharing {
+                fReadOnlyRec: 1,
+                stUserName: XlNullableWideString::construct(None::<&str>),
+                ..BrtFileSharing::default()
+            },
+        )?;
+    }
+    if view.first != 0 || view.active != 0 || settings.tab_ratio.is_some() {
         push_record(&mut out, &BrtBeginBookViews::default())?;
         push_record(
             &mut out,
@@ -124,7 +139,9 @@ fn workbook_part(sheets: &[Worksheet]) -> Result<Vec<u8>> {
                 yWn: 30,
                 dxWn: 23_760,
                 dyWn: 14_640,
-                iTabRatio: 600,
+                iTabRatio: settings
+                    .tab_ratio
+                    .map_or(600, |ratio| u32::from(ratio) * 10),
                 itabFirst: u32::try_from(view.first)
                     .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?,
                 itabCur: u32::try_from(view.active)
@@ -155,8 +172,35 @@ fn workbook_part(sheets: &[Worksheet]) -> Result<Vec<u8>> {
     }
     push_record(&mut out, &BrtEndBundleShs::default())?;
     write_defined_names(sheets, &mut out)?;
+    if let Some(mode) = settings.calculation_mode {
+        write_calculation_properties(mode, &mut out)?;
+    }
     push_record(&mut out, &BrtEndBook::default())?;
     Ok(out)
+}
+
+fn write_calculation_properties(mode: CalculationMode, out: &mut Vec<u8>) -> Result<()> {
+    let (auto_recalc, recalc) = match mode {
+        CalculationMode::Automatic => (1, true),
+        CalculationMode::Manual => (0, false),
+        CalculationMode::Partial => (2, true),
+    };
+    push_record(
+        out,
+        &BrtCalcProp {
+            recalcID: 124_519,
+            fAutoRecalc: auto_recalc,
+            cCalcCount: 100,
+            xnumDelta: Xnum::from(0.001),
+            cUserThreadCount: 1,
+            fFullCalcOnLoad: recalc,
+            fRefA1: true,
+            fFullPrec: true,
+            fSaveRecalc: recalc,
+            ..BrtCalcProp::default()
+        },
+    )?;
+    Ok(())
 }
 
 fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
@@ -528,7 +572,8 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtExternSheet, BrtHLink, BrtName,
+        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtExternSheet, BrtFileSharing,
+        BrtHLink, BrtName,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff};
 
@@ -759,6 +804,128 @@ mod tests {
         let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
 
         assert_eq!(records::<BrtBookView>(&part).len(), 0);
+    }
+
+    #[test]
+    fn workbook_behavior_records_are_absent_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        assert_eq!(records::<BrtFileSharing>(&part).len(), 0);
+        assert_eq!(records::<BrtCalcProp>(&part).len(), 0);
+        assert_eq!(records::<BrtBookView>(&part).len(), 0);
+    }
+
+    #[test]
+    fn read_only_recommended_emits_file_sharing_record() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.read_only_recommended();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let sharing = records::<BrtFileSharing>(&part);
+
+        assert_eq!(sharing.len(), 1);
+        assert_eq!(sharing[0].fReadOnlyRec, 1);
+        assert_eq!(sharing[0].wResPass, 0);
+        assert_eq!(sharing[0].stUserName.to_optional_string(), None);
+    }
+
+    #[test]
+    fn calculation_mode_emits_calc_prop_values() {
+        for (mode, auto_recalc, recalc) in [
+            (crate::CalculationMode::Automatic, 1, true),
+            (crate::CalculationMode::Manual, 0, false),
+            (crate::CalculationMode::Partial, 2, true),
+        ] {
+            let mut workbook = crate::Workbook::new();
+            workbook.add_worksheet();
+            workbook.set_calculation_mode(mode);
+
+            let bytes = workbook.save_to_buffer().expect("saves");
+            let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+            let props = records::<BrtCalcProp>(&part);
+
+            assert_eq!(props.len(), 1);
+            assert_eq!(props[0].recalcID, 124_519);
+            assert_eq!(props[0].fAutoRecalc, auto_recalc);
+            assert_eq!(props[0].cCalcCount, 100);
+            assert_eq!(*props[0].xnumDelta, 0.001);
+            assert_eq!(props[0].cUserThreadCount, 1);
+            assert_eq!(props[0].fFullCalcOnLoad, recalc);
+            assert!(props[0].fRefA1);
+            assert!(props[0].fFullPrec);
+            assert_eq!(props[0].fSaveRecalc, recalc);
+        }
+    }
+
+    #[test]
+    fn tab_ratio_forces_book_view() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.set_tab_ratio(25);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let views = records::<BrtBookView>(&part);
+
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].iTabRatio, 250);
+        assert_eq!((views[0].itabFirst, views[0].itabCur), (0, 0));
+    }
+
+    #[test]
+    fn out_of_range_tab_ratio_leaves_default_output() {
+        let mut expected = crate::Workbook::new();
+        expected.add_worksheet();
+        let expected = expected.save_to_buffer().expect("saves");
+
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.set_tab_ratio(101);
+        let bytes = workbook.save_to_buffer().expect("saves");
+
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn workbook_behavior_records_follow_spec_order() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .set_print_area(0, 0, 1, 1)
+            .expect("area");
+        workbook
+            .read_only_recommended()
+            .set_calculation_mode(crate::CalculationMode::Manual)
+            .set_tab_ratio(40);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let mut reader = BufReader::new(part.as_slice());
+        let mut ids = Vec::new();
+        while let Ok((head, _body)) = BiffHead::read_from_with_data(&mut reader) {
+            if let Some(id) = head.known_id() {
+                ids.push(id);
+            }
+        }
+
+        let position = |id| ids.iter().position(|candidate| *candidate == id);
+        let begin = position(rust_xlsb_core::KnownID::BrtBeginBook).expect("begin");
+        let sharing = position(rust_xlsb_core::KnownID::BrtFileSharing).expect("sharing");
+        let end = position(rust_xlsb_core::KnownID::BrtEndBook).expect("end");
+        let calc = position(rust_xlsb_core::KnownID::BrtCalcProp).expect("calc");
+        let name = position(rust_xlsb_core::KnownID::BrtName).expect("name");
+        let externals = position(rust_xlsb_core::KnownID::BrtExternSheet).expect("externals");
+
+        assert_eq!(sharing, begin + 1);
+        assert!(externals < name);
+        assert!(name < calc);
+        assert_eq!(calc, end - 1);
     }
 
     #[test]

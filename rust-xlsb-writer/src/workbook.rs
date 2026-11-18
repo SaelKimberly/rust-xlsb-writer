@@ -7,9 +7,28 @@ use std::path::Path;
 use crate::worksheet::{Worksheet, validate_sheet_name};
 use crate::{Error, Result};
 
+/// Formula calculation mode for a workbook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalculationMode {
+    /// Recalculate on load and whenever a dependency changes.
+    Automatic,
+    /// Recalculate only when the user requests it.
+    Manual,
+    /// Recalculate automatically, except for Data Tables.
+    Partial,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WorkbookSettings {
+    pub calculation_mode: Option<CalculationMode>,
+    pub read_only_recommended: bool,
+    pub tab_ratio: Option<u8>,
+}
+
 /// A workbook that owns one or more worksheets.
 pub struct Workbook {
     worksheets: Vec<Worksheet>,
+    settings: WorkbookSettings,
 }
 
 impl Default for Workbook {
@@ -24,7 +43,36 @@ impl Workbook {
     pub const fn new() -> Self {
         Self {
             worksheets: Vec::new(),
+            settings: WorkbookSettings {
+                calculation_mode: None,
+                read_only_recommended: false,
+                tab_ratio: None,
+            },
         }
+    }
+
+    /// Recommends opening the workbook in read-only mode.
+    pub const fn read_only_recommended(&mut self) -> &mut Self {
+        self.settings.read_only_recommended = true;
+        self
+    }
+
+    /// Sets the formula calculation mode.
+    pub const fn set_calculation_mode(&mut self, mode: CalculationMode) -> &mut Self {
+        self.settings.calculation_mode = Some(mode);
+        self
+    }
+
+    /// Sets the worksheet tab bar ratio as a percentage from 0 to 100.
+    ///
+    /// Values above 100 are ignored.
+    pub fn set_tab_ratio(&mut self, ratio: u8) -> &mut Self {
+        if ratio > 100 {
+            eprintln!("Tab ratio {ratio} outside Excel range: 0 <= ratio <= 100.");
+            return self;
+        }
+        self.settings.tab_ratio = Some(ratio);
+        self
     }
 
     /// Adds a worksheet with a default `SheetN` name.
@@ -105,7 +153,7 @@ impl Workbook {
     /// Returns a validation, style, shared-string, or record error.
     pub fn save_to_buffer(&mut self) -> Result<Vec<u8>> {
         self.prepare()?;
-        crate::package::build_package(&self.worksheets)
+        crate::package::build_package(&self.worksheets, self.settings)
     }
 
     /// Saves the workbook to a writer.
@@ -185,6 +233,26 @@ mod tests {
             workbook.save_to_buffer(),
             Err(Error::SheetNameReused(_))
         ));
+    }
+
+    #[test]
+    fn behavior_settings_do_not_block_saving() {
+        let mut workbook = Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "settings")
+            .expect("writes");
+        workbook
+            .read_only_recommended()
+            .set_calculation_mode(CalculationMode::Manual)
+            .set_tab_ratio(40);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let mut opened = open_workbook_auto_from_rs(Cursor::new(bytes)).expect("opens");
+        assert_eq!(
+            opened.worksheet_range("Sheet1").expect("reads").get((0, 0)),
+            Some(&Data::String("settings".to_owned()))
+        );
     }
 
     #[test]

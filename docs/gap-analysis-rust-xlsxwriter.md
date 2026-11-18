@@ -32,7 +32,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    `rust_decimal`, serde, or Polars adapters.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 6 `Workbook`, 60
+The current API surface is deliberately narrow: roughly 13 `Workbook`, 60
 `Worksheet`, and 47 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -41,7 +41,7 @@ the breadth gap.
 
 | Area | Current capability |
 |---|---|
-| Workbook | `new`, `add_worksheet`, standalone `Worksheet::new` with `push_worksheet`, lookup by index or exact name, collection access, `save`, `save_to_buffer`, `save_to_writer` |
+| Workbook | `new`, `add_worksheet`, standalone `Worksheet::new` with `push_worksheet`, lookup by index or exact name, collection access, calculation mode, read-only recommendation, tab ratio, `save`, `save_to_buffer`, `save_to_writer` |
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, non-finite display strings |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
@@ -55,7 +55,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 173 core + 132 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 177 core + 139 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -85,9 +85,9 @@ Status meanings:
 | `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
 | `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
 | `use_zip_large_file`, `set_zip_compression_level` | Missing | Deflate/large-file ZIP |
-| `read_only_recommended` | Missing | Workbook view flag |
-| `set_calculation_mode` | Missing | Calculation properties |
-| `set_tab_ratio` | Missing | Workbook view |
+| `read_only_recommended` | Supported | `BrtFileSharing` flag |
+| `set_calculation_mode` | Supported | `BrtCalcProp` mode and flags |
+| `set_tab_ratio` | Supported | `BrtBookView.iTabRatio` |
 | `register_format`, `populate_string_table` | Missing | Advanced/low-level format and SST hooks |
 
 ### 3.2 Worksheet Values And Formulas
@@ -256,8 +256,8 @@ These are not necessarily missing features, but they matter for ports.
 | `CellData` | internal | public but `#[doc(hidden)]` because it appears in a public trait signature |
 | Rich strings | supported | missing |
 | Formulas | supported | missing |
-| Row/column writes | formatted and unformatted variants | unformatted variants only |
-| Worksheet collection | full mutable/immutable access | index lookup only |
+| Row/column writes | formatted and unformatted variants | both variants |
+| Worksheet collection | full mutable/immutable access | index, exact-name, and collection access |
 | Memory modes | constant/low-memory | cell-retaining in-memory model |
 | ZIP | deflate, compression controls | store-only |
 
@@ -277,12 +277,13 @@ records or package parts that do not exist yet.
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
-| Defined names | Workbook defined-name records |
+| Defined names | Workbook defined-name records; print-area and print-title names are shipped |
 | Document properties | Core/app/custom property parts |
 | Themes | Theme part and theme color indexes |
 | VBA | Macro project parts and content types |
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
 | Deflate | Compression strategy and ZIP writer options |
+| Workbook behavior | Shipped: `BrtCalcProp`, `BrtFileSharing`, and `BrtBookView.iTabRatio` |
 
 ## 6. Roadmap
 
@@ -371,7 +372,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 | Themes and theme colors | Visual parity | M–L |
 | Chartsheets | Dashboard structure | L |
 | VBA project/signature | Macro-enabled workbooks | XL |
-| Calculation mode, read-only recommended, tab ratio | Workbook behavior | S |
+| ✅ Calculation mode, read-only recommended, tab ratio | Workbook behavior | S |
 | Deflate/compression controls, large-file ZIP | Output size and scale | M |
 
 **Exit criteria:** workbook-level parts and relationships are complete;
@@ -433,7 +434,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 173 core + 132 writer unit tests and 6 doctests; calamine
+- Test evidence: 177 core + 139 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
@@ -441,7 +442,9 @@ parts.
   rendered freeze. It preserves orientation, page order, margins, print
   gridlines/headings/centering, fit-to-page, first page number, text
   headers/footers, manual page breaks, and hyperlinks; it normalizes paper size
-  and drops black-and-white and draft state. The XLSX round-trip keeps both an
+  and drops black-and-white and draft state. It also drops the custom tab ratio,
+  manual calculation mode, and read-only recommendation on XLSB import, so those
+  records are proven by decode tests, not an XLSX round-trip. The XLSX round-trip keeps both an
   external relationship and an internal `location`. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through
   `Report 3 of 3` in the header. Grouped rows preserve outline levels and

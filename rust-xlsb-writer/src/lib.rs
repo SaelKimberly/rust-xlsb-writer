@@ -34,7 +34,7 @@ pub use format::{
     FormatScript, FormatUnderline,
 };
 pub use url::Url;
-pub use workbook::Workbook;
+pub use workbook::{CalculationMode, Workbook};
 pub use worksheet::{ColNum, RowNum, Worksheet};
 
 use mimalloc::MiMalloc;
