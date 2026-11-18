@@ -4,13 +4,16 @@
 
 `rust-xlsb-writer` is a pre-alpha Rust workspace for reading and writing MS-XLSB
 (Excel Binary Workbook, BIFF12) files, targeting the [MS-XLSB] specification
-revision `2024-05-21`. The long-term goal is cell-by-cell writing plus batched
+revision `22.0` (release `2026-10-16`, superseding `2024-05-21`/revision 17.1).
+The long-term goal is cell-by-cell writing plus batched
 Apache Arrow ingestion, with styles, low RAM use, and exact IEEE 754 float
 fidelity.
 
 Current reality: only the binary record layer exists. There is no workbook type,
 no worksheet model, no cell API, no ZIP/OLE package assembly, and no file
-writer. Treat the README as a roadmap, not as a description of shipped API.
+writer. `KnownID` covers 860 of the 878 records in revision 22.0; every id it
+does carry matches the spec. Treat the README as a roadmap, not as a
+description of shipped API.
 
 [MS-XLSB]: https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xlsb/acc8aa92-1f02-4167-99f5-84f9f676b95a
 
@@ -36,7 +39,7 @@ Record pipeline, in the order bytes are produced:
    varint size, 1–4 bytes each) and `write_as_biff` / `write_as_empty_biff`
    emit header then body.
 
-`KnownID` is a `#[repr(u16)]` enum of roughly 900 variants whose discriminants
+`KnownID` is a `#[repr(u16)]` enum of 860 variants whose discriminants
 are computed by the `const fn as_biff_id` in `biff_id.rs`. Those numbers are MS-XLSB
 *record literals*, not raw spec ids. Never hand-write a discriminant; add the
 variant through the same mapping. `KnownID::try_from(raw_u16)` rejects unknown

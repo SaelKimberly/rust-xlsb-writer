@@ -4,7 +4,7 @@
 
 This project is designed to implement reading and, first of all, writing MS XLSB (Excel Binary WorkBook) files.
 
-The program is based on the [`MS-XLSB`](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xlsb/acc8aa92-1f02-4167-99f5-84f9f676b95a) standard revision `2024-05-21`. Older revisions of this standard are not supported yet.
+The program is based on the [`MS-XLSB`](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xlsb/acc8aa92-1f02-4167-99f5-84f9f676b95a) standard revision `22.0` (release `2026-10-16`). Older revisions of this standard are not supported yet.
 
 The Rust language is mainly used for development.
 
