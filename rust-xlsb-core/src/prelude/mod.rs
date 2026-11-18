@@ -10,7 +10,7 @@ use super::{Checked, Unchecked};
 pub use collection::*;
 pub use record::{
     BrtBeginSst, BrtBeginTableStyles, BrtBorder, BrtBundleSh, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColor, BrtEndSst,
+    BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtEndSst,
     BrtEndTableStyles, BrtFill, BrtFmt, BrtFont, BrtRowHdr, BrtSSTItem, BrtStyle, BrtWsDim,
     BrtWsProp, BrtXF, GrbitAtr, HAlign, ReadingOrder, VAlign,
 };
@@ -85,6 +85,7 @@ mod tests {
     #[case::brt_ws_prop(|| checked_test::<BrtWsProp>(23))]
     #[case::brt_ws_dim(|| checked_test::<BrtWsDim>(16))]
     #[case::brt_row_hdr(|| checked_test::<BrtRowHdr>(17))]
+    #[case::brt_col_info(|| checked_test::<BrtColInfo>(18))]
     #[case::brt_cell_st(|| checked_test::<BrtCellSt>(12))]
     #[case::brt_cell_real(|| checked_test::<BrtCellReal>(16))]
     #[case::brt_cell_rk(|| checked_test::<BrtCellRk>(12))]

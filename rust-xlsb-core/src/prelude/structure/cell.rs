@@ -2,6 +2,11 @@ use deku::{DekuRead, DekuWrite};
 
 /// `2.5.10`
 #[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default, Clone, Copy)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 pub struct Cell {
     pub column: u32,
     #[deku(bits = 24)]
@@ -22,6 +27,7 @@ impl Cell {
 
 /// `2.5.9`
 #[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default, Clone, Copy)]
+#[deku(ctx = "_: deku::ctx::Order", ctx_default = "deku::ctx::Order::Lsb0")]
 pub struct BrtColSpan {
     pub colMic: u32,
     pub colLast: u32,

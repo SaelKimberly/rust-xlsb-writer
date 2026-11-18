@@ -11,6 +11,11 @@ use crate::prelude::BrtColSpan;
 
 /// `2.4.770`
 #[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "bit layout mirrors the MS-XLSB record"
@@ -60,3 +65,21 @@ impl Checked for BrtRowHdr {
 }
 
 assign_id!(BrtRowHdr);
+
+#[cfg(test)]
+mod tests {
+    use deku::DekuContainerWrite;
+
+    use super::*;
+
+    #[test]
+    fn ghost_dirty_lands_in_the_lsb_first_bit() {
+        let row = BrtRowHdr {
+            fGhostDirty: true,
+            ..BrtRowHdr::default()
+        };
+
+        let bytes = row.to_bytes().expect("serializes");
+        assert_eq!(bytes[11], 0x40);
+    }
+}

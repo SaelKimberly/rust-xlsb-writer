@@ -3,7 +3,12 @@ use deku::{DekuRead, DekuWrite};
 use crate::Unchecked;
 use crate::assign_id;
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[deku(id_type = "u8", bits = 3)]
 pub enum HAlign {
     #[default]
@@ -25,7 +30,12 @@ pub enum HAlign {
     Distributed,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[deku(id_type = "u8", bits = 3)]
 pub enum VAlign {
     #[default]
@@ -41,7 +51,12 @@ pub enum VAlign {
     Distributed,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[deku(id_type = "u8", bits = 2)]
 pub enum ReadingOrder {
     #[default]
@@ -53,7 +68,12 @@ pub enum ReadingOrder {
     RightToLeft,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "bit layout mirrors the MS-XLSB record"
@@ -73,7 +93,12 @@ pub struct GrbitAtr {
     pub bit_6: bool,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "bit layout mirrors the MS-XLSB record"

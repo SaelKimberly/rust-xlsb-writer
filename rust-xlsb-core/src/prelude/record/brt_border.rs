@@ -5,7 +5,12 @@ use crate::assign_id;
 use crate::prelude::Blxf;
 
 /// `2.4.314`
-#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, Hash, PartialEq, Eq, Default)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 pub struct BrtBorder {
     #[deku(bits = 1)]
     pub fBdrDiagDown: bool,

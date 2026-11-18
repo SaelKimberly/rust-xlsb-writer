@@ -5,7 +5,7 @@ use crate::assign_id;
 use crate::prelude::{Bold, BrtColor, FontFlags, XlStringExt, XlWideString};
 
 /// `2.4.690`
-#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq)]
+#[derive(DekuRead, DekuWrite, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BrtFont {
     pub dyHeight: u16,
     pub grbit: FontFlags,

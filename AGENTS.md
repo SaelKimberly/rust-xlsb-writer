@@ -12,8 +12,10 @@ fidelity.
 Current reality: the binary record layer plus the value-conversion contract
 (`ToCellValue`/`CellValue`), the workbook context (`WbContext`,
 `NumberPolicy`), minimal `Workbook`/`Worksheet` types owning the
-shared-string table, and `chrono` temporal values (dates, times, datetimes,
-durations) encoded as Excel serial numbers. Package assembly still lives only in the `e2e` test module
+shared-string table, a workbook style registry (`CellStyle`/`StyleRegistry`),
+row- and column-level default styles on `Worksheet`, and `chrono` temporal
+values (dates, times, datetimes, durations) encoded as Excel serial numbers.
+Package assembly still lives only in the `e2e` test module
 (`src/e2e/`): the harness builds a minimal XLSB package and the tests read it
 back with `calamine`, so layout, BIFF framing, number policy, and every
 implemented cell record are proven together. There is no public worksheet or
@@ -68,6 +70,16 @@ that chooses `Real` or a lossless `Rk` encoding. `Workbook` owns one `SSTHolder`
 to inline strings; only an explicit `SharedString` goes into the SST, and its id
 is range-checked against the target workbook at conversion time.
 
+Formatting is separate again. `Workbook` owns a `StyleRegistry`
+(`styles.rs`) seeded with the default `BrtXF` at index 0. `CellStyle` pairs a
+`BrtFont`, `BrtFill`, `BrtBorder` and the direct `BrtXF` attributes; `add_style`
+interns each component, patches `iFont`/`iFill`/`ixBorder`/`ixfeParent`, and
+deduplicates the resulting XF. `add_number_format` allocates custom `iFmt` ids
+from 164. `Worksheet` stores row and non-overlapping column-range style indexes;
+the writer emits `BrtColInfo` for columns and sets `BrtRowHdr.ixfe` with
+`fGhostDirty` for rows. `StyleRegistry::write_to_biff` emits the complete
+Styles part record sequence.
+
 Temporal conversion lives in `temporal.rs` and reuses the same path.
 `NaiveDate` becomes an integer day serial in the 1900 system, so dates are
 `BrtCellRk` ints; `NaiveTime`, `NaiveDateTime`, and `TimeDelta` become day
@@ -85,7 +97,7 @@ UTC.
 | `rust-xlsb-core/src/` | All working code: record framing, id catalogue, value conversion, temporal serials, workbook context, shared strings |
 | `rust-xlsb-core/src/prelude/` | Public record/structure facade (`record/`, `structure/`, `scope.rs`, `collection.rs`) |
 | `rust-xlsb-writer/src/lib.rs` | Stub crate; only a `MiMalloc` global allocator is live |
-| `rust-xlsb-core/examples/` | `showcase.rs`: writes one XLSB row per `ToCellValue` implementation |
+| `rust-xlsb-core/examples/` | `showcase.rs`: writes one styled XLSB row per `ToCellValue` implementation (alignments, fills, borders) |
 | `.github/` | `FUNDING.yml` only; no workflows, templates, or CI |
 
 ## Development Commands
@@ -121,7 +133,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 132 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 144 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -151,6 +163,13 @@ crates opt in with `[lints] workspace = true`.
 - **Error fidelity.** The blanket `BiffWrite` impl discards the underlying deku
   error and returns `Error::ValidationError("Invalid BIFF record")`. If you need
   the cause, format it, as `KnownID::try_deku_literal` does.
+- **Bit fields are LSB-first.** MS-XLSB packet diagrams place bit 0 in the
+  least significant position; deku defaults to MSB. Records with bit fields
+  use `#[deku(bit_order = "lsb", ctx = "order: deku::ctx::Order",
+  ctx_default = "deku::ctx::Order::Lsb0")]`, and child structs that receive
+  that context declare the same `ctx`/`ctx_default` pair. Do not add a
+  container-level `bit_order` without the context default: the type stops
+  implementing `DekuContainerRead`/`DekuContainerWrite`.
 - **Zero-sized markers.** `scope.rs` and `collection.rs` generate `BrtBegin*`/
   `BrtEnd*` structs via `concat-idents`. Scope markers serialize to exactly 0
   bytes; collection markers carry a `u32 count`.
@@ -187,13 +206,14 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/check.rs` | `Checked`, `Unchecked`, `CheckedBiff` traits |
 | `rust-xlsb-core/src/err.rs` | `Error`, `Result` |
 | `rust-xlsb-core/src/sst_sqlite.rs` | `SSTHolder` shared-string table, cached length, SST emission |
+| `rust-xlsb-core/src/styles.rs` | `CellStyle`/`StyleRegistry` deduplication and Styles part emission |
 | `rust-xlsb-core/src/context.rs` | `SharedString`, `WbContext`, `NumberPolicy`, `NumberEncoding` |
 | `rust-xlsb-core/src/cell_value.rs` | `CellValue`, `ToCellValue` and its impl matrix |
-| `rust-xlsb-core/src/workbook.rs` | `Workbook` (owns `SSTHolder`) and `Worksheet<'wb>` |
+| `rust-xlsb-core/src/workbook.rs` | `Workbook` (owns `SSTHolder` and `StyleRegistry`) and `Worksheet<'wb>` row/column style maps |
 | `rust-xlsb-core/src/temporal.rs` | `chrono` → Excel serial conversion for dates, times, datetimes, durations |
 | `rust-xlsb-core/src/e2e/mod.rs` | End-to-end cell tests read back through `calamine` |
 | `rust-xlsb-core/src/e2e/harness.rs` | Builds the minimal package, ZIP included, for those tests; reused by the showcase example |
-| `rust-xlsb-core/examples/showcase.rs` | Runnable XLSB showcase of every `ToCellValue` implementor |
+| `rust-xlsb-core/examples/showcase.rs` | Runnable XLSB showcase of every `ToCellValue` implementor, with row bands, fills, alignments, and borders |
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
 | `rust-xlsb-writer/src/lib.rs` | Stub; allocator plus ~500 lines of commented prototype |
 | `rust-toolchain.toml` | Stable `1.100.0` pin at the root; `rust-xlsb-core/rust-toolchain.toml` duplicates it |
@@ -230,7 +250,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers, plus the `#[cfg(test)] mod e2e` package suite (`src/e2e/`). There
   is no `tests/`, `benches/`, or fixture directory. `examples/showcase.rs` is a
   runnable demo, not a test; it includes the `e2e` harness by path.
-- 132 unit tests and 6 doctests total. Most unit tests are rstest cases in the
+- 144 unit tests and 6 doctests total. Most unit tests are rstest cases in the
   `test_biff_export` table in `prelude/mod.rs`, each calling the generic
   `checked_test::<T>`: `Default` → `to_bytes` → exact byte-size assert →
   `from_bytes` → `check()` on both → `PartialEq`, `Hash`, and `Debug` equality.
@@ -240,7 +260,8 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - Hand-written tests: `biff_id::tests::test_known_ids` (literal packing, header
   parse), `sst_sqlite::tests::test_sst_sqlite` (push, batch, SST counters, item
   decode), `prelude::structure::xl_wide_string::tests::test_xl_wide_string`,
-  and `prelude::record::brt_color::test_brt_color`.
+  `prelude::record::brt_color::test_brt_color` plus its LSB/RGB byte-layout
+  regressions, and `prelude::record::brt_row_hdr::ghost_dirty_lands_in_the_lsb_first_bit`.
 - `e2e` tests are the package-level oracle: cells are built through
   `ToCellValue` against a real `Workbook`, written, then parsed with `calamine`
   0.38 (dev-dependency) to assert value and position. They also assert which
@@ -255,8 +276,10 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   works, and update the affected size literal rather than loosening the
   assertion.
 - `cargo run -p rust-xlsb-core --example showcase -- showcase.xlsb` writes a
-  workbook with one row per `ToCellValue` implementation, for manual inspection
-  in LibreOffice or Excel.
+  workbook with one styled row per `ToCellValue` implementation, for manual
+  inspection in LibreOffice or Excel. LibreOffice does not let XLSB row/column
+  defaults reach cells with an explicit cell XF, so the example also mirrors its
+  visible styles per cell; the row/column style records are still emitted.
 
 ## Commit Style
 

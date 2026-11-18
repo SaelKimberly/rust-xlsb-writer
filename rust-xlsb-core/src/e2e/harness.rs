@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use std::io::{BufReader, Cursor};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
+use deku::DekuContainerRead;
 
 use rust_xlsb_core::prelude::*;
 use rust_xlsb_core::{
-    BiffHead, BiffWrite, CellValue, Error, KnownID, NumberEncoding, Result, ToCellValue, WbContext,
-    Workbook, write_as_biff,
+    BiffHead, BiffWrite, CellStyle, CellValue, CheckedBiff, Error, KnownID, NumberEncoding, Result,
+    ToCellValue, WbContext, Workbook, Worksheet, write_as_biff,
 };
 
 const SHEET: &str = "Sheet1";
@@ -24,10 +25,34 @@ pub const DATETIME_STYLE: u32 = 3;
 /// `LibreOffice` displays negative durations with it; Excel's 1900 date system
 /// renders them as `####` because negative serial times are invalid there.
 pub const DURATION_STYLE: u32 = 4;
-const DATE_FORMAT_CODE: u16 = 164;
-const TIME_FORMAT_CODE: u16 = 165;
-const DATETIME_FORMAT_CODE: u16 = 166;
-const DURATION_FORMAT_CODE: u16 = 167;
+const DEFAULT_COL_WIDTH: u32 = 6144;
+
+/// Creates a workbook with the four temporal styles registered as indexes 1-4.
+///
+/// # Errors
+///
+/// Returns an error if the in-memory shared-string table cannot be created or
+/// a style cannot be registered.
+pub fn temporal_workbook() -> Result<Workbook> {
+    let mut workbook = Workbook::new()?;
+    for (expected, code) in [
+        (DATE_STYLE, "yyyy-mm-dd"),
+        (TIME_STYLE, "hh:mm:ss.000"),
+        (DATETIME_STYLE, "yyyy-mm-dd hh:mm:ss.000"),
+        (DURATION_STYLE, "[h]:mm:ss.000"),
+    ] {
+        let i_fmt = workbook.add_number_format(code)?;
+        let style = workbook.add_style(CellStyle {
+            xf: BrtXF {
+                iFmt: i_fmt,
+                ..BrtXF::default()
+            },
+            ..CellStyle::default()
+        })?;
+        assert_eq!(style, expected, "temporal style order must stay stable");
+    }
+    Ok(workbook)
+}
 
 /// One cell to write: `(row, column, style, value)`.
 pub struct CellSpec<'a> {
@@ -62,16 +87,65 @@ impl<'a> CellSpec<'a> {
 /// Panics if the package cannot be serialized, if `calamine` rejects it, or if
 /// the workbook does not contain exactly one sheet named `Sheet1`.
 pub fn roundtrip(workbook: &Workbook, cells: &[CellSpec<'_>]) -> calamine::Range<Data> {
-    let bytes = build(workbook, cells).expect("package must serialize");
+    let sheet = workbook.worksheet();
+    roundtrip_with_sheet(workbook, &sheet, cells)
+}
+
+/// Writes `cells` through an explicit worksheet (including its row and column
+/// styles) and returns the sheet as read back.
+///
+/// # Panics
+///
+/// Panics if the package cannot be serialized, if `calamine` rejects it, or if
+/// the workbook does not contain exactly one sheet named `Sheet1`.
+pub fn roundtrip_with_sheet(
+    workbook: &Workbook,
+    sheet: &Worksheet<'_>,
+    cells: &[CellSpec<'_>],
+) -> calamine::Range<Data> {
+    let bytes = build_with_sheet(workbook, sheet, cells).expect("package must serialize");
     let mut workbook =
         open_workbook_auto_from_rs(Cursor::new(bytes)).expect("calamine must open it");
     assert_eq!(workbook.sheet_names(), [SHEET.to_owned()]);
     workbook.worksheet_range(SHEET).expect("reads sheet data")
 }
 
+/// Worksheet record bytes for `cells` and the worksheet's style assignments.
+///
+/// # Errors
+///
+/// Returns an error if a record cannot be serialized.
+pub fn worksheet_bytes(sheet: &Worksheet<'_>, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
+    worksheet_part(sheet, cells)
+}
+
+/// Decodes every record of type `T` in a BIFF record stream.
+///
+/// # Panics
+///
+/// Panics if a matching record body cannot be decoded.
+pub fn typed_records<T>(part: &[u8]) -> Vec<T>
+where
+    T: for<'a> DekuContainerRead<'a> + Default + CheckedBiff,
+{
+    let target = T::default().id();
+    let mut reader = BufReader::new(part);
+    let mut records = Vec::new();
+    while let Ok((head, body)) = BiffHead::read_from_with_data(&mut reader) {
+        if head.known_id() == Some(target)
+            && let Some(body) = body
+        {
+            let (_, record) = T::from_bytes((&body, 0)).expect("record body must decode");
+            records.push(record);
+        }
+    }
+    records
+}
+
 /// Record identifiers of the written worksheet, in file order.
 pub fn cell_record_ids(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Vec<KnownID> {
-    let sheet = worksheet_part(workbook, cells).expect("worksheet must serialize");
+    let sheet = workbook.worksheet();
+    let sheet = worksheet_part(&sheet, cells).expect("worksheet must serialize");
     let mut reader = BufReader::new(sheet.as_slice());
     let mut ids = Vec::new();
     while let Ok((head, _)) = BiffHead::read_from_with_data(&mut reader) {
@@ -94,7 +168,18 @@ pub fn includes_shared_strings_part(workbook: &Workbook, cells: &[CellSpec<'_>])
 }
 
 pub fn build(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
+    let sheet = workbook.worksheet();
+    build_with_sheet(workbook, &sheet, cells)
+}
+
+pub fn build_with_sheet(
+    workbook: &Workbook,
+    sheet: &Worksheet<'_>,
+    cells: &[CellSpec<'_>],
+) -> Result<Vec<u8>> {
     let has_strings = !workbook.shared_strings().is_empty();
+    let mut styles = Vec::new();
+    workbook.styles().write_to_biff(&mut styles)?;
     let mut parts: Vec<(&str, Vec<u8>)> = vec![
         (
             "[Content_Types].xml",
@@ -106,8 +191,8 @@ pub fn build(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
             workbook_rels(has_strings).into_bytes(),
         ),
         ("xl/workbook.bin", workbook_part()?),
-        ("xl/worksheets/sheet1.bin", worksheet_part(workbook, cells)?),
-        ("xl/styles.bin", styles_part()?),
+        ("xl/worksheets/sheet1.bin", worksheet_part(sheet, cells)?),
+        ("xl/styles.bin", styles),
     ];
 
     if has_strings {
@@ -144,8 +229,9 @@ fn workbook_part() -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn worksheet_part(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
-    let sheet = workbook.worksheet();
+fn worksheet_part(sheet: &Worksheet<'_>, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
+    let row_styles: BTreeMap<u32, u32> = sheet.row_styles().collect();
+    let column_styles: Vec<(u32, u32, u32)> = sheet.column_styles().collect();
     let mut out = Vec::new();
     push_record(&mut out, &BrtBeginSheet::default())?;
     push_record(
@@ -153,17 +239,54 @@ fn worksheet_part(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>
         &BrtWsDim {
             rfx: UncheckedRfX {
                 rwFirst: cells.iter().map(|c| c.row).min().unwrap_or(0),
-                rwLast: cells.iter().map(|c| c.row).max().unwrap_or(0),
+                rwLast: cells
+                    .iter()
+                    .map(|c| c.row)
+                    .chain(row_styles.keys().copied())
+                    .max()
+                    .unwrap_or(0),
                 colFirst: cells.iter().map(|c| c.col).min().unwrap_or(0),
-                colLast: cells.iter().map(|c| c.col).max().unwrap_or(0),
+                colLast: cells
+                    .iter()
+                    .map(|c| c.col)
+                    .chain(column_styles.iter().map(|&(_, last, _)| last))
+                    .max()
+                    .unwrap_or(0),
             },
         },
     )?;
+
+    if !column_styles.is_empty() {
+        push_record(
+            &mut out,
+            &BrtBeginColInfos {
+                count: u32::try_from(column_styles.len())
+                    .map_err(|_| Error::ValidationError("too many column styles".to_owned()))?,
+            },
+        )?;
+        for (first, last, style) in column_styles {
+            push_record(
+                &mut out,
+                &BrtColInfo {
+                    colFirst: first,
+                    colLast: last,
+                    coldx: DEFAULT_COL_WIDTH,
+                    ixfe: style,
+                    ..BrtColInfo::default()
+                },
+            )?;
+        }
+        push_record(&mut out, &BrtEndColInfos::default())?;
+    }
+
     push_record(&mut out, &BrtBeginSheetData::default())?;
 
     let mut rows: BTreeMap<u32, Vec<&CellSpec<'_>>> = BTreeMap::new();
     for cell in cells {
         rows.entry(cell.row).or_default().push(cell);
+    }
+    for &row in row_styles.keys() {
+        rows.entry(row).or_default();
     }
 
     for (row, mut row_cells) in rows {
@@ -180,12 +303,14 @@ fn worksheet_part(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>
             }
         }
 
+        let styled = row_styles.contains_key(&row);
         push_record(
             &mut out,
             &BrtRowHdr {
                 rw: row,
-                ixfe: 0,
+                ixfe: row_styles.get(&row).copied().unwrap_or(0),
                 miyRw: 300,
+                fGhostDirty: styled,
                 ccolspan: u32::try_from(spans.len())
                     .map_err(|_| Error::ValidationError("too many spans".to_owned()))?,
                 rgBrtColspan: spans,
@@ -194,7 +319,7 @@ fn worksheet_part(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>
         )?;
 
         for cell in row_cells {
-            let value = cell.value.to_cell_value(&sheet)?;
+            let value = cell.value.to_cell_value(sheet)?;
             push_cell(&mut out, cell, value)?;
         }
     }
@@ -246,75 +371,6 @@ fn push_cell(out: &mut Vec<u8>, spec: &CellSpec<'_>, value: CellValue) -> Result
             },
         ),
     }
-}
-
-fn styles_part() -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    push_record(&mut out, &BrtBeginStyleSheet::default())?;
-
-    push_record(&mut out, &BrtBeginFmts { count: 4 })?;
-    for (ifmt, code) in [
-        (DATE_FORMAT_CODE, "yyyy-mm-dd"),
-        (TIME_FORMAT_CODE, "hh:mm:ss.000"),
-        (DATETIME_FORMAT_CODE, "yyyy-mm-dd hh:mm:ss.000"),
-        (DURATION_FORMAT_CODE, "[h]:mm:ss.000"),
-    ] {
-        push_record(
-            &mut out,
-            &BrtFmt {
-                ifmt,
-                stFmtCode: XlWideString::construct(Some(code)),
-            },
-        )?;
-    }
-    push_record(&mut out, &BrtEndFmts::default())?;
-
-    push_record(&mut out, &BrtBeginFonts { count: 1 })?;
-    push_record(&mut out, &BrtFont::default())?;
-    push_record(&mut out, &BrtEndFonts::default())?;
-
-    push_record(&mut out, &BrtBeginFills { count: 1 })?;
-    push_record(&mut out, &BrtFill::default())?;
-    push_record(&mut out, &BrtEndFills::default())?;
-
-    push_record(&mut out, &BrtBeginBorders { count: 1 })?;
-    push_record(&mut out, &BrtBorder::default())?;
-    push_record(&mut out, &BrtEndBorders::default())?;
-
-    push_record(&mut out, &BrtBeginCellStyleXFs { count: 1 })?;
-    push_record(&mut out, &BrtXF::default())?;
-    push_record(&mut out, &BrtEndCellStyleXFs::default())?;
-
-    push_record(&mut out, &BrtBeginCellXFs { count: 5 })?;
-    push_record(&mut out, &BrtXF::default())?;
-    for ifmt in [
-        DATE_FORMAT_CODE,
-        TIME_FORMAT_CODE,
-        DATETIME_FORMAT_CODE,
-        DURATION_FORMAT_CODE,
-    ] {
-        push_record(
-            &mut out,
-            &BrtXF {
-                iFmt: ifmt,
-                ..BrtXF::default()
-            },
-        )?;
-    }
-    push_record(&mut out, &BrtEndCellXFs::default())?;
-
-    push_record(&mut out, &BrtBeginStyles { count: 1 })?;
-    push_record(&mut out, &BrtStyle::default())?;
-    push_record(&mut out, &BrtEndStyles::default())?;
-
-    push_record(&mut out, &BrtBeginDXFs { count: 0 })?;
-    push_record(&mut out, &BrtEndDXFs::default())?;
-
-    push_record(&mut out, &BrtBeginTableStyles::default())?;
-    push_record(&mut out, &BrtEndTableStyles::default())?;
-
-    push_record(&mut out, &BrtEndStyleSheet::default())?;
-    Ok(out)
 }
 
 fn content_types(has_shared_strings: bool) -> String {

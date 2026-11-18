@@ -2,7 +2,12 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::prelude::Unchecked;
 
-#[derive(DekuRead, DekuWrite, Default, PartialEq, Eq, Debug, Hash)]
+#[derive(DekuRead, DekuWrite, Clone, Default, PartialEq, Eq, Debug, Hash)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "bit layout mirrors the MS-XLSB record"

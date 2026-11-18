@@ -3,6 +3,11 @@ use deku::{DekuRead, DekuWrite};
 use crate::prelude::Unchecked;
 
 #[derive(Debug, DekuRead, DekuWrite, Hash, PartialEq, Eq)]
+#[deku(
+    bit_order = "lsb",
+    ctx = "order: deku::ctx::Order",
+    ctx_default = "deku::ctx::Order::Lsb0"
+)]
 /// `2.5.1`
 pub struct ACProductVersion {
     fileVersion: u16,

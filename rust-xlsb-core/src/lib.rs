@@ -28,6 +28,7 @@ mod context;
 mod err;
 pub mod prelude;
 mod sst_sqlite;
+mod styles;
 mod temporal;
 mod workbook;
 
@@ -42,6 +43,7 @@ pub use check::{Checked, CheckedBiff, Unchecked};
 pub use context::{NumberEncoding, NumberPolicy, SharedString, WbContext};
 pub use err::{Error, Result};
 pub use sst_sqlite::{SSTHolder, SSTHolderError};
+pub use styles::{CellStyle, StyleRegistry};
 pub use workbook::{Workbook, Worksheet};
 
 #[allow(clippy::crate_in_macro_def)]

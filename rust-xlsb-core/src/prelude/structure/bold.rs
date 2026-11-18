@@ -2,7 +2,7 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::prelude::Unchecked;
 
-#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq, Eq)]
+#[derive(DekuRead, DekuWrite, Clone, Default, Hash, Debug, PartialEq, Eq)]
 #[repr(u16)]
 #[deku(id_type = "u16")]
 pub enum Bold {

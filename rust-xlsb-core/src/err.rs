@@ -26,6 +26,8 @@ pub enum Error {
     ValidationError(String),
     #[error("Shared string id {id} is out of range (len {len})")]
     SharedStringOutOfRange { id: u32, len: u32 },
+    #[error("Style index {index} is out of range (len {len})")]
+    StyleOutOfRange { index: u32, len: u32 },
     #[error("Value cannot be represented exactly: {0}")]
     ValueNotRepresentable(&'static str),
     #[error("Shared string table error: {0}")]

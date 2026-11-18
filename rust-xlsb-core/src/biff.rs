@@ -47,3 +47,10 @@ pub fn write_as_biff<W: Write, S: Deref<Target = [u8]>>(
     let (raw, len) = biff_head.as_raw_data();
     Ok(writer.write(&raw[..len])? + writer.write(data)?)
 }
+
+pub fn push_record<T: BiffWrite>(out: &mut Vec<u8>, record: &T) -> Result<()> {
+    let mut body = Vec::new();
+    record.biff_push_to(&mut body)?;
+    write_as_biff(record.id(), body, out).map_err(Error::BiffWriteFailed)?;
+    Ok(())
+}

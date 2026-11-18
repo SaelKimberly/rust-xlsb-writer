@@ -7,8 +7,8 @@ mod harness;
 use calamine::{CellErrorType, Data};
 use chrono::{NaiveDate, NaiveTime, TimeDelta};
 
-use crate::prelude::BErr;
-use crate::{Error, KnownID, ToCellValue, WbContext, Workbook};
+use crate::prelude::{BErr, Bold, BrtColInfo, BrtFont, BrtRowHdr};
+use crate::{CellStyle, Error, KnownID, ToCellValue, WbContext, Workbook};
 
 use harness::{
     CellSpec, DATE_STYLE, DATETIME_STYLE, DURATION_STYLE, TIME_STYLE, cell_record_ids,
@@ -16,7 +16,7 @@ use harness::{
 };
 
 fn workbook() -> Workbook {
-    Workbook::new().expect("in-memory workbook")
+    harness::temporal_workbook().expect("in-memory workbook")
 }
 
 #[test]
@@ -299,4 +299,61 @@ fn inexact_integer_fails_before_writing() {
         i64::MAX.to_cell_value(&workbook),
         Err(Error::ValueNotRepresentable(_))
     ));
+}
+
+fn bold_style(workbook: &mut Workbook) -> u32 {
+    workbook
+        .add_style(CellStyle {
+            font: BrtFont {
+                bls: Bold::BLSBOLD,
+                ..BrtFont::default()
+            },
+            ..CellStyle::default()
+        })
+        .expect("adds a bold style")
+}
+
+#[test]
+fn row_and_column_styles_reach_their_records() {
+    let mut workbook = workbook();
+    let style = bold_style(&mut workbook);
+    let mut sheet = workbook.worksheet();
+    sheet.set_row_style(0, style).expect("valid row style");
+    sheet
+        .set_column_style(1, 2, style)
+        .expect("valid column style");
+
+    let cells = [CellSpec::new(0, 1, &1_i32)];
+    let bytes = harness::worksheet_bytes(&sheet, &cells).expect("worksheet serializes");
+
+    let columns: Vec<BrtColInfo> = harness::typed_records(&bytes);
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].colFirst, 1);
+    assert_eq!(columns[0].colLast, 2);
+    assert_eq!(columns[0].ixfe, style);
+
+    let rows: Vec<BrtRowHdr> = harness::typed_records(&bytes);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].rw, 0);
+    assert_eq!(rows[0].ixfe, style);
+    assert!(rows[0].fGhostDirty);
+
+    let range = harness::roundtrip_with_sheet(&workbook, &sheet, &cells);
+    assert_eq!(range.get((0, 0)), Some(&Data::Int(1)));
+}
+
+#[test]
+fn style_only_rows_emit_a_row_header() {
+    let mut workbook = workbook();
+    let style = bold_style(&mut workbook);
+    let mut sheet = workbook.worksheet();
+    sheet.set_row_style(7, style).expect("valid row style");
+
+    let bytes = harness::worksheet_bytes(&sheet, &[]).expect("worksheet serializes");
+    let rows: Vec<BrtRowHdr> = harness::typed_records(&bytes);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].rw, 7);
+    assert_eq!(rows[0].ixfe, style);
+    assert!(rows[0].fGhostDirty);
 }
