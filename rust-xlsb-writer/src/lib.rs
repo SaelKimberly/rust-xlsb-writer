@@ -26,7 +26,7 @@
 mod data;
 mod data_validation;
 mod datetime;
-mod defined_name;
+pub(crate) mod defined_name;
 #[cfg(test)]
 mod e2e;
 mod error;
@@ -36,6 +36,7 @@ mod package;
 mod properties;
 mod protection;
 mod sheet;
+pub(crate) mod table;
 mod url;
 mod workbook;
 mod worksheet;
@@ -55,6 +56,7 @@ pub use format::{
 };
 pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
+pub use table::{Table, TableColumn, TableStyle};
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};
 pub use worksheet::{ColNum, IgnoreError, RowNum, Worksheet};

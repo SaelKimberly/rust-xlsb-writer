@@ -333,7 +333,11 @@ const INVALID_NAME_CHARS: [char; 29] = [
     '>', '@', '[', ']', '^', '`', '{', '|', '}', '~',
 ];
 
-fn check_name(name: &str) -> Result<()> {
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the table name validator"
+)]
+pub(crate) fn check_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(name_error(name, "name cannot be blank"));
     }

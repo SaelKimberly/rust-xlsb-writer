@@ -15,6 +15,7 @@ use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
 use crate::defined_name::{DefinedName, XtiCollector, area3d, sheet_index};
 use crate::properties::CustomPropertyValue;
+use crate::table::write_table_part;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
@@ -45,6 +46,8 @@ pub fn build_package(
     }
 
     let mut sheet_parts = Vec::with_capacity(sheets.len());
+    let mut table_parts = Vec::new();
+    let mut table_ids = Vec::new();
     let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
         let mut bytes = Vec::new();
@@ -56,6 +59,12 @@ pub fn build_package(
                 format!("xl/worksheets/_rels/sheet{}.bin.rels", index + 1),
                 rels.into_bytes(),
             ));
+        }
+        for table in sheet.tables() {
+            let mut bytes = Vec::new();
+            write_table_part(table, &mut bytes)?;
+            table_parts.push((format!("xl/tables/table{}.bin", table.table.id), bytes));
+            table_ids.push(table.table.id);
         }
     }
 
@@ -73,6 +82,7 @@ pub fn build_package(
                 has_strings,
                 properties.is_some(),
                 has_custom_properties,
+                &table_ids,
             )
             .into_bytes(),
         ),
@@ -107,6 +117,7 @@ pub fn build_package(
         }
     }
     parts.extend(sheet_parts);
+    parts.extend(table_parts);
 
     if has_strings {
         let mut shared_strings = Vec::new();
@@ -408,7 +419,7 @@ fn push_defined_name(
 }
 
 fn sheet_rels(sheet: &Worksheet) -> Option<String> {
-    if sheet.hyperlinks().values().all(crate::Url::is_internal) {
+    if sheet.tables().is_empty() && sheet.hyperlinks().values().all(crate::Url::is_internal) {
         return None;
     }
 
@@ -417,6 +428,15 @@ fn sheet_rels(sheet: &Worksheet) -> Option<String> {
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
     ));
     let mut rel_id = 0u32;
+    for table in sheet.tables() {
+        rel_id += 1;
+        write!(
+            body,
+            r#"<Relationship Id="rId{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableSingleCells" Target="../tables/table{}.bin"/>"#,
+            table.table.id
+        )
+        .expect("writing to String cannot fail");
+    }
     for link in sheet.hyperlinks().values() {
         if link.is_internal() {
             continue;
@@ -438,6 +458,7 @@ fn content_types(
     has_strings: bool,
     has_properties: bool,
     has_custom_properties: bool,
+    table_ids: &[u32],
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -471,6 +492,13 @@ fn content_types(
         body.push_str(
             r#"<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>"#,
         );
+    }
+    for id in table_ids {
+        write!(
+            body,
+            r#"<Override PartName="/xl/tables/table{id}.bin" ContentType="application/vnd.ms-excel.table"/>"#
+        )
+        .expect("writing to String cannot fail");
     }
     body.push_str("</Types>");
     body
@@ -976,14 +1004,16 @@ mod tests {
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
         Bold, BrtBeginAFilter, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
-        BrtBeginFilters, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtCustomFilter,
-        BrtDVal, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtName, BrtRowHdr,
-        BrtSheetProtection, BrtWsFmtInfo, BrtXF,
+        BrtBeginFilters, BrtBeginList, BrtBeginListCol, BrtBeginListParts, BrtBeginWsView,
+        BrtBookView, BrtBundleSh, BrtCalcProp, BrtCustomFilter, BrtDVal, BrtExternSheet,
+        BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr,
+        BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
     use super::*;
     use crate::filter::{FilterCondition, FilterCriteria};
+    use crate::{Table, TableColumn, TableStyle};
 
     fn record_ids(part: &[u8]) -> Vec<KnownID> {
         let mut reader = BufReader::new(part);
@@ -1752,6 +1782,188 @@ mod tests {
         assert_eq!(name(1), "_xlnm._FilterDatabase");
         assert_eq!(names[0].formula.rgce, area3d(0, 0, 0, 3, 1).to_vec());
         assert_eq!(names[1].formula.rgce, area3d(0, 0, 0, 3, 1).to_vec());
+    }
+
+    #[test]
+    fn tables_emit_part_reference_relationship_and_content_type() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        let table = Table::new()
+            .set_name("Sales")
+            .set_style(TableStyle::Light11)
+            .set_columns(&[
+                TableColumn::new().set_header("Product"),
+                TableColumn::new().set_header("Q1"),
+            ]);
+        worksheet.add_table(1, 0, 4, 1, &table).expect("table");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let table_part = part_bytes(&bytes, "xl/tables/table1.bin").expect("table part");
+        let list = records::<BrtBeginList>(&table_part);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].idList, 1);
+        assert_eq!(
+            list[0].stName.to_optional_string().as_deref(),
+            Some("Sales")
+        );
+        assert_eq!(list[0].crwHeader, 1);
+        assert_eq!(
+            list[0].stDisplayName.to_optional_string().as_deref(),
+            Some("Sales")
+        );
+
+        let columns = records::<BrtBeginListCol>(&table_part);
+        assert_eq!(columns.len(), 2);
+        assert!(columns[0].stName.is_null());
+        assert_eq!(
+            columns[0].stCaption.to_optional_string().as_deref(),
+            Some("Product")
+        );
+
+        let styles = records::<BrtTableStyleClient>(&table_part);
+        assert_eq!(styles.len(), 1);
+        assert_eq!(
+            styles[0].stStyleName.to_optional_string().as_deref(),
+            Some("TableStyleLight11")
+        );
+
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let parts = records::<BrtBeginListParts>(&sheet_part);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].cParts, 1);
+        let table_refs = records::<BrtListPart>(&sheet_part);
+        assert_eq!(table_refs.len(), 1);
+        assert_eq!(
+            table_refs[0].stRelID.to_optional_string().as_deref(),
+            Some("rId1")
+        );
+
+        let rels_xml = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels_xml.contains(r#"Target="../tables/table1.bin""#));
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("content types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/tables/table1.bin" ContentType="application/vnd.ms-excel.table"/>"#
+        ));
+    }
+
+    #[test]
+    fn tables_and_hyperlinks_use_distinct_relationship_ids() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_table(0, 0, 2, 0, &Table::new())
+            .expect("table");
+        worksheet
+            .write_url(4, 0, "https://example.com")
+            .expect("url");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableSingleCells""#));
+        assert!(rels.contains(r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink""#));
+
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let links = records::<BrtHLink>(&sheet_part);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].relId.to_optional_string().as_deref(), Some("rId2"));
+    }
+
+    #[test]
+    fn table_ids_and_default_names_are_workbook_scoped() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new())
+            .expect("first");
+        workbook
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new())
+            .expect("second");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let first = records::<BrtBeginList>(
+            &part_bytes(&bytes, "xl/tables/table1.bin").expect("first part"),
+        );
+        let second = records::<BrtBeginList>(
+            &part_bytes(&bytes, "xl/tables/table2.bin").expect("second part"),
+        );
+        assert_eq!(first[0].idList, 1);
+        assert_eq!(second[0].idList, 2);
+        assert_eq!(
+            first[0].stDisplayName.to_optional_string().as_deref(),
+            Some("Table1")
+        );
+        assert_eq!(
+            second[0].stDisplayName.to_optional_string().as_deref(),
+            Some("Table2")
+        );
+    }
+
+    #[test]
+    fn table_names_cannot_collide_with_defined_names() {
+        let mut workbook = crate::Workbook::new();
+        workbook.define_name("Sales", "=1").expect("name");
+        workbook
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new().set_name("Sales"))
+            .expect("table");
+        assert!(matches!(
+            workbook.save_to_buffer(),
+            Err(Error::TableError(_))
+        ));
+    }
+
+    #[test]
+    fn duplicate_table_names_are_rejected_at_save() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new().set_name("Sales"))
+            .expect("first");
+        workbook
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new().set_name("sales"))
+            .expect("second");
+        assert!(matches!(
+            workbook.save_to_buffer(),
+            Err(Error::TableError(_))
+        ));
+
+        let mut default_collision = crate::Workbook::new();
+        default_collision
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new().set_name("Table2"))
+            .expect("custom");
+        default_collision
+            .add_worksheet()
+            .add_table(0, 0, 2, 0, &Table::new())
+            .expect("default");
+        assert!(matches!(
+            default_collision.save_to_buffer(),
+            Err(Error::TableError(_))
+        ));
+    }
+
+    #[test]
+    fn tables_are_absent_from_default_output() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "plain")
+            .expect("write");
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert!(part_bytes(&bytes, "xl/tables/table1.bin").is_err());
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        assert_eq!(records::<BrtBeginListParts>(&sheet_part).len(), 0);
+        assert!(part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").is_err());
     }
 
     #[test]

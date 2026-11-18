@@ -303,6 +303,32 @@ impl Workbook {
             sheet.apply_filters();
         }
 
+        let mut table_id = 0_u32;
+        let mut table_names: HashSet<String> = self
+            .defined_names
+            .iter()
+            .map(|name| name.name.to_lowercase())
+            .collect();
+        for sheet in &mut self.worksheets {
+            for table in sheet.tables_mut() {
+                table_id = table_id
+                    .checked_add(1)
+                    .ok_or(Error::ValueNotRepresentable("too many tables"))?;
+                table.table.id = table_id;
+                if table.table.name.is_empty() {
+                    table.table.name = format!("Table{table_id}");
+                } else {
+                    table.table.validate_name()?;
+                }
+                if !table_names.insert(table.table.name.to_lowercase()) {
+                    return Err(Error::TableError(format!(
+                        "table name already used: {}",
+                        table.table.name
+                    )));
+                }
+            }
+        }
+
         let mut defined_names = HashSet::new();
         for name in &self.defined_names {
             if let Some(scope) = name.scope.as_deref() {

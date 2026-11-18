@@ -9,6 +9,7 @@ use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
+use crate::table::{Table, TableRange};
 use crate::{Color, Error, Format, Result, Url};
 
 pub const MAX_ROW: u32 = 1_048_575;
@@ -328,8 +329,16 @@ pub struct Worksheet {
     ignored_errors: BTreeMap<IgnoreError, Vec<UncheckedRfX>>,
     ignored_error_ranges: BTreeSet<(RowNum, ColNum, RowNum, ColNum)>,
     data_validations: Vec<DataValidationRange>,
+    tables: Vec<TableRange>,
     max_autofit_row: RowNum,
     max_autofit_width: u32,
+}
+
+const fn rfx_overlaps(first: UncheckedRfX, last: UncheckedRfX) -> bool {
+    first.rwFirst <= last.rwLast
+        && last.rwFirst <= first.rwLast
+        && first.colFirst <= last.colLast
+        && last.colFirst <= first.colLast
 }
 
 impl Default for Worksheet {
@@ -391,6 +400,7 @@ impl Worksheet {
             ignored_errors: BTreeMap::new(),
             ignored_error_ranges: BTreeSet::new(),
             data_validations: Vec::new(),
+            tables: Vec::new(),
             max_autofit_row: MAX_ROW,
             max_autofit_width: MAX_AUTOFIT_WIDTH_PIXELS,
         }
@@ -2400,14 +2410,124 @@ impl Worksheet {
         Self::check_row(last_row)?;
         Self::check_col(first_col)?;
         Self::check_col(last_col)?;
-        self.autofilter = Some(UncheckedRfX {
+        let range = UncheckedRfX {
             rwFirst: first_row,
             rwLast: last_row,
             colFirst: u32::from(first_col),
             colLast: u32::from(last_col),
-        });
+        };
+        if self
+            .tables
+            .iter()
+            .any(|table| table.table.show_autofilter && rfx_overlaps(table.range, range))
+        {
+            return Err(Error::AutofilterRangeOverlaps);
+        }
+        self.autofilter = Some(range);
         self.filter_conditions.clear();
         self.filter_hidden_rows.clear();
+        Ok(self)
+    }
+
+    /// Adds a table over a cell range.
+    ///
+    /// The table writes its header row. Column headers default to existing
+    /// header-cell strings, then `Column1`, `Column2`, and so on. Totals,
+    /// calculated-column formulas, and per-column formats are not supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns a range, table-name, header, overlap, or `AutoFilter` error.
+    pub fn add_table(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        table: &Table,
+    ) -> Result<&mut Self> {
+        Self::check_range(first_row, first_col, last_row, last_col)?;
+        if table.show_header_row && first_row == last_row {
+            return Err(Error::TableError(
+                "table must have at least one data row".to_owned(),
+            ));
+        }
+        table.validate_name()?;
+
+        let range = UncheckedRfX {
+            rwFirst: first_row,
+            rwLast: last_row,
+            colFirst: u32::from(first_col),
+            colLast: u32::from(last_col),
+        };
+        if self
+            .tables
+            .iter()
+            .any(|existing| rfx_overlaps(existing.range, range))
+        {
+            return Err(Error::TableRangeOverlaps);
+        }
+        if table.show_autofilter
+            && self
+                .autofilter
+                .is_some_and(|autofilter| rfx_overlaps(autofilter, range))
+        {
+            return Err(Error::AutofilterRangeOverlaps);
+        }
+
+        let mut stored = table.clone();
+        let mut columns = std::mem::take(&mut stored.columns);
+        columns.resize(
+            usize::from(last_col - first_col + 1),
+            crate::table::TableColumn::default(),
+        );
+        let mut names = std::collections::HashSet::with_capacity(columns.len());
+        for (index, column) in columns.iter_mut().enumerate() {
+            if column.header.is_empty()
+                && table.show_header_row
+                && let Some(CellData::String(text)) = self
+                    .cells
+                    .get(&first_row)
+                    .and_then(|cells| cells.get(&(first_col + u16::try_from(index).ok()?)))
+                    .map(|cell| &cell.data)
+            {
+                column.header.clone_from(text);
+            }
+            if column.header.is_empty() {
+                column.header = format!("Column{}", index + 1);
+            }
+            if column.header.encode_utf16().count() > 255 {
+                return Err(Error::TableError(
+                    "table column header exceeds 255 characters".to_owned(),
+                ));
+            }
+            if !names.insert(column.header.to_lowercase()) {
+                return Err(Error::TableError(format!(
+                    "column name '{}' already exists in table",
+                    column.header
+                )));
+            }
+        }
+
+        if table.show_header_row {
+            for (index, column) in columns.iter().enumerate() {
+                let col = first_col
+                    + u16::try_from(index)
+                        .map_err(|_| Error::ValueNotRepresentable("too many table columns"))?;
+                self.store_with_index(
+                    first_row,
+                    col,
+                    CellData::String(column.header.clone()),
+                    None,
+                )?;
+            }
+        }
+
+        stored.columns = columns;
+        self.tables.push(TableRange {
+            table: stored,
+            range,
+        });
         Ok(self)
     }
 
@@ -2652,6 +2772,14 @@ impl Worksheet {
 
     pub(crate) fn merged_ranges(&self) -> &[MergeRange] {
         &self.merged_ranges
+    }
+
+    pub(crate) fn tables(&self) -> &[TableRange] {
+        &self.tables
+    }
+
+    pub(crate) fn tables_mut(&mut self) -> &mut [TableRange] {
+        &mut self.tables
     }
 
     pub(crate) const fn autofilter_range(&self) -> Option<UncheckedRfX> {
@@ -3037,6 +3165,7 @@ fn display_len(value: f64) -> u32 {
 mod tests {
     use super::*;
     use crate::data::CellData;
+    use crate::table::TableColumn;
     use crate::{FormatBorder, FormatDiagonalBorder};
     use rust_xlsb_core::StyleRegistry;
     use rust_xlsb_core::prelude::BorderType;
@@ -4460,6 +4589,112 @@ mod tests {
             Err(Error::RowColumnLimit)
         ));
         assert!(worksheet.data_validations().is_empty());
+    }
+
+    #[test]
+    fn add_table_writes_headers_and_uses_existing_header_cells() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.write_string(1, 0, "Existing").expect("header");
+        let table = Table::new();
+        worksheet.add_table(1, 0, 3, 1, &table).expect("table");
+
+        assert_eq!(
+            worksheet.cells()[&1][&0].data,
+            CellData::String("Existing".to_owned())
+        );
+        assert_eq!(
+            worksheet.cells()[&1][&1].data,
+            CellData::String("Column2".to_owned())
+        );
+        assert_eq!(worksheet.tables()[0].table.columns[1].header, "Column2");
+    }
+
+    #[test]
+    fn add_table_fills_missing_columns_by_position() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let table = Table::new().set_columns(&[TableColumn::new().set_header("Only")]);
+        worksheet.add_table(0, 0, 2, 1, &table).expect("table");
+        assert_eq!(worksheet.tables()[0].table.columns[0].header, "Only");
+        assert_eq!(worksheet.tables()[0].table.columns[1].header, "Column2");
+    }
+
+    #[test]
+    fn add_table_uses_custom_columns_and_skips_headers_when_disabled() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let table = Table::new()
+            .set_columns(&[
+                TableColumn::new().set_header("Name"),
+                TableColumn::new().set_header("Value"),
+            ])
+            .set_header_row(false);
+        worksheet.add_table(2, 0, 4, 1, &table).expect("table");
+        assert!(!worksheet.cells().contains_key(&2));
+        assert_eq!(worksheet.tables()[0].table.columns[0].header, "Name");
+    }
+
+    #[test]
+    fn add_table_rejects_invalid_shapes_headers_names_and_overlaps() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.add_table(0, 0, 0, 0, &Table::new()),
+            Err(Error::TableError(_))
+        ));
+        assert!(matches!(
+            worksheet.add_table(1, 1, 0, 0, &Table::new()),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.add_table(0, 0, 1, 0, &Table::new().set_name("_xlnm.Bad")),
+            Err(Error::TableError(_))
+        ));
+        assert!(matches!(
+            worksheet.add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().set_columns(&[
+                    TableColumn::new().set_header("Name"),
+                    TableColumn::new().set_header("name"),
+                ])
+            ),
+            Err(Error::TableError(_))
+        ));
+
+        worksheet
+            .add_table(0, 0, 2, 1, &Table::new())
+            .expect("table");
+        assert!(matches!(
+            worksheet.add_table(1, 1, 3, 2, &Table::new()),
+            Err(Error::TableRangeOverlaps)
+        ));
+    }
+
+    #[test]
+    fn table_and_worksheet_autofilters_cannot_overlap() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.autofilter(0, 0, 3, 1).expect("autofilter");
+        assert!(matches!(
+            worksheet.add_table(1, 1, 4, 2, &Table::new()),
+            Err(Error::AutofilterRangeOverlaps)
+        ));
+
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .add_table(0, 0, 3, 1, &Table::new())
+            .expect("table");
+        assert!(matches!(
+            worksheet.autofilter(1, 1, 4, 2),
+            Err(Error::AutofilterRangeOverlaps)
+        ));
+
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .add_table(0, 0, 3, 1, &Table::new().set_autofilter(false))
+            .expect("table");
+        worksheet
+            .autofilter(1, 1, 4, 2)
+            .expect("filter-less table does not block");
     }
 
     #[test]

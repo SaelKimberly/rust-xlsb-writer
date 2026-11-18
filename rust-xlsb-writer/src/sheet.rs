@@ -5,15 +5,16 @@ use std::collections::BTreeSet;
 use rust_xlsb_core::prelude::{
     BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
-    BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet, BrtBeginSheetData,
-    BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool, BrtCellError,
-    BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtCustomFilter,
-    BrtEndAFilter, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndCustomFilters,
-    BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndMergeCells,
-    BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtHLink,
-    BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim,
-    BrtWsFmtInfo, BrtWsProp, Cell, HeaderFooterString, UncheckedRfX, UncheckedSqRfX,
-    XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet,
+    BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
+    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
+    BrtCustomFilter, BrtEndAFilter, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos,
+    BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
+    BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView,
+    BrtEndWsViews, BrtFilter, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup,
+    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
+    HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
+    XlWideString, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -168,8 +169,34 @@ pub fn write_sheet(
     write_header_footer(sheet, out)?;
     write_page_breaks(sheet, out)?;
     write_ignored_errors(sheet, out)?;
+    write_list_parts(sheet, out)?;
 
     push(out, &BrtEndSheet::default())?;
+    Ok(())
+}
+
+fn write_list_parts(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let tables = sheet.tables();
+    if tables.is_empty() {
+        return Ok(());
+    }
+    push(
+        out,
+        &BrtBeginListParts {
+            cParts: u32::try_from(tables.len())
+                .map_err(|_| Error::ValueNotRepresentable("too many tables"))?,
+        },
+    )?;
+    for index in 0..tables.len() {
+        let rel = format!("rId{}", index + 1);
+        push(
+            out,
+            &BrtListPart {
+                stRelID: XlNullableWideString::construct(Some(rel.as_str())),
+            },
+        )?;
+    }
+    push(out, &BrtEndListParts::default())?;
     Ok(())
 }
 
@@ -382,7 +409,8 @@ fn active_pane(freeze: Option<(u32, u16)>, selection: Option<UncheckedRfX>) -> u
 }
 
 fn write_hyperlinks(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
-    let mut rel_id = 0u32;
+    let mut rel_id = u32::try_from(sheet.tables().len())
+        .map_err(|_| Error::ValueNotRepresentable("too many tables"))?;
     for (&(row, col), link) in sheet.hyperlinks() {
         // None marks an internal link; its serialized relId is the empty string.
         let rel = if link.is_internal() {
@@ -593,6 +621,12 @@ fn dimension(sheet: &Worksheet) -> BrtWsDim {
         let col = u32::from(col);
         min_col = min_col.min(col);
         max_col = max_col.max(col);
+    }
+    for table in sheet.tables() {
+        min_row = min_row.min(table.range.rwFirst);
+        max_row = max_row.max(table.range.rwLast);
+        min_col = min_col.min(table.range.colFirst);
+        max_col = max_col.max(table.range.colLast);
     }
 
     if min_row == u32::MAX {

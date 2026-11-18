@@ -10,16 +10,18 @@ use super::{Checked, Unchecked};
 pub use collection::*;
 pub use record::{
     BrtBeginAFilter, BrtBeginColBrk, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
-    BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
-    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt,
-    BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtEndAFilter, BrtEndColBrk,
-    BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
-    BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing,
-    BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup,
-    BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
-    BrtSheetProtection, BrtStyle, BrtSupSelf, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
-    DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
+    BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginList, BrtBeginListCol, BrtBeginListCols,
+    BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView,
+    BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank, BrtCellBool,
+    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
+    BrtColor, BrtCustomFilter, BrtDVal, BrtEndAFilter, BrtEndColBrk, BrtEndCustomFilters,
+    BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndList, BrtEndListCol,
+    BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView,
+    BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink, BrtListPart,
+    BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection,
+    BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient,
+    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, DValStrings, DVals, GrbitAtr, HAlign,
+    NameParsedFormula, ReadingOrder, VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
@@ -208,6 +210,16 @@ mod tests {
     #[case::brt_end_slicer_style_elements(|| checked_test::<BrtEndSlicerStyleElements>(0))]
     #[case::brt_end_slicers(|| checked_test::<BrtEndSlicers>(0))]
     #[case::brt_end_slicers_ex(|| checked_test::<BrtEndSlicersEx>(0))]
+    #[case::brt_begin_list(|| checked_test::<BrtBeginList>(112))]
+    #[case::brt_end_list(|| checked_test::<BrtEndList>(0))]
+    #[case::brt_begin_list_col(|| checked_test::<BrtBeginListCol>(62))]
+    #[case::brt_begin_list_cols(|| checked_test::<BrtBeginListCols>(4))]
+    #[case::brt_end_list_col(|| checked_test::<BrtEndListCol>(0))]
+    #[case::brt_end_list_cols(|| checked_test::<BrtEndListCols>(0))]
+    #[case::brt_begin_list_parts(|| checked_test::<BrtBeginListParts>(4))]
+    #[case::brt_list_part(|| checked_test::<BrtListPart>(12))]
+    #[case::brt_end_list_parts(|| checked_test::<BrtEndListParts>(0))]
+    #[case::brt_table_style_client(|| checked_test::<BrtTableStyleClient>(40))]
     fn test_biff_export(#[case] run: fn()) {
         run();
     }

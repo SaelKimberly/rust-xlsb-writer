@@ -61,6 +61,18 @@ pub enum Error {
     #[error("merged ranges overlap")]
     MergeRangeOverlaps,
 
+    /// A table definition is invalid.
+    #[error("table error: {0}")]
+    TableError(String),
+
+    /// Two table ranges overlap on a worksheet.
+    #[error("table ranges overlap")]
+    TableRangeOverlaps,
+
+    /// A table range overlaps the worksheet `AutoFilter`.
+    #[error("table and worksheet AutoFilter ranges overlap")]
+    AutofilterRangeOverlaps,
+
     /// A cell string exceeds Excel's 32,767 UTF-16 code-unit limit.
     #[error("string exceeds 32,767 UTF-16 code units")]
     StringTooLong,

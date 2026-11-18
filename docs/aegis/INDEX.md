@@ -36,6 +36,7 @@
 - [Defined names](plans/2026-11-19-defined-names.md)
 - [Autofilter conditions](plans/2026-11-19-autofilter-conditions.md)
 - [Data validation](plans/2026-11-19-data-validation.md)
+- [Basic tables](plans/2026-11-19-basic-tables.md)
 
 ## Analysis
 
