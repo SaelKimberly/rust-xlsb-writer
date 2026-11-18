@@ -949,7 +949,11 @@ impl Format {
         }
     }
 
-    pub(crate) fn to_cell_style(&self, registry: &mut StyleRegistry) -> Result<CellStyle> {
+    pub(crate) fn to_rich_font(&self) -> Result<BrtFont> {
+        self.build_font()
+    }
+
+    fn build_font(&self) -> Result<BrtFont> {
         let mut font = self.font.clone();
         if let Some(color) = self.font_color {
             font.brtColor = color.to_brt_color()?;
@@ -964,6 +968,11 @@ impl Format {
                 "font size is outside 1..=409 points",
             ));
         }
+        Ok(font)
+    }
+
+    pub(crate) fn to_cell_style(&self, registry: &mut StyleRegistry) -> Result<CellStyle> {
+        let font = self.build_font()?;
 
         let mut fill = self.fill.clone();
         if let Some(color) = self.background_color {

@@ -6,6 +6,7 @@ mod cell;
 mod font_flags;
 mod range_protection_title_sd_rel;
 mod rfx;
+mod rich_str;
 mod rk_number;
 mod sqrfx;
 mod xl_wide_string;
@@ -18,6 +19,7 @@ pub use cell::{BrtColSpan, Cell};
 pub use font_flags::FontFlags;
 pub use range_protection_title_sd_rel::RangeProtectionTitleSDRel;
 pub use rfx::UncheckedRfX;
+pub use rich_str::{PhRun, PhoneticRuns, RichStr, StrRun, StrRuns};
 pub use rk_number::RkNumber;
 pub use sqrfx::UncheckedSqRfX;
 pub use xl_wide_string::{

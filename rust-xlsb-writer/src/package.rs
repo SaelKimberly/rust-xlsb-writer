@@ -1,5 +1,6 @@
 //! XLSB package assembly: parts, relationships, and ZIP packaging.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -13,6 +14,7 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
+use crate::data::CellData;
 use crate::defined_name::{DefinedName, XtiCollector, area3d, sheet_index};
 use crate::properties::CustomPropertyValue;
 use crate::table::write_table_part;
@@ -45,6 +47,22 @@ pub fn build_package(
         style_indexes.push(indexes);
     }
 
+    let mut rich_fonts = HashMap::new();
+    for sheet in sheets {
+        for row in sheet.cells().values() {
+            for cell in row.values() {
+                if let CellData::RichString(rich) = &cell.data {
+                    for run in &rich.runs {
+                        if !rich_fonts.contains_key(&run.font) {
+                            let id = registry.register_font(run.font.clone())?;
+                            rich_fonts.insert(run.font.clone(), id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let mut sheet_parts = Vec::with_capacity(sheets.len());
     let mut table_parts = Vec::new();
     let mut table_ids = Vec::new();
@@ -52,7 +70,14 @@ pub fn build_package(
     for (index, sheet) in sheets.iter().enumerate() {
         let mut bytes = Vec::new();
         let selected = index == view.active && (view.explicit_active || view.active != 0);
-        crate::sheet::write_sheet(sheet, &style_indexes[index], &sst, selected, &mut bytes)?;
+        crate::sheet::write_sheet_with_fonts(
+            sheet,
+            &style_indexes[index],
+            &sst,
+            &rich_fonts,
+            selected,
+            &mut bytes,
+        )?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
         if let Some(rels) = sheet_rels(sheet) {
             sheet_parts.push((
@@ -1005,9 +1030,9 @@ mod tests {
     use rust_xlsb_core::prelude::{
         Bold, BrtBeginAFilter, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
         BrtBeginFilters, BrtBeginList, BrtBeginListCol, BrtBeginListParts, BrtBeginWsView,
-        BrtBookView, BrtBundleSh, BrtCalcProp, BrtCustomFilter, BrtDVal, BrtExternSheet,
-        BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr,
-        BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
+        BrtBookView, BrtBundleSh, BrtCalcProp, BrtCellRString, BrtCustomFilter, BrtDVal,
+        BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName,
+        BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1042,6 +1067,46 @@ mod tests {
             }
         }
         records
+    }
+
+    #[test]
+    fn rich_string_emits_utf16_runs_and_fonts() {
+        let mut workbook = crate::Workbook::new();
+        let bold = crate::Format::new().set_bold();
+        let large = crate::Format::new().set_font_size(14.0);
+        workbook
+            .add_worksheet()
+            .write_rich_string(
+                0,
+                0,
+                &[
+                    (&crate::Format::default(), "A"),
+                    (&bold, "😀"),
+                    (&large, "B"),
+                ],
+            )
+            .expect("rich string");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let cells = records::<BrtCellRString>(&sheet);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(
+            cells[0].value.str.to_optional_string().as_deref(),
+            Some("A😀B")
+        );
+        let rich = cells[0].value.rich.as_ref().expect("formatted runs");
+        assert_eq!(rich.dwSizeStrRun, 3);
+        assert_eq!(
+            rich.rgsStrRun.iter().map(|run| run.ich).collect::<Vec<_>>(),
+            [0, 1, 3]
+        );
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        let fonts = records::<BrtFont>(&styles);
+        assert_eq!(fonts[rich.rgsStrRun[0].ifnt as usize], BrtFont::default());
+        assert_eq!(fonts[rich.rgsStrRun[1].ifnt as usize].bls, Bold::BLSBOLD);
+        assert_eq!(fonts[rich.rgsStrRun[2].ifnt as usize].dyHeight, 280);
     }
 
     #[test]
@@ -1566,6 +1631,36 @@ mod tests {
         assert_eq!(column_ends.len(), 2);
         assert!(column_ends[0] > list_end && column_ends[1] > custom_end);
 
+        let rows = records::<BrtRowHdr>(&sheet);
+        let hidden = |row: u32| {
+            rows.iter()
+                .find(|record| record.rw == row)
+                .is_some_and(|record| record.fDyZero && record.miyRw == 0)
+        };
+        assert!(!hidden(1));
+        assert!(hidden(2));
+        assert!(hidden(3));
+    }
+
+    #[test]
+    fn rich_strings_participate_in_autofilter_matching() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        let bold = crate::Format::new().set_bold();
+        worksheet.autofilter(0, 0, 3, 0).expect("autofilter");
+        worksheet.write_string(0, 0, "Region").expect("header");
+        worksheet
+            .write_rich_string(1, 0, &[(&bold, "East")])
+            .expect("east");
+        worksheet
+            .write_rich_string(2, 0, &[(&bold, "West")])
+            .expect("west");
+        worksheet
+            .filter_column(0, &FilterCondition::new().add_list_filter("East"))
+            .expect("filter");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
         let rows = records::<BrtRowHdr>(&sheet);
         let hidden = |row: u32| {
             rows.iter()

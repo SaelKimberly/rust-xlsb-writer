@@ -233,7 +233,7 @@ impl FilterCondition {
             return self.should_match_blanks;
         };
         match cell {
-            CellData::String(text) => {
+            CellData::String(text) | CellData::RichString(crate::data::RichString { text, .. }) => {
                 let key = normalize(text);
                 self.list.iter().any(|filter| match filter.criteria {
                     FilterCriteria::EndsWith | FilterCriteria::DoesNotEndWith => {
@@ -287,7 +287,7 @@ impl FilterData {
             return false;
         };
         match cell {
-            CellData::String(text) => {
+            CellData::String(text) | CellData::RichString(crate::data::RichString { text, .. }) => {
                 let key = normalize(text);
                 match self.criteria {
                     FilterCriteria::EqualTo => key == self.normalized,
@@ -342,7 +342,21 @@ fn compare_number(value: f64, target: f64, criteria: FilterCriteria) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use rust_xlsb_core::prelude::BrtFont;
+
+    use crate::data::{RichRun, RichString};
+
     use super::*;
+
+    fn rich_text(text: &str) -> CellData {
+        CellData::RichString(RichString {
+            text: text.to_owned(),
+            runs: vec![RichRun {
+                ich: 0,
+                font: BrtFont::default(),
+            }],
+        })
+    }
 
     #[test]
     fn list_filters_match_strings_numbers_and_blanks() {
@@ -350,6 +364,7 @@ mod tests {
             .add_list_filter(" East ")
             .add_list_filter(3000_i32);
         assert!(condition.matches(Some(&CellData::String("east".to_owned()))));
+        assert!(condition.matches(Some(&rich_text("east"))));
         assert!(condition.matches(Some(&CellData::Integer(3000))));
         assert!(condition.matches(Some(&CellData::Number(3000.0))));
         assert!(condition.matches(Some(&CellData::String("3000".to_owned()))));
@@ -375,6 +390,7 @@ mod tests {
             .add_custom_filter(FilterCriteria::EqualTo, "West")
             .add_custom_boolean_or();
         assert!(either.matches(Some(&CellData::String("west".to_owned()))));
+        assert!(either.matches(Some(&rich_text("west"))));
         assert!(!either.matches(Some(&CellData::String("north".to_owned()))));
     }
 
@@ -393,6 +409,7 @@ mod tests {
     fn custom_string_wildcards_are_matched() {
         let condition = FilterCondition::new().add_custom_filter(FilterCriteria::Contains, "ast");
         assert!(condition.matches(Some(&CellData::String("East".to_owned()))));
+        assert!(condition.matches(Some(&rich_text("East"))));
         assert!(!condition.matches(Some(&CellData::String("West".to_owned()))));
     }
 
@@ -403,5 +420,6 @@ mod tests {
         assert!(!condition.matches(Some(&CellData::Blank)));
         assert!(condition.matches(Some(&CellData::Integer(1))));
         assert!(condition.matches(Some(&CellData::String("x".to_owned()))));
+        assert!(condition.matches(Some(&rich_text("x"))));
     }
 }

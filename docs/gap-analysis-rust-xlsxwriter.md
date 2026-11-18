@@ -20,23 +20,22 @@ document properties with explicit creation timestamps.
 It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
-2. **Cell-level structural features** — no rich strings.
-3. **Worksheet layout and view** — user-defined names support literals and
+2. **Worksheet layout and view** — user-defined names support literals and
    absolute A1 references only; arbitrary formulas are missing.
-4. **Analysis features** — no conditional formatting; basic tables,
+3. **Analysis features** — no conditional formatting; basic tables,
    `AutoFilter` ranges, list/custom filter conditions, data validation for
    non-formula rules, and structural sheet protection are present.
-5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
+4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
-6. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64, and
+5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64, and
    user-defined names are available, but there are no themes, chartsheets, or
    VBA; core/app/custom document properties are present.
-7. **Data ecosystem** — no `Formula`, serde, or Polars adapters; optional
+6. **Data ecosystem** — no `Formula`, serde, or Polars adapters; optional
    `jiff` and `rust_decimal` features and the native `ExcelDateTime` type are
    present.
-8. **Memory modes** — no constant-memory or low-memory worksheet writers.
+7. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 13 `Workbook`, 107
+The current API surface is deliberately narrow: roughly 13 `Workbook`, 109
 `Worksheet`, and 48 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -59,10 +58,10 @@ the breadth gap.
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
-| Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
+| Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, and date/time parse errors |
-| Verification | 226 core + 266 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 233 core + 270 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -112,9 +111,9 @@ Status meanings:
 | `write_formula`, `write_formula_with_format` | Missing | Formula records and result caching |
 | `write_array_formula`, `write_dynamic_array_formula` | Missing | Array/dynamic formula records |
 | `write_dynamic_formula` | Missing | Dynamic formula records |
-| `write_rich_string` | Missing | Rich-string cell records |
+| `write_rich_string` | Supported | `BrtCellRString` plus font-run indexes |
 | `write_url`, `write_url_with_text`, `write_url_with_options` | Supported | `BrtHLink` plus worksheet relationships |
-| `write_rich_string_with_format` | Missing | Formatted rich text |
+| `write_rich_string_with_format` | Supported | Cell-wide format plus run fonts |
 | `write_url_with_format` | Supported | Caller-supplied link format |
 | `set_formula_result`, `set_formula_result_default` | Missing | Stored formula results |
 | `set_nan_value`, `set_infinity_value`, `set_neg_infinity_value` | Supported | Display text for non-finite numbers |
@@ -263,7 +262,7 @@ These are not necessarily missing features, but they matter for ports.
 | Unformatted date/time | `write_datetime` only | `write_date`/`write_time` are additive extensions |
 | `IntoExcelDateTime` | `to_excel_serial_date(&self) -> f64` | `into_cell_data(self) -> Result<CellData>` |
 | `CellData` | internal | public but `#[doc(hidden)]` because it appears in a public trait signature |
-| Rich strings | supported | missing |
+| Rich strings | supported | supported; run fonts only |
 | Formulas | supported | missing |
 | Row/column writes | formatted and unformatted variants | both variants |
 | Worksheet collection | full mutable/immutable access | index, exact-name, and collection access |
@@ -279,7 +278,7 @@ records or package parts that do not exist yet.
 |---|---|
 | Formulas | Formula token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError`-class records, cached results, shared/array formula state |
 | Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
-| Rich strings | Rich-string cell records and run formatting |
+| Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
 | Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, and table AutoFilter ranges; totals, calculated columns, and per-column formats remain |
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
 | Conditional formats | DXF styles and conditional-format record groups |
@@ -447,7 +446,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 226 core + 266 writer unit tests and 7 doctests in default
+- Test evidence: 233 core + 270 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
@@ -472,7 +471,11 @@ parts.
   proven by package decode tests. It also drops all defined-name formulas on
   XLSB import, including print areas. It drops XLSB tables on import, so the
   Table part, `LISTPARTS`, relationships, and content types are proven by
-  record and package decode tests rather than an XLSX round-trip.
+  record and package decode tests rather than an XLSX round-trip. LibreOffice
+  preserves XLSB rich-string runs on XLSX export, including UTF-16 offsets,
+  bold/italic runs, and run colors. Calamine does not expose
+  `BrtCellRString`, so rich text is proven by package decode plus the
+  LibreOffice shared-string round-trip, not calamine.
   The XLSX round-trip keeps both an
   external relationship and an internal `location`. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through

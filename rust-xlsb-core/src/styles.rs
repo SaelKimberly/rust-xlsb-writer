@@ -125,6 +125,18 @@ impl StyleRegistry {
         registry
     }
 
+    /// Registers a font-only entry and returns its `BrtFont` index.
+    ///
+    /// Rich-string runs reference fonts directly and do not need an XF.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ValidationError`] if the font table reaches its
+    /// MS-XLSB record limit.
+    pub fn register_font(&mut self, font: BrtFont) -> Result<u16> {
+        self.add_font(font)
+    }
+
     /// Replaces the default cell style at XF index 0 and the Normal style XF.
     ///
     /// Call this before registering worksheet formats. The style's font, fill,
@@ -430,6 +442,24 @@ mod tests {
         assert_eq!(registry.xfs[0].iFont, 1);
         assert_eq!(registry.add(style).expect("deduplicates"), 0);
         assert_eq!(registry.len(), 1);
+    }
+
+    #[test]
+    fn rich_fonts_deduplicate_without_a_cell_format() {
+        let mut registry = StyleRegistry::new();
+        let bold = BrtFont {
+            bls: Bold::BLSBOLD,
+            ..BrtFont::default()
+        };
+
+        assert_eq!(
+            registry.register_font(BrtFont::default()).expect("default"),
+            0
+        );
+        assert_eq!(registry.register_font(bold.clone()).expect("bold"), 1);
+        assert_eq!(registry.register_font(bold).expect("deduplicates"), 1);
+        assert_eq!(registry.fonts.len(), 2);
+        assert_eq!(registry.xfs.len(), 1);
     }
 
     #[test]

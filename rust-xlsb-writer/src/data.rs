@@ -5,9 +5,26 @@ use std::borrow::Cow;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 #[cfg(feature = "rust_decimal")]
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-use rust_xlsb_core::prelude::BErr;
+use rust_xlsb_core::prelude::{BErr, BrtFont};
 
 use crate::{Error, ExcelDateTime, Format, Result, Worksheet};
+
+/// One font-formatted run in a rich string.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RichRun {
+    /// Zero-based UTF-16 code-unit offset in the flattened text.
+    pub ich: u16,
+    pub font: BrtFont,
+}
+
+/// Cell text plus its font-formatted runs.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RichString {
+    pub text: String,
+    pub runs: Vec<RichRun>,
+}
 
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +40,7 @@ pub enum CellData {
     DateTime(NaiveDateTime),
     ExcelDateTime(ExcelDateTime),
     Duration(TimeDelta),
+    RichString(RichString),
 }
 
 /// Converts a Rust value into a worksheet cell.

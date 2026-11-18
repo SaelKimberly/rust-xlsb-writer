@@ -13,21 +13,22 @@ pub use record::{
     BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginList, BrtBeginListCol, BrtBeginListCols,
     BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView,
     BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
-    BrtColor, BrtCustomFilter, BrtDVal, BrtEndAFilter, BrtEndColBrk, BrtEndCustomFilters,
-    BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndList, BrtEndListCol,
-    BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView,
-    BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink, BrtListPart,
-    BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection,
-    BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient,
-    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, DValStrings, DVals, GrbitAtr, HAlign,
-    NameParsedFormula, ReadingOrder, VAlign, Xti,
+    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt,
+    BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtEndAFilter, BrtEndColBrk,
+    BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
+    BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst,
+    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt,
+    BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane,
+    BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection,
+    BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
+    DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
     ACProductVersion, BErr, Blxf, Bold, BorderType, BrtColSpan, Cell, CodeName, FontFlags,
-    HeaderFooterString, RangeProtectionTitleSDRel, RkNumber, SimpleRichStr, UncheckedRfX,
-    UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    HeaderFooterString, PhRun, PhoneticRuns, RangeProtectionTitleSDRel, RichStr, RkNumber,
+    SimpleRichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString,
+    XlStringExt, XlWideString, Xnum,
 };
 
 #[cfg(test)]
@@ -92,6 +93,7 @@ mod tests {
     #[case::xl_nullable_wide_string(|| checked_test::<XlNullableWideString>(4))]
     #[case::header_footer_string(|| checked_test::<HeaderFooterString>(4))]
     #[case::simple_rich_str(|| checked_test::<SimpleRichStr>(5))]
+    #[case::rich_str(|| checked_test::<RichStr>(5))]
     #[case::brt_color(|| checked_test::<BrtColor>(8))]
     #[case::brt_name(|| checked_test::<BrtName>(25))]
     #[case::brt_extern_sheet(|| checked_test::<BrtExternSheet>(4))]
@@ -106,6 +108,7 @@ mod tests {
     #[case::brt_cell_st(|| checked_test::<BrtCellSt>(12))]
     #[case::brt_cell_real(|| checked_test::<BrtCellReal>(16))]
     #[case::brt_cell_rk(|| checked_test::<BrtCellRk>(12))]
+    #[case::brt_cell_rstring(|| checked_test::<BrtCellRString>(13))]
     #[case::brt_cell_bool(|| checked_test::<BrtCellBool>(9))]
     #[case::brt_cell_error(|| checked_test::<BrtCellError>(9))]
     #[case::brt_cell_blank(|| checked_test::<BrtCellBlank>(8))]

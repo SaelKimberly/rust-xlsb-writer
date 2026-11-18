@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::UncheckedRfX;
 
-use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
+use crate::data::{CellData, IntoExcelData, IntoExcelDateTime, RichRun, RichString};
 use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
@@ -617,6 +617,85 @@ impl Worksheet {
         format: &Format,
     ) -> Result<&mut Self> {
         self.write_with_format(row, col, value.into(), format)
+    }
+
+    /// Writes a string with per-run font formatting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] when the segment list is empty or a segment
+    /// is empty, [`Error::RowColumnLimit`] when the cell is out of range,
+    /// [`Error::StringTooLong`] when the flattened text exceeds 32,767 UTF-16
+    /// code units, or [`Error::ValueNotRepresentable`] for an invalid run font.
+    pub fn write_rich_string(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        rich_string: &[(&Format, &str)],
+    ) -> Result<&mut Self> {
+        self.write_rich_string_inner(row, col, rich_string, None)
+    }
+
+    /// Writes a string with per-run and cell-wide formatting.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_rich_string`], plus errors from
+    /// the cell-wide format.
+    pub fn write_rich_string_with_format(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        rich_string: &[(&Format, &str)],
+        format: &Format,
+    ) -> Result<&mut Self> {
+        self.write_rich_string_inner(row, col, rich_string, Some(format))
+    }
+
+    fn write_rich_string_inner(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        rich_string: &[(&Format, &str)],
+        format: Option<&Format>,
+    ) -> Result<&mut Self> {
+        if rich_string.is_empty() {
+            return Err(Error::Parameter(
+                "rich string must contain at least one segment".to_owned(),
+            ));
+        }
+
+        let mut text = String::new();
+        let mut runs = Vec::with_capacity(rich_string.len());
+        let mut total = 0_usize;
+        for (run_format, segment) in rich_string {
+            if segment.is_empty() {
+                return Err(Error::Parameter(
+                    "rich string segments must not be empty".to_owned(),
+                ));
+            }
+            let segment_len = segment.encode_utf16().count();
+            let offset = total;
+            total = total.checked_add(segment_len).ok_or(Error::StringTooLong)?;
+            if total > MAX_STRING_UTF16 {
+                return Err(Error::StringTooLong);
+            }
+            runs.push(RichRun {
+                ich: u16::try_from(offset)
+                    .expect("rich string length is bounded before conversion"),
+                font: run_format.to_rich_font()?,
+            });
+            text.push_str(segment);
+        }
+
+        let format = format.map(|format| self.intern_format(format));
+        self.store_with_index(
+            row,
+            col,
+            CellData::RichString(RichString { text, runs }),
+            format,
+        )?;
+        Ok(self)
     }
 
     /// Writes a hyperlink.
@@ -3072,6 +3151,7 @@ pub(crate) fn pixels_to_width(pixels: u32) -> f64 {
 fn autofit_cell_width(data: &CellData) -> u32 {
     match data {
         CellData::String(text) => text.lines().map(pixel_width).max().unwrap_or(0),
+        CellData::RichString(rich) => rich.text.lines().map(pixel_width).max().unwrap_or(0),
         CellData::Integer(value) => 7 * integer_digits(*value) + if *value < 0 { 7 } else { 0 },
         CellData::Number(value) => 7 * display_len(*value),
         CellData::Bool(true) => 31,
@@ -3221,6 +3301,80 @@ mod tests {
                 .map(|cell| (&cell.data, cell.format)),
             Some((&CellData::String("hello".to_owned()), Some(0)))
         );
+    }
+
+    #[test]
+    fn writes_rich_strings_with_cell_and_run_formats() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let bold = Format::new().set_bold();
+        let large = Format::new().set_font_size(14.0);
+
+        worksheet
+            .write_rich_string_with_format(
+                0,
+                0,
+                &[(&Format::default(), "A"), (&bold, "B"), (&large, "C")],
+                &Format::new().set_align(crate::FormatAlign::Center),
+            )
+            .expect("rich string");
+
+        let cell = worksheet
+            .cells()
+            .get(&0)
+            .and_then(|row| row.get(&0))
+            .expect("cell");
+        let crate::data::CellData::RichString(rich) = &cell.data else {
+            panic!("rich string cell");
+        };
+        assert_eq!(rich.text, "ABC");
+        assert_eq!(
+            rich.runs.iter().map(|run| run.ich).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(
+            rich.runs[1].font.bls,
+            rust_xlsb_core::prelude::Bold::BLSBOLD
+        );
+        assert_eq!(rich.runs[2].font.dyHeight, 280);
+        assert_eq!(cell.format, Some(0));
+    }
+
+    #[test]
+    fn rich_strings_reject_empty_and_oversized_input() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let format = Format::default();
+
+        assert!(matches!(
+            worksheet.write_rich_string(0, 0, &[]),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.write_rich_string(0, 0, &[(&format, "")]),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.write_rich_string(
+                0,
+                0,
+                &[
+                    (&format, "x".repeat(16_384).as_str()),
+                    (&format, "y".repeat(16_384).as_str())
+                ]
+            ),
+            Err(Error::StringTooLong)
+        ));
+        assert!(matches!(
+            worksheet.write_rich_string(MAX_ROW + 1, 0, &[(&format, "x")]),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.write_rich_string(
+                0,
+                0,
+                &[(&Format::new().set_font_name("x".repeat(32)), "x")]
+            ),
+            Err(Error::ValueNotRepresentable(_))
+        ));
     }
 
     #[test]

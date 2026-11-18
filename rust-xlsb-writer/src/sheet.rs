@@ -1,20 +1,20 @@
 //! Worksheet part serialization.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::{
     BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
     BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet,
     BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
-    BrtCustomFilter, BrtEndAFilter, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos,
+    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtColInfo,
+    BrtColSpan, BrtCustomFilter, BrtEndAFilter, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos,
     BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
     BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView,
-    BrtEndWsViews, BrtFilter, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup,
-    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
-    HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
-    XlWideString, Xnum,
+    BrtEndWsViews, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell,
+    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp,
+    Cell, HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX,
+    XlNullableWideString, XlStringExt, XlWideString, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -30,6 +30,7 @@ const DEFAULT_ROW_HEIGHT: u16 = 300;
 
 struct SaveContext<'a> {
     sst: &'a SSTHolder,
+    rich_fonts: &'a HashMap<BrtFont, u16>,
 }
 
 impl WbContext for SaveContext<'_> {
@@ -38,6 +39,7 @@ impl WbContext for SaveContext<'_> {
     }
 }
 
+#[cfg(test)]
 pub fn write_sheet(
     sheet: &Worksheet,
     style_indexes: &[u32],
@@ -45,7 +47,22 @@ pub fn write_sheet(
     selected: bool,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    let ctx = SaveContext { sst };
+    write_sheet_with_fonts(sheet, style_indexes, sst, &HashMap::new(), selected, out)
+}
+
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "package assembly uses this instead of the test-only wrapper"
+)]
+pub(crate) fn write_sheet_with_fonts(
+    sheet: &Worksheet,
+    style_indexes: &[u32],
+    sst: &SSTHolder,
+    rich_fonts: &HashMap<BrtFont, u16>,
+    selected: bool,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let ctx = SaveContext { sst, rich_fonts };
 
     push(out, &BrtBeginSheet::default())?;
     write_ws_prop(sheet, out)?;
@@ -877,6 +894,39 @@ fn push_cell(
             &CellValue::Number(ctx.store_f64(value.to_excel())),
         ),
         CellData::Duration(value) => push_number(out, cell, &value.to_cell_value(ctx)?),
+        CellData::RichString(rich) => {
+            let runs = rich
+                .runs
+                .iter()
+                .map(|run| {
+                    Ok(StrRun {
+                        ich: run.ich,
+                        ifnt: *ctx.rich_fonts.get(&run.font).ok_or(
+                            Error::ValueNotRepresentable(
+                                "rich string font is missing from the style table",
+                            ),
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            push(
+                out,
+                &BrtCellRString {
+                    cell,
+                    value: RichStr {
+                        flags: RichStr::F_RICH_STR,
+                        str: XlWideString::construct(Some(rich.text.as_str())),
+                        rich: Some(StrRuns {
+                            dwSizeStrRun: u32::try_from(runs.len()).map_err(|_| {
+                                Error::ValueNotRepresentable("too many rich string runs")
+                            })?,
+                            rgsStrRun: runs,
+                        }),
+                        phonetic: None,
+                    },
+                },
+            )
+        }
     }
 }
 
