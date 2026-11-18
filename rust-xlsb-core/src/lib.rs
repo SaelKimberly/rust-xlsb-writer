@@ -23,6 +23,9 @@ mod err;
 pub mod prelude;
 mod sst_sqlite;
 
+#[cfg(test)]
+mod e2e;
+
 pub use biff::{BiffWrite, write_as_biff, write_as_empty_biff};
 pub use biff_head::BiffHead;
 pub use biff_id::{KnownID, RawBiffLiteral};

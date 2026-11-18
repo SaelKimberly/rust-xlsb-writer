@@ -6,12 +6,22 @@ macro_rules! declare_simple_collection {
                 pub count: u32,
             }
             impl crate::prelude::Unchecked for name {}
+            impl crate::CheckedBiff for name {
+                fn id(&self) -> crate::KnownID {
+                    crate::KnownID::name
+                }
+            }
         });
 
         concat_idents::concat_idents!(name = BrtEnd, $name, {
             #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {}
             impl crate::prelude::Unchecked for name {}
+            impl crate::CheckedBiff for name {
+                fn id(&self) -> crate::KnownID {
+                    crate::KnownID::name
+                }
+            }
         });
     };
 }
@@ -22,4 +32,14 @@ macro_rules! declare_simple_collections {
         $( declare_simple_collection!($name_other); )*
     };
 }
-declare_simple_collections!(ColInfos);
+declare_simple_collections!(
+    Borders,
+    CellStyleXFs,
+    CellXFs,
+    ColInfos,
+    DXFs,
+    Fills,
+    Fmts,
+    Fonts,
+    Styles
+);

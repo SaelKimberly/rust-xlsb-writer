@@ -28,7 +28,7 @@ impl FromStr for XlString {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let o: Box<[u16]> = s.encode_utf16().collect::<Box<[_]>>();
         Ok(Self {
-            len: s.len() as u32,
+            len: o.len() as u32,
             str: Box::from(o.as_bytes()),
         })
     }
@@ -64,7 +64,7 @@ impl XlString {
         let s = &*s;
         let o = s.encode_utf16().collect::<Box<[_]>>();
         Self {
-            len: s.len() as u32,
+            len: o.len() as u32,
             str: Box::from(o.as_bytes()),
         }
     }
@@ -215,6 +215,13 @@ mod tests {
 
         let str = parsed.try_to_string().expect("Should be ok");
         assert_eq!(&str, "abc");
+
+        let non_ascii = XlWideString::construct(Some("привет"));
+        assert_eq!(non_ascii.len(), 6);
+        let data = non_ascii.to_bytes().expect("Should be ok");
+        assert_eq!(data.len(), 4 + 6 * 2);
+        let (_, parsed) = XlWideString::from_bytes((&data, 0)).expect("Should be ok");
+        assert_eq!(parsed.try_to_string().expect("Should be ok"), "привет");
 
         let r = XlWideString::from_bytes((&[0xff, 0xff, 0xff, 0xff], 0));
         assert!(r.is_err());

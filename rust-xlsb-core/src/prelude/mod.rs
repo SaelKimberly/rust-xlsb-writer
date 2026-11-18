@@ -7,19 +7,17 @@ pub mod structure;
 
 use super::{Checked, Unchecked};
 
-pub use collection::BrtBeginColInfos;
-pub use record::{BrtColor, BrtWsProp, BrtXF};
-pub use structure::{
-    ACProductVersion, Blxf, Bold, BorderType, CodeName, FontFlags, SimpleRichStr,
-    XlNullableWideString, XlWideString,
+pub use collection::*;
+pub use record::{
+    BrtBeginSst, BrtBeginTableStyles, BrtBorder, BrtBundleSh, BrtCellBlank, BrtCellBool,
+    BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColor, BrtEndSst,
+    BrtEndTableStyles, BrtFill, BrtFmt, BrtFont, BrtRowHdr, BrtSSTItem, BrtStyle, BrtWsDim,
+    BrtWsProp, BrtXF, GrbitAtr, HAlign, ReadingOrder, VAlign,
 };
-
-pub use scope::{
-    BrtBeginSheet, BrtBeginSheetData, BrtBeginSingleCells, BrtBeginSlicerCacheIDs,
-    BrtBeginSlicerCacheSiRanges, BrtBeginSlicerCachesPivotCacheIDs, BrtBeginSlicerStyleElements,
-    BrtBeginSlicers, BrtBeginSlicersEx, BrtEndSheet, BrtEndSheetData, BrtEndSingleCells,
-    BrtEndSlicerCacheIDs, BrtEndSlicerCacheSiRanges, BrtEndSlicerCachesPivotCacheIDs,
-    BrtEndSlicerStyleElements, BrtEndSlicers, BrtEndSlicersEx,
+pub use scope::*;
+pub use structure::{
+    ACProductVersion, BErr, Blxf, Bold, BorderType, BrtColSpan, Cell, CodeName, FontFlags,
+    RkNumber, SimpleRichStr, UncheckedRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
 };
 
 #[cfg(test)]
@@ -29,19 +27,10 @@ mod tests {
     use rstest::rstest;
     use std::hash::{Hash, Hasher};
 
-    use super::collection::BrtBeginColInfos;
-    use super::record::{BrtColor, BrtWsProp, BrtXF};
-    use super::scope::{
-        BrtBeginSheet, BrtBeginSheetData, BrtBeginSingleCells, BrtBeginSlicerCacheIDs,
-        BrtBeginSlicerCacheSiRanges, BrtBeginSlicerCachesPivotCacheIDs,
-        BrtBeginSlicerStyleElements, BrtBeginSlicers, BrtBeginSlicersEx, BrtEndSheet,
-        BrtEndSheetData, BrtEndSingleCells, BrtEndSlicerCacheIDs, BrtEndSlicerCacheSiRanges,
-        BrtEndSlicerCachesPivotCacheIDs, BrtEndSlicerStyleElements, BrtEndSlicers, BrtEndSlicersEx,
-    };
-    use super::structure::{
-        ACProductVersion, Blxf, Bold, BorderType, CodeName, FontFlags, SimpleRichStr,
-        XlNullableWideString, XlWideString, Xnum,
-    };
+    use super::collection::*;
+    use super::record::*;
+    use super::scope::*;
+    use super::structure::*;
 
     fn checked_test<T>(size: usize)
     where
@@ -94,7 +83,50 @@ mod tests {
     #[case::brt_color(|| checked_test::<BrtColor>(8))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
     #[case::brt_ws_prop(|| checked_test::<BrtWsProp>(23))]
+    #[case::brt_ws_dim(|| checked_test::<BrtWsDim>(16))]
+    #[case::brt_row_hdr(|| checked_test::<BrtRowHdr>(17))]
+    #[case::brt_cell_st(|| checked_test::<BrtCellSt>(12))]
+    #[case::brt_cell_real(|| checked_test::<BrtCellReal>(16))]
+    #[case::brt_cell_rk(|| checked_test::<BrtCellRk>(12))]
+    #[case::brt_cell_bool(|| checked_test::<BrtCellBool>(9))]
+    #[case::brt_cell_error(|| checked_test::<BrtCellError>(9))]
+    #[case::brt_cell_blank(|| checked_test::<BrtCellBlank>(8))]
+    #[case::brt_fmt(|| checked_test::<BrtFmt>(6))]
+    #[case::brt_begin_fmts(|| checked_test::<BrtBeginFmts>(4))]
+    #[case::brt_end_fmts(|| checked_test::<BrtEndFmts>(0))]
+    #[case::brt_cell_isst(|| checked_test::<BrtCellIsst>(12))]
+    #[case::brt_sst_item(|| checked_test::<BrtSSTItem>(5))]
+    #[case::brt_begin_sst(|| checked_test::<BrtBeginSst>(8))]
+    #[case::brt_end_sst(|| checked_test::<BrtEndSst>(0))]
+    #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]
+    #[case::brt_font(|| checked_test::<BrtFont>(35))]
+    #[case::brt_fill(|| checked_test::<BrtFill>(68))]
+    #[case::brt_border(|| checked_test::<BrtBorder>(51))]
+    #[case::brt_style(|| checked_test::<BrtStyle>(24))]
+    #[case::brt_begin_table_styles(|| checked_test::<BrtBeginTableStyles>(12))]
+    #[case::brt_begin_book(|| checked_test::<BrtBeginBook>(0))]
+    #[case::brt_end_book(|| checked_test::<BrtEndBook>(0))]
+    #[case::brt_begin_book_views(|| checked_test::<BrtBeginBookViews>(0))]
+    #[case::brt_end_book_views(|| checked_test::<BrtEndBookViews>(0))]
+    #[case::brt_begin_bundle_shs(|| checked_test::<BrtBeginBundleShs>(0))]
+    #[case::brt_end_bundle_shs(|| checked_test::<BrtEndBundleShs>(0))]
+    #[case::brt_begin_style_sheet(|| checked_test::<BrtBeginStyleSheet>(0))]
+    #[case::brt_end_style_sheet(|| checked_test::<BrtEndStyleSheet>(0))]
+    #[case::brt_begin_borders(|| checked_test::<BrtBeginBorders>(4))]
+    #[case::brt_end_borders(|| checked_test::<BrtEndBorders>(0))]
+    #[case::brt_begin_cell_style_xfs(|| checked_test::<BrtBeginCellStyleXFs>(4))]
+    #[case::brt_end_cell_style_xfs(|| checked_test::<BrtEndCellStyleXFs>(0))]
+    #[case::brt_begin_cell_xfs(|| checked_test::<BrtBeginCellXFs>(4))]
+    #[case::brt_end_cell_xfs(|| checked_test::<BrtEndCellXFs>(0))]
     #[case::brt_begin_col_infos(|| checked_test::<BrtBeginColInfos>(4))]
+    #[case::brt_begin_dxfs(|| checked_test::<BrtBeginDXFs>(4))]
+    #[case::brt_end_dxfs(|| checked_test::<BrtEndDXFs>(0))]
+    #[case::brt_begin_fills(|| checked_test::<BrtBeginFills>(4))]
+    #[case::brt_end_fills(|| checked_test::<BrtEndFills>(0))]
+    #[case::brt_begin_fonts(|| checked_test::<BrtBeginFonts>(4))]
+    #[case::brt_end_fonts(|| checked_test::<BrtEndFonts>(0))]
+    #[case::brt_begin_styles(|| checked_test::<BrtBeginStyles>(4))]
+    #[case::brt_end_styles(|| checked_test::<BrtEndStyles>(0))]
     #[case::brt_begin_sheet(|| checked_test::<BrtBeginSheet>(0))]
     #[case::brt_begin_sheet_data(|| checked_test::<BrtBeginSheetData>(0))]
     #[case::brt_begin_single_cells(|| checked_test::<BrtBeginSingleCells>(0))]

@@ -9,10 +9,12 @@ The long-term goal is cell-by-cell writing plus batched
 Apache Arrow ingestion, with styles, low RAM use, and exact IEEE 754 float
 fidelity.
 
-Current reality: only the binary record layer exists. There is no workbook type,
-no worksheet model, no cell API, no ZIP/OLE package assembly, and no file
-writer. `KnownID` covers 860 of the 878 records in revision 22.0; every id it
-does carry matches the spec. Treat the README as a roadmap, not as a
+Current reality: the binary record layer, with package assembly living only in
+the `e2e` test module (`src/e2e/`). There is no shipped workbook or cell API:
+the harness builds a minimal seven-part XLSB package and the tests read it back
+with `calamine`, so the layout, BIFF framing, and every implemented cell record
+are proven together. `KnownID` covers 860 of the 878 records in revision 22.0;
+every id it does carry matches the spec. Treat the README as a roadmap, not as a
 description of shipped API.
 
 [MS-XLSB]: https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xlsb/acc8aa92-1f02-4167-99f5-84f9f676b95a
@@ -95,7 +97,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 36 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 90 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -145,11 +147,10 @@ crates opt in with `[lints] workspace = true`.
   `rust-xlsb-writer` only. A second `#[global_allocator]` in core would make the
   workspace fail to link.
 
-`XlString` (`structure/xl_wide_string.rs`) has a known bug to be aware of: the
-`len` field is documented as UTF-16 code units and deku reads `len * 2` bytes,
-but `FromStr` and `from_string` assign `str.len()`, which is the UTF-8 byte
-length. Non-ASCII strings therefore encode a wrong length. `0xFFFF_FFFF` means
-null, and `SimpleRichStr` rejects null while `CodeName` limits length to 31.
+`XlString` (`structure/xl_wide_string.rs`) stores `len` as UTF-16 code units
+and deku reads `len * 2` bytes; `FromStr` and `from_string` count
+`encode_utf16()`, not UTF-8 bytes. `0xFFFF_FFFF` means null, and
+`SimpleRichStr` rejects null while `CodeName` limits length to 31.
 
 ## Important Files
 
@@ -162,6 +163,8 @@ null, and `SimpleRichStr` rejects null while `CodeName` limits length to 31.
 | `rust-xlsb-core/src/check.rs` | `Checked`, `Unchecked`, `CheckedBiff` traits |
 | `rust-xlsb-core/src/err.rs` | `Error`, `Result` |
 | `rust-xlsb-core/src/sst_sqlite.rs` | `SSTHolder` shared-string table and SST emission |
+| `rust-xlsb-core/src/e2e/mod.rs` | End-to-end cell tests read back through `calamine` |
+| `rust-xlsb-core/src/e2e/harness.rs` | Builds the minimal package, ZIP included, for those tests |
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
 | `rust-xlsb-writer/src/lib.rs` | Stub; allocator plus ~500 lines of commented prototype |
 | `rust-toolchain.toml` | Stable `1.100.0` pin at the root; `rust-xlsb-core/rust-toolchain.toml` duplicates it |
@@ -186,15 +189,17 @@ null, and `SimpleRichStr` rejects null while `CodeName` limits length to 31.
 - Dependency set, latest major/minor for this toolchain: `deku 0.20`,
   `rusqlite 0.43`, `strum 0.28`, `criterion 0.8`, `zerocopy 0.8.63`,
   `thiserror 2.0.21`, `num_enum 0.7.6`, `xxhash-rust 0.8.21`,
-  `concat-idents 1.1.5`, `mimalloc 0.1.52`, `rstest 0.28` (dev).
+  `concat-idents 1.1.5`, `mimalloc 0.1.52`, `rstest 0.28` (dev),
+  `calamine 0.38` (dev, reads generated packages back in `e2e` tests).
 - No release tooling, changelog, or publish workflow. Version is `0.1.0` and the
   README defers `1.0.0-alpha` to community adoption.
 
 ## Testing & QA
 
-- Tests are inline `#[cfg(test)] mod tests` modules inside `rust-xlsb-core`;
-  there is no `tests/`, `benches/`, `examples/`, or fixture directory.
-- 36 unit tests and 6 doctests total. Most unit tests are rstest cases in the
+- Every test lives inside the crate: `#[cfg(test)] mod tests` next to the code
+  it covers, plus the `#[cfg(test)] mod e2e` package suite (`src/e2e/`). There
+  is no `tests/`, `benches/`, `examples/`, or fixture directory.
+- 90 unit tests and 6 doctests total. Most unit tests are rstest cases in the
   `test_biff_export` table in `prelude/mod.rs`, each calling the generic
   `checked_test::<T>`: `Default` → `to_bytes` → exact byte-size assert →
   `from_bytes` → `check()` on both → `PartialEq`, `Hash`, and `Debug` equality.
@@ -205,10 +210,12 @@ null, and `SimpleRichStr` rejects null while `CodeName` limits length to 31.
   parse), `sst_sqlite::tests::test_sst_sqlite` (push, batch, SST counters, item
   decode), `prelude::structure::xl_wide_string::tests::test_xl_wide_string`,
   and `prelude::record::brt_color::test_brt_color`.
-- Round-trip tests are the only oracle. Nothing is validated against Excel,
-  LibreOffice, or an independent reader, and header boundary cases
-  (`0x80`, `0x4000`, `0x200000` size thresholds, `Incomplete`, `ConsumeFailed`)
-  are untested.
+- `e2e` tests are the package-level oracle: each writes cells of one type,
+  parses the resulting bytes with `calamine` 0.38 (dev-dependency), and asserts
+  the value and position. `calamine` is an independent reader, so these tests
+  run in CI without LibreOffice or Excel. Header boundary cases (`0x80`,
+  `0x4000`, `0x200000` size thresholds, `Incomplete`, `ConsumeFailed`) are
+  still untested.
 - `criterion` is a dev-dependency in both crates but no benchmark exists.
 - No CI runs any of this. Run `cargo test --workspace` before claiming a change
   works, and update the affected size literal rather than loosening the

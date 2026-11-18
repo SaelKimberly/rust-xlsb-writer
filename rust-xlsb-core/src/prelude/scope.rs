@@ -4,12 +4,22 @@ macro_rules! declare_scope {
             #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {}
             impl crate::prelude::Unchecked for name {}
+            impl crate::CheckedBiff for name {
+                fn id(&self) -> crate::KnownID {
+                    crate::KnownID::name
+                }
+            }
         });
 
         concat_idents::concat_idents!(name = BrtEnd, $name, {
             #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {}
             impl crate::prelude::Unchecked for name {}
+            impl crate::CheckedBiff for name {
+                fn id(&self) -> crate::KnownID {
+                    crate::KnownID::name
+                }
+            }
         });
     };
 }
@@ -22,6 +32,9 @@ macro_rules! declare_scopes {
 }
 
 declare_scopes!(
+    Book,
+    BookViews,
+    BundleShs,
     Sheet,
     SheetData,
     SingleCells,
@@ -30,5 +43,6 @@ declare_scopes!(
     SlicerCachesPivotCacheIDs,
     Slicers,
     SlicersEx,
-    SlicerStyleElements
+    SlicerStyleElements,
+    StyleSheet
 );
