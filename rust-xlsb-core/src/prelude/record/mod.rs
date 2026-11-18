@@ -1,3 +1,4 @@
+mod brt_a_filter;
 mod brt_begin_header_footer;
 mod brt_begin_sst;
 mod brt_begin_table_styles;
@@ -39,6 +40,7 @@ mod brt_ws_fmt_info;
 mod brt_ws_prop;
 mod brt_xf;
 
+pub use brt_a_filter::{BrtBeginAFilter, BrtEndAFilter};
 pub use brt_begin_header_footer::{BrtBeginHeaderFooter, BrtEndHeaderFooter};
 pub use brt_begin_sst::{BrtBeginSst, BrtEndSst};
 pub use brt_begin_table_styles::{BrtBeginTableStyles, BrtEndTableStyles};

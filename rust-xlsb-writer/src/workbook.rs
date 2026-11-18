@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::worksheet::{Worksheet, validate_sheet_name};
-use crate::{Error, Result};
+use crate::{DocProperties, Error, Result};
 
 /// Formula calculation mode for a workbook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,7 @@ pub struct WorkbookSettings {
 pub struct Workbook {
     worksheets: Vec<Worksheet>,
     settings: WorkbookSettings,
+    doc_properties: Option<DocProperties>,
 }
 
 impl Default for Workbook {
@@ -48,6 +49,7 @@ impl Workbook {
                 read_only_recommended: false,
                 tab_ratio: None,
             },
+            doc_properties: None,
         }
     }
 
@@ -72,6 +74,12 @@ impl Workbook {
             return self;
         }
         self.settings.tab_ratio = Some(ratio);
+        self
+    }
+
+    /// Sets the workbook document properties.
+    pub fn set_properties(&mut self, properties: &DocProperties) -> &mut Self {
+        self.doc_properties = Some(properties.clone());
         self
     }
 
@@ -153,7 +161,11 @@ impl Workbook {
     /// Returns a validation, style, shared-string, or record error.
     pub fn save_to_buffer(&mut self) -> Result<Vec<u8>> {
         self.prepare()?;
-        crate::package::build_package(&self.worksheets, self.settings)
+        crate::package::build_package(
+            &self.worksheets,
+            self.settings,
+            self.doc_properties.as_ref(),
+        )
     }
 
     /// Saves the workbook to a writer.

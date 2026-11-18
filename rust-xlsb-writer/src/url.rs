@@ -1,6 +1,7 @@
 //! Hyperlink value and URL normalization.
 
 use std::borrow::Cow;
+use std::fmt::Write as _;
 
 use crate::{Error, Result};
 
@@ -212,6 +213,47 @@ fn is_escaped(url: &str) -> bool {
     })
 }
 
+/// Escapes text for XML character data, including Excel's `_xHHHH_` form for
+/// control characters and Unicode non-characters.
+pub fn escape_xml_data(input: &str) -> Cow<'_, str> {
+    if !input.chars().any(needs_xml_data_escape) {
+        return Cow::Borrowed(input);
+    }
+
+    let mut escaped = String::with_capacity(input.len() + 8);
+    for ch in input.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '\u{0000}'..='\u{0008}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'..='\u{001F}'
+            | '\u{FFFE}'
+            | '\u{FFFF}' => {
+                write!(escaped, "_x{:04X}_", u32::from(ch)).expect("writing to String cannot fail");
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    Cow::Owned(escaped)
+}
+
+const fn needs_xml_data_escape(ch: char) -> bool {
+    matches!(
+        ch,
+        '&' | '<'
+            | '>'
+            | '\u{0000}'..='\u{0008}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'..='\u{001F}'
+            | '\u{FFFE}'
+            | '\u{FFFF}'
+    )
+}
+
 pub fn escape_xml(input: &str) -> Cow<'_, str> {
     if !input.chars().any(|ch| matches!(ch, '&' | '"' | '<' | '>')) {
         return Cow::Borrowed(input);
@@ -238,6 +280,16 @@ mod tests {
         let mut url = Url::new(link);
         url.initialize().expect("valid url");
         url
+    }
+
+    #[test]
+    fn escapes_xml_data_control_characters_and_non_characters() {
+        assert_eq!(escape_xml_data("plain text"), "plain text");
+        assert_eq!(
+            escape_xml_data("a\u{1}b\r\nc\u{FFFE}d\u{FFFF}e"),
+            "a_x0001_b_x000D_\nc_xFFFE_d_xFFFF_e"
+        );
+        assert_eq!(escape_xml_data("<&>"), "&lt;&amp;&gt;");
     }
 
     #[test]

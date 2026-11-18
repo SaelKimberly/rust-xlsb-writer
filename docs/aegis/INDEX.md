@@ -23,6 +23,7 @@
 - [Worksheet collection access](plans/2026-11-18-worksheet-collection-access.md)
 - [Workbook calculation mode, read-only recommendation, and tab ratio](plans/2026-11-18-workbook-behavior-settings.md)
 - [Unprotected ranges and ignored worksheet errors](plans/2026-11-18-unprotected-ranges-and-ignored-errors.md)
+- [Autofilter ranges and workbook document properties](plans/2026-11-18-autofilter-and-document-properties.md)
 
 ## Analysis
 

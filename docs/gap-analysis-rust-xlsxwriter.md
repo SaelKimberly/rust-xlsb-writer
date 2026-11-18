@@ -14,7 +14,8 @@
 `rust-xlsb-writer` now has a usable, source-compatible subset of the
 `rust_xlsxwriter` API: owned workbooks and worksheets, cell values, basic
 `Format` styling, row/column layout, shared strings, multi-sheet XLSB packaging,
-and the three save entry points.
+and the three save entry points, plus an `AutoFilter` range and core/app
+document properties.
 
 It is not a feature-equivalent replacement. The largest gaps are:
 
@@ -22,9 +23,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
 2. **Cell-level structural features** — no rich strings.
 3. **Worksheet layout and view** — no full autofit or arbitrary defined
    names.
-4. **Analysis features** — no autofilters, tables, conditional formatting, or
-   data validation; sheet protection covers the basic options but not
-   unprotected ranges.
+4. **Analysis features** — no filter conditions, tables, conditional
+   formatting, or data validation; an `AutoFilter` range and structural sheet
+   protection are present.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 6. **Workbook metadata and packaging** — no user-defined names, document
@@ -48,6 +49,8 @@ the breadth gap.
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, column autofit-width hint, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
+| Analysis | worksheet `AutoFilter` range; filter conditions are missing |
+| Metadata | core and app document properties; custom properties are missing |
 | Hyperlinks | `write_url` and text/format/tooltip variants, internal and external targets, default hyperlink style, worksheet relationships |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks, print areas, repeat rows/columns |
 | Protection | sheet protection with optional legacy password verifier, selectable permissions, and unprotected ranges |
@@ -57,7 +60,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 189 core + 155 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 192 core + 165 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -82,7 +85,7 @@ Status meanings:
 | `set_tempdir` | Missing | Temp-file policy for streaming |
 | `add_chartsheet` | Missing | Chartsheet packaging |
 | `define_name` | Missing | Defined-name records |
-| `set_properties` | Missing | Document properties part |
+| `set_properties` | Partial | Core/app strings; no custom properties or creation time |
 | `set_default_format` | Missing | Workbook default format |
 | `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
 | `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
@@ -162,7 +165,8 @@ Status meanings:
 
 | Capability | Current | Gap |
 |---|---|---|
-| `autofilter`, `filter_column`, `filter_automatic_off` | Missing | Autofilter records |
+| `autofilter` | Partial | Range record only; no filter conditions |
+| `filter_column`, `filter_automatic_off` | Missing | Filter records and row hiding |
 | `add_table` | Missing | Table records/styles and column metadata |
 | `add_conditional_format` | Missing | DXF and conditional-format records |
 | `add_data_validation` | Missing | Validation records |
@@ -239,7 +243,7 @@ Status meanings:
 | Constant-memory writer | Missing | Streaming worksheet |
 | Low-memory writer | Missing | Reduced cell retention |
 | Temp-dir control | Missing | Streaming scratch space |
-| Document properties/themes/macros/chartsheets | Missing | Workbook parts |
+| Document properties/themes/macros/chartsheets | Partial | Core/app document properties; themes, macros, and chartsheets missing |
 | Deterministic output timestamps | Supported | Fixed DOS timestamp |
 
 ## 4. Behavioral And Contract Differences
@@ -280,7 +284,7 @@ records or package parts that do not exist yet.
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
 | Defined names | Workbook defined-name records; print-area and print-title names are shipped |
-| Document properties | Core/app/custom property parts |
+| Document properties | Core/app strings shipped; custom and creation-time parts missing |
 | Themes | Theme part and theme color indexes |
 | VBA | Macro project parts and content types |
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
@@ -327,7 +331,8 @@ records; LibreOffice renders merged ranges and links; no stubs.
 
 | Item | Why | Size |
 |---|---|---|
-| `autofilter`, `filter_column` | Standard tabular output | M |
+| `autofilter` | Range record only; filter conditions missing | M |
+| `filter_column` | Standard tabular output | M |
 | `add_table` | Structured tables and table styles | L |
 | `add_conditional_format` | Reporting and highlighting | L |
 | `add_data_validation` | Input constraints | M |
@@ -372,7 +377,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 | Item | Why | Size |
 |---|---|---|
 | Defined names | Formula readability | M |
-| Document properties | Metadata | S–M |
+| Document properties | Partial: core/app strings shipped; custom and creation time missing | S–M |
 | Themes and theme colors | Visual parity | M–L |
 | Chartsheets | Dashboard structure | L |
 | VBA project/signature | Macro-enabled workbooks | XL |
@@ -438,7 +443,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 189 core + 155 writer unit tests and 6 doctests; calamine
+- Test evidence: 192 core + 165 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
@@ -449,7 +454,12 @@ parts.
   and drops black-and-white and draft state. It also drops the custom tab ratio,
   manual calculation mode, read-only recommendation, protected ranges, and
   ignored worksheet errors on XLSB import, so those records are proven by decode
-  tests, not an XLSX round-trip. The XLSX round-trip keeps both an
+  tests, not an XLSX round-trip. LibreOffice preserves the core/app document
+  properties but drops the worksheet `AutoFilter` on XLSB import, so the
+  autofilter record is proven by package decode and an independent SheetJS
+  read; SheetJS reports `!autofilter.ref` and the filter-database name. It also
+  drops all defined-name formulas on XLSB import, including print areas.
+  The XLSX round-trip keeps both an
   external relationship and an internal `location`. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through
   `Report 3 of 3` in the header. Grouped rows preserve outline levels and

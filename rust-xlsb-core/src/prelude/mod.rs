@@ -9,12 +9,12 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
-    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt,
-    BrtColInfo, BrtColor, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst,
-    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt, BrtFont,
-    BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtBeginAFilter, BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst,
+    BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp,
+    BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk,
+    BrtCellSt, BrtColInfo, BrtColor, BrtEndAFilter, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk,
+    BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt,
+    BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
     BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
     BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder,
     VAlign, Xti,
@@ -123,6 +123,8 @@ mod tests {
     #[case::brt_calc_prop(|| checked_test::<BrtCalcProp>(26))]
     #[case::brt_file_sharing(|| checked_test::<BrtFileSharing>(8))]
     #[case::brt_sheet_protection(|| checked_test::<BrtSheetProtection>(66))]
+    #[case::brt_begin_a_filter(|| checked_test::<BrtBeginAFilter>(16))]
+    #[case::brt_end_a_filter(|| checked_test::<BrtEndAFilter>(0))]
     #[case::brt_range_protection(|| checked_test::<BrtRangeProtection>(32))]
     #[case::brt_cell_ignore_ec(|| checked_test::<BrtCellIgnoreEC>(8))]
     #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]

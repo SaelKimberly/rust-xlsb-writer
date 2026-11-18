@@ -292,6 +292,7 @@ pub struct Worksheet {
     formats: Vec<Format>,
     format_ids: HashMap<Format, u32>,
     merged_ranges: Vec<MergeRange>,
+    autofilter: Option<UncheckedRfX>,
     view: SheetView,
     visibility: Visibility,
     active: bool,
@@ -346,6 +347,7 @@ impl Worksheet {
             formats: Vec::new(),
             format_ids: HashMap::new(),
             merged_ranges: Vec::new(),
+            autofilter: None,
             view: SheetView::default(),
             visibility: Visibility::Visible,
             active: false,
@@ -2212,6 +2214,38 @@ impl Worksheet {
         self
     }
 
+    /// Sets the worksheet `AutoFilter` range.
+    ///
+    /// Excel permits one `AutoFilter` per worksheet; calling this again replaces
+    /// the previous range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a corner is out of range, or
+    /// [`Error::RowColumnOrder`] when the first corner is after the last.
+    pub fn autofilter(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+    ) -> Result<&mut Self> {
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+        self.autofilter = Some(UncheckedRfX {
+            rwFirst: first_row,
+            rwLast: last_row,
+            colFirst: u32::from(first_col),
+            colLast: u32::from(last_col),
+        });
+        Ok(self)
+    }
+
     /// Merges a rectangular range and writes a string into its top-left cell.
     ///
     /// The rest of the range becomes formatted blanks. Overlapping ranges and
@@ -2331,6 +2365,10 @@ impl Worksheet {
 
     pub(crate) fn merged_ranges(&self) -> &[MergeRange] {
         &self.merged_ranges
+    }
+
+    pub(crate) const fn autofilter_range(&self) -> Option<UncheckedRfX> {
+        self.autofilter
     }
 
     pub(crate) const fn print_area(&self) -> Option<(RowNum, ColNum, RowNum, ColNum)> {
@@ -3083,6 +3121,58 @@ mod tests {
 
         worksheet.set_row_unhidden(5).expect("unhide absent row");
         assert!(worksheet.row_options().get(&5).is_none());
+    }
+
+    #[test]
+    fn autofilter_stores_the_last_valid_range() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        assert_eq!(worksheet.autofilter_range(), None);
+
+        worksheet.autofilter(1, 2, 5, 4).expect("autofilter");
+        assert_eq!(
+            worksheet.autofilter_range(),
+            Some(UncheckedRfX {
+                rwFirst: 1,
+                rwLast: 5,
+                colFirst: 2,
+                colLast: 4,
+            })
+        );
+
+        worksheet.autofilter(0, 0, 2, 1).expect("replace");
+        assert_eq!(
+            worksheet.autofilter_range(),
+            Some(UncheckedRfX {
+                rwFirst: 0,
+                rwLast: 2,
+                colFirst: 0,
+                colLast: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn autofilter_rejects_invalid_ranges_without_replacing_state() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.autofilter(1, 1, 2, 2).expect("initial range");
+
+        assert!(matches!(
+            worksheet.autofilter(2, 0, 1, 0),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.autofilter(0, 0, MAX_ROW + 1, 0),
+            Err(Error::RowColumnLimit)
+        ));
+        assert_eq!(
+            worksheet.autofilter_range(),
+            Some(UncheckedRfX {
+                rwFirst: 1,
+                rwLast: 2,
+                colFirst: 1,
+                colLast: 2,
+            })
+        );
     }
 
     #[test]

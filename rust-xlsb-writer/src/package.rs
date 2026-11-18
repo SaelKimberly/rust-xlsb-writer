@@ -10,12 +10,16 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
-use crate::url::escape_xml;
+use crate::url::{escape_xml, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
-use crate::{Error, Result};
+use crate::{DocProperties, Error, Result};
 
-pub fn build_package(sheets: &[Worksheet], settings: WorkbookSettings) -> Result<Vec<u8>> {
+pub fn build_package(
+    sheets: &[Worksheet],
+    settings: WorkbookSettings,
+    properties: Option<&DocProperties>,
+) -> Result<Vec<u8>> {
     let sst = SSTHolder::create_in_memory()?;
     let mut registry = StyleRegistry::new();
     let mut style_indexes = Vec::with_capacity(sheets.len());
@@ -51,9 +55,12 @@ pub fn build_package(sheets: &[Worksheet], settings: WorkbookSettings) -> Result
     let mut parts: Vec<(String, Vec<u8>)> = vec![
         (
             "[Content_Types].xml".to_owned(),
-            content_types(sheets.len(), has_strings).into_bytes(),
+            content_types(sheets.len(), has_strings, properties.is_some()).into_bytes(),
         ),
-        ("_rels/.rels".to_owned(), root_rels().into_bytes()),
+        (
+            "_rels/.rels".to_owned(),
+            root_rels(properties.is_some()).into_bytes(),
+        ),
         (
             "xl/_rels/workbook.bin.rels".to_owned(),
             workbook_rels(sheets.len(), has_strings).into_bytes(),
@@ -64,6 +71,16 @@ pub fn build_package(sheets: &[Worksheet], settings: WorkbookSettings) -> Result
         ),
         ("xl/styles.bin".to_owned(), styles),
     ];
+    if let Some(properties) = properties {
+        parts.push((
+            "docProps/core.xml".to_owned(),
+            core_xml(properties).into_bytes(),
+        ));
+        parts.push((
+            "docProps/app.xml".to_owned(),
+            app_xml(sheets, properties).into_bytes(),
+        ));
+    }
     parts.extend(sheet_parts);
 
     if has_strings {
@@ -204,9 +221,11 @@ fn write_calculation_properties(mode: CalculationMode, out: &mut Vec<u8>) -> Res
 }
 
 fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
-    let has_names = sheets
-        .iter()
-        .any(|sheet| sheet.print_area().is_some() || has_repeat_titles(sheet));
+    let has_names = sheets.iter().any(|sheet| {
+        sheet.print_area().is_some()
+            || has_repeat_titles(sheet)
+            || sheet.autofilter_range().is_some()
+    });
     if !has_names {
         return Ok(());
     }
@@ -214,13 +233,16 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
     let mut xti_indexes = vec![None; sheets.len()];
     let mut xtis = Vec::new();
     for (index, sheet) in sheets.iter().enumerate() {
-        if sheet.print_area().is_none() && !has_repeat_titles(sheet) {
+        if sheet.print_area().is_none()
+            && !has_repeat_titles(sheet)
+            && sheet.autofilter_range().is_none()
+        {
             continue;
         }
         let sheet_index = i32::try_from(index)
             .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?;
         let xti_index = u16::try_from(xtis.len())
-            .map_err(|_| Error::ValueNotRepresentable("too many print ranges"))?;
+            .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?;
         xti_indexes[index] = Some(xti_index);
         xtis.push(Xti {
             externalLink: 0,
@@ -235,7 +257,7 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
         out,
         &BrtExternSheet {
             cXti: u32::try_from(xtis.len())
-                .map_err(|_| Error::ValueNotRepresentable("too many print ranges"))?,
+                .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?,
             rgXti: xtis,
         },
     )?;
@@ -248,7 +270,24 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
                 out,
                 index,
                 "_xlnm.Print_Area",
+                BrtName::F_BUILTIN,
                 area3d(ixti, first_row, first_col, last_row, last_col).to_vec(),
+            )?;
+        }
+    }
+    for (index, sheet) in sheets.iter().enumerate() {
+        if let Some(rfx) = sheet.autofilter_range() {
+            let ixti = xti_indexes[index].expect("autofilter has an Xti");
+            let first_col = u16::try_from(rfx.colFirst)
+                .map_err(|_| Error::ValueNotRepresentable("autofilter column out of range"))?;
+            let last_col = u16::try_from(rfx.colLast)
+                .map_err(|_| Error::ValueNotRepresentable("autofilter column out of range"))?;
+            push_defined_name(
+                out,
+                index,
+                "_xlnm._FilterDatabase",
+                BrtName::F_BUILTIN | BrtName::F_HIDDEN,
+                area3d(ixti, rfx.rwFirst, first_col, rfx.rwLast, last_col).to_vec(),
             )?;
         }
     }
@@ -265,7 +304,7 @@ fn write_defined_names(sheets: &[Worksheet], out: &mut Vec<u8>) -> Result<()> {
             if sheet.repeat_rows().is_some() && sheet.repeat_columns().is_some() {
                 rgce.push(0x10);
             }
-            push_defined_name(out, index, "_xlnm.Print_Titles", rgce)?;
+            push_defined_name(out, index, "_xlnm.Print_Titles", BrtName::F_BUILTIN, rgce)?;
         }
     }
     Ok(())
@@ -279,12 +318,13 @@ fn push_defined_name(
     out: &mut Vec<u8>,
     sheet_index: usize,
     name: &'static str,
+    flags: u32,
     rgce: Vec<u8>,
 ) -> Result<()> {
     push_record(
         out,
         &BrtName {
-            flags: BrtName::F_BUILTIN,
+            flags,
             chKey: 0,
             itab: u32::try_from(sheet_index)
                 .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?,
@@ -339,7 +379,7 @@ fn sheet_rels(sheet: &Worksheet) -> Option<String> {
     Some(body)
 }
 
-fn content_types(sheet_count: usize, has_strings: bool) -> String {
+fn content_types(sheet_count: usize, has_strings: bool, has_properties: bool) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
@@ -360,18 +400,112 @@ fn content_types(sheet_count: usize, has_strings: bool) -> String {
             r#"<Override PartName="/xl/sharedStrings.bin" ContentType="application/vnd.ms-excel.sharedStrings"/>"#,
         );
     }
+    if has_properties {
+        body.push_str(
+            concat!(
+                r#"<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>"#,
+                r#"<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>"#,
+            ),
+        );
+    }
     body.push_str("</Types>");
     body
 }
 
-fn root_rels() -> String {
-    concat!(
+fn root_rels(has_properties: bool) -> String {
+    let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
         r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.bin"/>"#,
-        "</Relationships>"
-    )
-    .to_owned()
+    ));
+    if has_properties {
+        body.push_str(concat!(
+            r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>"#,
+            r#"<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>"#,
+        ));
+    }
+    body.push_str("</Relationships>");
+    body
+}
+
+fn core_xml(properties: &DocProperties) -> String {
+    let mut body = String::with_capacity(512);
+    body.push_str(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">"#,
+    ));
+    if !properties.title.is_empty() {
+        push_xml_element(&mut body, "dc:title", &properties.title);
+    }
+    if !properties.subject.is_empty() {
+        push_xml_element(&mut body, "dc:subject", &properties.subject);
+    }
+    push_xml_element(&mut body, "dc:creator", &properties.author);
+    if !properties.keywords.is_empty() {
+        push_xml_element(&mut body, "cp:keywords", &properties.keywords);
+    }
+    if !properties.comment.is_empty() {
+        push_xml_element(&mut body, "dc:description", &properties.comment);
+    }
+    push_xml_element(&mut body, "cp:lastModifiedBy", &properties.author);
+    if !properties.category.is_empty() {
+        push_xml_element(&mut body, "cp:category", &properties.category);
+    }
+    if !properties.status.is_empty() {
+        push_xml_element(&mut body, "cp:contentStatus", &properties.status);
+    }
+    body.push_str("</cp:coreProperties>");
+    body
+}
+
+fn app_xml(sheets: &[Worksheet], properties: &DocProperties) -> String {
+    let count = sheets
+        .iter()
+        .filter(|sheet| sheet.visibility() != Visibility::VeryHidden)
+        .count();
+
+    let mut body = String::with_capacity(1024);
+    body.push_str(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">"#,
+        "<Application>Microsoft Excel</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop>",
+        r#"<HeadingPairs><vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>"#,
+    ));
+    write!(body, "{count}").expect("writing to String cannot fail");
+    body.push_str(
+        "</vt:i4></vt:variant></vt:vector></HeadingPairs><TitlesOfParts><vt:vector size=\"",
+    );
+    write!(body, "{count}").expect("writing to String cannot fail");
+    body.push_str("\" baseType=\"lpstr\">");
+    for sheet in sheets
+        .iter()
+        .filter(|sheet| sheet.visibility() != Visibility::VeryHidden)
+    {
+        push_xml_element(&mut body, "vt:lpstr", sheet.name_ref());
+    }
+    body.push_str("</vt:vector></TitlesOfParts>");
+    if !properties.manager.is_empty() {
+        push_xml_element(&mut body, "Manager", &properties.manager);
+    }
+    push_xml_element(&mut body, "Company", &properties.company);
+    body.push_str("<LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc>");
+    if !properties.hyperlink_base.is_empty() {
+        push_xml_element(&mut body, "HyperlinkBase", &properties.hyperlink_base);
+    }
+    body.push_str(
+        "<HyperlinksChanged>false</HyperlinksChanged><AppVersion>12.0000</AppVersion></Properties>",
+    );
+    body
+}
+
+fn push_xml_element(out: &mut String, tag: &str, value: &str) {
+    out.push('<');
+    out.push_str(tag);
+    out.push('>');
+    out.push_str(escape_xml_data(value).as_ref());
+    out.push_str("</");
+    out.push_str(tag);
+    out.push('>');
 }
 
 fn workbook_rels(sheet_count: usize, has_strings: bool) -> String {
@@ -572,8 +706,8 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtExternSheet, BrtFileSharing,
-        BrtHLink, BrtName, BrtSheetProtection, BrtXF,
+        BrtBeginAFilter, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtExternSheet,
+        BrtFileSharing, BrtHLink, BrtName, BrtSheetProtection, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff};
 
@@ -841,6 +975,153 @@ mod tests {
         assert!(names.contains(&"xl/worksheets/sheet2.bin".to_owned()));
         assert!(names.contains(&"xl/styles.bin".to_owned()));
         assert!(names.contains(&"xl/sharedStrings.bin".to_owned()));
+    }
+
+    #[test]
+    fn autofilter_reaches_the_sheet_part() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.autofilter(1, 2, 5, 4).expect("autofilter");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let begin = records::<BrtBeginAFilter>(&sheet);
+        assert_eq!(begin.len(), 1);
+        assert_eq!(begin[0].rfx.rwFirst, 1);
+        assert_eq!(begin[0].rfx.rwLast, 5);
+        assert_eq!(begin[0].rfx.colFirst, 2);
+        assert_eq!(begin[0].rfx.colLast, 4);
+
+        let workbook = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let names = records::<BrtName>(&workbook);
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0].flags, BrtName::F_BUILTIN | BrtName::F_HIDDEN);
+        assert_eq!(
+            names[0].name.to_optional_string().as_deref(),
+            Some("_xlnm._FilterDatabase")
+        );
+        assert_eq!(names[0].formula.rgce, area3d(0, 1, 2, 5, 4).to_vec());
+    }
+
+    #[test]
+    fn autofilter_and_print_area_share_one_external_sheet_index() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.autofilter(0, 0, 3, 1).expect("autofilter");
+        worksheet.set_print_area(0, 0, 3, 1).expect("print area");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 1);
+
+        let names = records::<BrtName>(&workbook_part);
+        assert_eq!(names.len(), 2);
+        let name = |index: usize| names[index].name.to_optional_string().expect("name");
+        assert_eq!(name(0), "_xlnm.Print_Area");
+        assert_eq!(name(1), "_xlnm._FilterDatabase");
+        assert_eq!(names[0].formula.rgce, area3d(0, 0, 0, 3, 1).to_vec());
+        assert_eq!(names[1].formula.rgce, area3d(0, 0, 0, 3, 1).to_vec());
+    }
+
+    #[test]
+    fn autofilter_is_absent_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        assert_eq!(records::<BrtBeginAFilter>(&sheet).len(), 0);
+    }
+
+    #[test]
+    fn document_properties_add_core_and_app_parts() {
+        let mut workbook = crate::Workbook::new();
+        let properties = crate::DocProperties::new()
+            .set_title("R&D <2026>")
+            .set_subject("Subject")
+            .set_author("A <B>")
+            .set_manager("Manager")
+            .set_company("Company & Co")
+            .set_category("Category")
+            .set_keywords("one, two")
+            .set_comment("Comment")
+            .set_status("Final")
+            .set_hyperlink_base("https://example.com/?a=1&b=2");
+        workbook.set_properties(&properties);
+        workbook.add_worksheet().set_name("First").expect("name");
+        workbook
+            .add_worksheet()
+            .set_name("Hidden")
+            .expect("name")
+            .set_hidden(true);
+        workbook
+            .add_worksheet()
+            .set_name("Secret")
+            .expect("name")
+            .set_very_hidden(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(names.contains(&"docProps/core.xml".to_owned()));
+        assert!(names.contains(&"docProps/app.xml".to_owned()));
+
+        let core = String::from_utf8(part_bytes(&bytes, "docProps/core.xml").expect("core"))
+            .expect("core UTF-8");
+        assert!(core.contains("<dc:title>R&amp;D &lt;2026&gt;</dc:title>"));
+        assert!(core.contains("<dc:creator>A &lt;B&gt;</dc:creator>"));
+        assert!(core.contains("<cp:contentStatus>Final</cp:contentStatus>"));
+
+        let app = String::from_utf8(part_bytes(&bytes, "docProps/app.xml").expect("app"))
+            .expect("app UTF-8");
+        assert!(app.contains("<vt:i4>2</vt:i4>"));
+        assert!(app.contains("<vt:lpstr>First</vt:lpstr>"));
+        assert!(app.contains("<vt:lpstr>Hidden</vt:lpstr>"));
+        assert!(!app.contains("Secret"));
+        assert!(app.contains("<Company>Company &amp; Co</Company>"));
+        assert!(app.contains("<HyperlinkBase>https://example.com/?a=1&amp;b=2</HyperlinkBase>"));
+
+        let types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("content types"))
+                .expect("types UTF-8");
+        assert!(types.contains("/docProps/core.xml"));
+        assert!(types.contains("/docProps/app.xml"));
+
+        let rels = String::from_utf8(part_bytes(&bytes, "_rels/.rels").expect("rels"))
+            .expect("rels UTF-8");
+        assert!(rels.contains("Target=\"docProps/core.xml\""));
+        assert!(rels.contains("Target=\"docProps/app.xml\""));
+    }
+
+    #[test]
+    fn document_properties_escape_xml_control_characters() {
+        let mut workbook = crate::Workbook::new();
+        workbook.set_properties(&crate::DocProperties::new().set_title("a\u{1}b\r\nc"));
+        workbook.add_worksheet().set_name("A\u{1}B").expect("name");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let core = String::from_utf8(part_bytes(&bytes, "docProps/core.xml").expect("core"))
+            .expect("core UTF-8");
+        assert!(core.contains("<dc:title>a_x0001_b_x000D_\nc</dc:title>"));
+        assert!(!core.contains('\u{1}'));
+        assert!(!core.contains('\r'));
+
+        let app = String::from_utf8(part_bytes(&bytes, "docProps/app.xml").expect("app"))
+            .expect("app UTF-8");
+        assert!(app.contains("<vt:lpstr>A_x0001_B</vt:lpstr>"));
+        assert!(!app.contains('\u{1}'));
+    }
+
+    #[test]
+    fn document_properties_are_absent_by_default() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(!names.contains(&"docProps/core.xml".to_owned()));
+        assert!(!names.contains(&"docProps/app.xml".to_owned()));
     }
 
     #[test]

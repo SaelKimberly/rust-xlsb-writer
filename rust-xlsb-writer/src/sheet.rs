@@ -3,11 +3,11 @@
 use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos, BrtBeginHeaderFooter,
+    BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos, BrtBeginHeaderFooter,
     BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
     BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
-    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtEndCellIgnoreECs, BrtEndColBrk,
-    BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
+    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtEndAFilter, BrtEndCellIgnoreECs,
+    BrtEndColBrk, BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
     BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtHLink, BrtMargins, BrtMergeCell, BrtPageSetup,
     BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
     HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
@@ -123,6 +123,10 @@ pub fn write_sheet(
         push(out, &protection.record())?;
     }
     write_unprotected_ranges(sheet, out)?;
+    if let Some(rfx) = sheet.autofilter_range() {
+        push(out, &BrtBeginAFilter { rfx })?;
+        push(out, &BrtEndAFilter::default())?;
+    }
 
     let merged = sheet.merged_ranges();
     if !merged.is_empty() {
@@ -1101,6 +1105,33 @@ mod tests {
     }
 
     #[test]
+    fn autofilter_follows_protection_and_precedes_merges() {
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
+        sheet.write(0, 0, "x").expect("writes");
+        sheet.autofilter(0, 0, 3, 1).expect("autofilter");
+        sheet.protect();
+        sheet
+            .merge_range(1, 0, 1, 1, "merged", &Format::new())
+            .expect("merge");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let ids = record_ids(&out);
+        let position = |id| ids.iter().position(|candidate| *candidate == id);
+        let data = position(KnownID::BrtEndSheetData).expect("sheet data");
+        let protection = position(KnownID::BrtSheetProtection).expect("protection");
+        let filter = position(KnownID::BrtBeginAFilter).expect("autofilter");
+        let end_filter = position(KnownID::BrtEndAFilter).expect("autofilter end");
+        let merged = position(KnownID::BrtBeginMergeCells).expect("merged cells");
+        assert!(data < protection);
+        assert!(protection < filter);
+        assert!(filter < end_filter);
+        assert!(end_filter < merged);
+    }
+
+    #[test]
     fn default_sheet_view_emits_no_view_records() {
         let sheet = Worksheet::new_named("Sheet1".to_owned());
         let sst = SSTHolder::create_in_memory().expect("sst");
@@ -1123,6 +1154,7 @@ mod tests {
         assert_eq!(records::<BrtSheetProtection>(&out).len(), 0);
         assert_eq!(records::<BrtRangeProtection>(&out).len(), 0);
         assert_eq!(records::<BrtBeginCellIgnoreECs>(&out).len(), 0);
+        assert_eq!(records::<BrtBeginAFilter>(&out).len(), 0);
     }
 
     #[test]
