@@ -42,6 +42,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn zero_height_is_the_second_bit_byte() {
+        let info = BrtWsFmtInfo {
+            fDyZero: true,
+            ..BrtWsFmtInfo::default()
+        };
+
+        let bytes = info.to_bytes().expect("serializes");
+        assert_eq!(bytes[8], 0x02);
+    }
+
+    #[test]
     fn unsynced_flag_is_the_first_bit_byte() {
         let info = BrtWsFmtInfo {
             fUnsynced: true,

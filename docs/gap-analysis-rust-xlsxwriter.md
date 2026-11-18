@@ -20,8 +20,8 @@ It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no hyperlinks or rich strings.
-3. **Worksheet layout and view** — no autofit, print areas/repeat titles, or
-   page-break preview.
+3. **Worksheet layout and view** — no full autofit, print areas, or repeat
+   titles.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
    validation, or protection.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
@@ -45,8 +45,8 @@ the breadth gap.
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
-| Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format, merged ranges |
-| View | freeze panes and top-cell, selection, top-left cell, zoom, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
+| Cell layout | column width and range width, column autofit-width hint, column format and range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
+| View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks |
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
@@ -54,7 +54,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 161 core + 104 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 163 core + 107 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -121,12 +121,12 @@ Status meanings:
 | `group_rows`, `group_rows_collapsed` | Supported | Outline groups |
 | `set_column_width`, `set_column_range_width` | Supported | — |
 | `set_column_width_pixels`, `set_column_range_width_pixels` | Supported | — |
-| `set_column_autofit_width` | Missing | Autofit width hint |
+| `set_column_autofit_width` | Supported | Autofit width hint |
 | `set_column_format`, `set_column_range_format` | Supported | — |
 | `set_column_hidden`, `set_column_range_hidden` | Supported | — |
 | `group_columns`, `group_columns_collapsed` | Supported | Column outline groups |
 | `group_symbols_above`, `group_symbols_to_left` | Supported | Outline display |
-| `hide_unused_rows` | Missing | Row hiding |
+| `hide_unused_rows` | Supported | Row hiding |
 | `autofit`, `autofit_to_max_width` | Missing | Width calculation |
 | `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
 | `set_default_format` | Missing | Worksheet default format |
@@ -151,7 +151,7 @@ Status meanings:
 | `set_print_center_horizontally`, `set_print_center_vertically` | Supported | — |
 | `set_print_gridlines`, `set_print_headings`, `set_print_black_and_white`, `set_print_draft` | Supported | — |
 | `set_page_breaks`, `set_vertical_page_breaks` | Supported | Manual page breaks |
-| `set_view_normal`, `set_view_page_layout`, `set_view_page_break_preview` | Missing | View modes |
+| `set_view_normal`, `set_view_page_layout`, `set_view_page_break_preview` | Supported | View modes |
 | `set_print_first_page_number` | Supported | — |
 
 ### 3.4 Tables, Filters, Validation, And Protection
@@ -340,7 +340,7 @@ rejected before output.
 | Print area, repeat rows/columns | Open | Multi-page reports | M |
 | Manual page breaks | ✅ | Multi-page reports | S |
 | Group rows/columns, outline symbols | ✅ | Collapsible reports | M |
-| Autofit | Open | Readability | M |
+| Full autofit | Open | Width calculation; `set_column_autofit_width` hint is shipped | M |
 
 **Exit criteria:** PDF/print preview through LibreOffice shows the expected
 page layout; record-level tests cover print/view records.
@@ -418,7 +418,7 @@ spec:
 
 The remaining smaller P0 gap is `write_url`. Worksheet state, page setup,
 text headers/footers, manual page breaks, and outline groups are shipped;
-print areas, repeat titles, and autofit remain in P2.
+print areas, repeat titles, and full autofit remain in P2.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -430,7 +430,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 161 core + 104 writer unit tests and 6 doctests; calamine
+- Test evidence: 163 core + 107 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a

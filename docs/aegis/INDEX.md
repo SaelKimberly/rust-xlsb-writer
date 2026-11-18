@@ -16,6 +16,7 @@
 - [Worksheet page setup and print options](plans/2026-11-18-worksheet-page-setup.md)
 - [Worksheet headers, footers, and manual page breaks](plans/2026-11-18-worksheet-headers-footers-page-breaks.md)
 - [Worksheet outline groups](plans/2026-11-18-worksheet-outline-groups.md)
+- [Worksheet display modes, unused-row hiding, and autofit-width hints](plans/2026-11-18-worksheet-display-and-autofit-hints.md)
 
 ## Analysis
 

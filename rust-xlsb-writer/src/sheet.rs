@@ -188,7 +188,8 @@ fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
 fn write_sheet_format(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     let height = sheet.default_row_height();
     let (row_level, col_level) = sheet.outline_levels();
-    if height.is_none() && row_level == 0 && col_level == 0 {
+    let hide_unused_rows = sheet.unused_rows_hidden();
+    if height.is_none() && row_level == 0 && col_level == 0 && !hide_unused_rows {
         return Ok(());
     }
 
@@ -198,6 +199,7 @@ fn write_sheet_format(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
             dxGCol: DEFAULT_COL_WIDTH,
             miyDefRwHeight: height.map_or(DEFAULT_ROW_HEIGHT, height_to_twips),
             fUnsynced: height.is_some(),
+            fDyZero: hide_unused_rows,
             iOutLevelRw: row_level,
             iOutLevelCol: col_level,
             ..BrtWsFmtInfo::default()
@@ -226,11 +228,13 @@ fn write_sheet_views(sheet: &Worksheet, selected: bool, out: &mut Vec<u8>) -> Re
             fSelected: view.selected || selected,
             fDspGuts: true,
             fDefaultHdr: true,
+            fDspRuler: view.view_mode.shows_ruler(),
             rwTop: rw_top,
             colLeft: col_left,
             icvHdr: 0x40,
             wScale: view.zoom,
             wScaleNormal: 100,
+            xlView: view.view_mode.xl_view(),
             ..BrtBeginWsView::default()
         },
     )?;
@@ -509,6 +513,7 @@ fn column_infos(sheet: &Worksheet, style_indexes: &[u32]) -> Vec<BrtColInfo> {
                 && next_options.hidden == first_options.hidden
                 && next_options.level == first_options.level
                 && next_options.collapsed == first_options.collapsed
+                && next_options.best_fit == first_options.best_fit
             {
                 last = **next;
                 columns.next();
@@ -536,6 +541,7 @@ fn col_info(first: u16, last: u16, options: &ColumnOptions, style_indexes: &[u32
             .map_or(0, |index| mapped_style(index, style_indexes)),
         fHidden: options.hidden,
         fUserSet: options.width.is_some() || options.format.is_some() || options.hidden,
+        fBestFit: options.best_fit,
         iOutLevel: options.level,
         fCollapsed: options.collapsed,
         ..BrtColInfo::default()
@@ -676,7 +682,7 @@ mod tests {
 
     use super::*;
     use crate::Format;
-    use crate::worksheet::MAX_COL;
+    use crate::worksheet::{MAX_COL, pixels_to_width};
 
     fn records<T>(part: &[u8]) -> Vec<T>
     where
@@ -786,6 +792,99 @@ mod tests {
         assert_eq!(views.len(), 1);
         assert!(views[0].fDspGrid);
         assert!(!views[0].fDspZeros);
+    }
+
+    #[test]
+    fn view_modes_emit_xlview_and_ruler() {
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+
+        sheet.set_view_page_layout();
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let views = records::<BrtBeginWsView>(&out);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].xlView, 2);
+        assert!(views[0].fDspRuler);
+
+        sheet.set_view_page_break_preview();
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let views = records::<BrtBeginWsView>(&out);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].xlView, 1);
+        assert!(!views[0].fDspRuler);
+
+        sheet.set_view_normal();
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        assert_eq!(records::<BrtBeginWsView>(&out).len(), 0);
+    }
+
+    #[test]
+    fn hide_unused_rows_sets_zero_height() {
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.hide_unused_rows(true);
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let formats = records::<BrtWsFmtInfo>(&out);
+        assert_eq!(formats.len(), 1);
+        assert!(formats[0].fDyZero);
+        assert!(!formats[0].fUnsynced);
+
+        sheet.set_default_row_height(30.0).expect("height");
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let formats = records::<BrtWsFmtInfo>(&out);
+        assert_eq!(formats.len(), 1);
+        assert!(formats[0].fDyZero);
+        assert!(formats[0].fUnsynced);
+        assert_eq!(formats[0].miyDefRwHeight, 600);
+
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.hide_unused_rows(true);
+        sheet.hide_unused_rows(false);
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        assert_eq!(records::<BrtWsFmtInfo>(&out).len(), 0);
+    }
+
+    #[test]
+    fn autofit_width_sets_best_fit_and_splits_spans() {
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_column_autofit_width(0, 100).expect("autofit");
+        sheet.set_column_autofit_width(1, 100).expect("autofit");
+        sheet
+            .set_column_width(2, pixels_to_width(100))
+            .expect("manual");
+
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let columns = records::<BrtColInfo>(&out);
+        assert_eq!(columns.len(), 2);
+        assert_eq!((columns[0].colFirst, columns[0].colLast), (0, 1));
+        assert!(columns[0].fBestFit);
+        assert!(columns[0].fUserSet);
+        assert_eq!(columns[0].coldx, width_to_units(pixels_to_width(100)));
+        assert_eq!((columns[1].colFirst, columns[1].colLast), (2, 2));
+        assert!(!columns[1].fBestFit);
+
+        sheet.set_column_width(0, 20.0).expect("manual override");
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let columns = records::<BrtColInfo>(&out);
+        assert!(!columns[0].fBestFit);
+
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_column_autofit_width(0, 0).expect("zero hides");
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let columns = records::<BrtColInfo>(&out);
+        assert!(columns[0].fHidden);
+        assert_eq!(columns[0].coldx, 0);
+        assert!(!columns[0].fBestFit);
     }
 
     #[test]

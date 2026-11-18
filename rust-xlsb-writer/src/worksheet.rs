@@ -52,6 +52,7 @@ pub struct ColumnOptions {
     pub(crate) hidden: bool,
     pub(crate) level: u8,
     pub(crate) collapsed: bool,
+    pub(crate) best_fit: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +61,32 @@ pub struct MergeRange {
     pub(crate) first_col: u16,
     pub(crate) last_row: u32,
     pub(crate) last_col: u16,
+}
+
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the sheet serializer"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ViewMode {
+    #[default]
+    Normal,
+    PageLayout,
+    PageBreakPreview,
+}
+
+impl ViewMode {
+    pub(crate) const fn xl_view(self) -> u32 {
+        match self {
+            Self::Normal => 0,
+            Self::PageLayout => 2,
+            Self::PageBreakPreview => 1,
+        }
+    }
+
+    pub(crate) const fn shows_ruler(self) -> bool {
+        matches!(self, Self::PageLayout)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +104,7 @@ pub struct SheetView {
     pub(crate) show_zeros: bool,
     pub(crate) right_to_left: bool,
     pub(crate) selected: bool,
+    pub(crate) view_mode: ViewMode,
 }
 
 impl Default for SheetView {
@@ -91,6 +119,7 @@ impl Default for SheetView {
             show_zeros: true,
             right_to_left: false,
             selected: false,
+            view_mode: ViewMode::Normal,
         }
     }
 }
@@ -106,6 +135,7 @@ impl SheetView {
             && self.show_zeros
             && !self.right_to_left
             && !self.selected
+            && matches!(self.view_mode, ViewMode::Normal)
     }
 }
 
@@ -252,6 +282,7 @@ pub struct Worksheet {
     outline_col_level: u8,
     outline_symbols_above: bool,
     outline_symbols_to_left: bool,
+    hide_unused_rows: bool,
 }
 
 impl Worksheet {
@@ -278,6 +309,7 @@ impl Worksheet {
             outline_col_level: 0,
             outline_symbols_above: false,
             outline_symbols_to_left: false,
+            hide_unused_rows: false,
         }
     }
 
@@ -662,10 +694,36 @@ impl Worksheet {
     /// Returns [`Error::RowColumnLimit`] when the column is out of range, or
     /// [`Error::ValueNotRepresentable`] when the width is outside `0..=255`.
     pub fn set_column_width(&mut self, col: ColNum, width: impl Into<f64>) -> Result<&mut Self> {
-        let width = width.into();
+        self.set_column_width_internal(col, width.into(), false)
+    }
+
+    /// Sets one column width in pixels for an auto-fitted column.
+    ///
+    /// This marks the column as best-fit, so Excel can widen it when a numeric
+    /// value gains digits. A width of `0` hides the column.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the column is out of range, or
+    /// [`Error::ValueNotRepresentable`] when the width exceeds the Excel limit.
+    pub fn set_column_autofit_width(&mut self, col: ColNum, width: u32) -> Result<&mut Self> {
+        if width == 0 {
+            return self.set_column_hidden(col);
+        }
+        self.set_column_width_internal(col, pixels_to_width(width), true)
+    }
+
+    fn set_column_width_internal(
+        &mut self,
+        col: ColNum,
+        width: f64,
+        best_fit: bool,
+    ) -> Result<&mut Self> {
         Self::check_col(col)?;
         validate_column_width(width)?;
-        self.columns.entry(col).or_default().width = Some(width);
+        let options = self.columns.entry(col).or_default();
+        options.width = Some(width);
+        options.best_fit = best_fit;
         Ok(self)
     }
 
@@ -705,7 +763,9 @@ impl Worksheet {
         let width = width.into();
         validate_column_width(width)?;
         for col in first..=last {
-            self.columns.entry(col).or_default().width = Some(width);
+            let options = self.columns.entry(col).or_default();
+            options.width = Some(width);
+            options.best_fit = false;
         }
         Ok(self)
     }
@@ -1092,6 +1152,24 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Displays the worksheet in normal view.
+    pub const fn set_view_normal(&mut self) -> &mut Self {
+        self.view.view_mode = ViewMode::Normal;
+        self
+    }
+
+    /// Displays the worksheet in page layout view.
+    pub const fn set_view_page_layout(&mut self) -> &mut Self {
+        self.view.view_mode = ViewMode::PageLayout;
+        self
+    }
+
+    /// Displays the worksheet in page break preview.
+    pub const fn set_view_page_break_preview(&mut self) -> &mut Self {
+        self.view.view_mode = ViewMode::PageBreakPreview;
+        self
+    }
+
     /// Sets the worksheet zoom percentage.
     ///
     /// Values outside `10..=400` are ignored.
@@ -1193,6 +1271,14 @@ impl Worksheet {
         } else if color.is_valid() {
             self.tab_color = Some(color);
         }
+        self
+    }
+
+    /// Hides rows that contain no data or explicit row options.
+    ///
+    /// The default is off.
+    pub const fn hide_unused_rows(&mut self, enable: bool) -> &mut Self {
+        self.hide_unused_rows = enable;
         self
     }
 
@@ -1697,6 +1783,10 @@ impl Worksheet {
         self.default_row_height
     }
 
+    pub(crate) const fn unused_rows_hidden(&self) -> bool {
+        self.hide_unused_rows
+    }
+
     pub(crate) const fn page_setup(&self) -> &PageSetup {
         &self.page_setup
     }
@@ -1841,7 +1931,8 @@ fn valid_margin(margin: f64) -> bool {
     (0.0..MAX_MARGIN).contains(&margin)
 }
 
-fn pixels_to_width(pixels: u32) -> f64 {
+#[expect(clippy::redundant_pub_crate, reason = "shared with the sheet tests")]
+pub(crate) fn pixels_to_width(pixels: u32) -> f64 {
     let pixels = f64::from(pixels);
     if pixels <= 12.0 {
         pixels / 12.0

@@ -64,6 +64,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn best_fit_is_the_third_flag_bit() {
+        let column = BrtColInfo {
+            fBestFit: true,
+            ..BrtColInfo::default()
+        };
+
+        let bytes = column.to_bytes().expect("serializes");
+        assert_eq!(bytes[16], 0x04);
+    }
+
+    #[test]
     fn outline_bits_land_in_the_expected_byte() {
         let column = BrtColInfo {
             fHidden: true,
