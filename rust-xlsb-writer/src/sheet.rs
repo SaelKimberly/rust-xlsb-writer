@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginColBrk, BrtBeginColInfos, BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk,
-    BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
-    BrtEndColBrk, BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
+    BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos, BrtBeginHeaderFooter,
+    BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
+    BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
+    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtEndCellIgnoreECs, BrtEndColBrk,
+    BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
     BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtHLink, BrtMargins, BrtMergeCell, BrtPageSetup,
     BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
     HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
@@ -17,7 +18,7 @@ use rust_xlsb_core::{
 };
 
 use crate::data::CellData;
-use crate::worksheet::{ColumnOptions, MAX_COL, MAX_ROW, Worksheet};
+use crate::worksheet::{ColumnOptions, IgnoreError, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
 
 const DEFAULT_COL_WIDTH: u32 = 2_158;
@@ -121,6 +122,7 @@ pub fn write_sheet(
     if let Some(protection) = sheet.protection() {
         push(out, &protection.record())?;
     }
+    write_unprotected_ranges(sheet, out)?;
 
     let merged = sheet.merged_ranges();
     if !merged.is_empty() {
@@ -151,9 +153,58 @@ pub fn write_sheet(
     write_print_settings(sheet, out)?;
     write_header_footer(sheet, out)?;
     write_page_breaks(sheet, out)?;
+    write_ignored_errors(sheet, out)?;
 
     push(out, &BrtEndSheet::default())?;
     Ok(())
+}
+
+fn write_unprotected_ranges(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    for range in sheet.unprotected_ranges() {
+        push(out, &range.record())?;
+    }
+    Ok(())
+}
+
+fn write_ignored_errors(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let ignored = sheet.ignored_errors();
+    if ignored.is_empty() {
+        return Ok(());
+    }
+
+    push(out, &BrtBeginCellIgnoreECs::default())?;
+    for (&error_type, ranges) in ignored {
+        for chunk in ranges.chunks(8_191) {
+            push(
+                out,
+                &BrtCellIgnoreEC {
+                    grbit: ignore_error_flag(error_type),
+                    sqrfxu: UncheckedSqRfX {
+                        crfx: u32::try_from(chunk.len()).map_err(|_| {
+                            Error::ValueNotRepresentable("too many ignored-error ranges")
+                        })?,
+                        rgRefx: chunk.to_vec(),
+                    },
+                },
+            )?;
+        }
+    }
+    push(out, &BrtEndCellIgnoreECs::default())?;
+    Ok(())
+}
+
+const fn ignore_error_flag(error_type: IgnoreError) -> u32 {
+    match error_type {
+        IgnoreError::FormulaError => BrtCellIgnoreEC::F_CALC_ERROR,
+        IgnoreError::FormulaRefersToEmptyCells => BrtCellIgnoreEC::F_EMPTY_CELL_REF,
+        IgnoreError::NumberStoredAsText => BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT,
+        IgnoreError::FormulaOmitsCells => BrtCellIgnoreEC::F_INCONSIST_RANGE,
+        IgnoreError::FormulaDiffers => BrtCellIgnoreEC::F_INCONSIST_FMLA,
+        IgnoreError::TwoDigitTextYear => BrtCellIgnoreEC::F_TEXT_DATE_INSUFF,
+        IgnoreError::UnlockedCellsWithFormula => BrtCellIgnoreEC::F_UNPROT_FMLA,
+        IgnoreError::DataValidationError => BrtCellIgnoreEC::F_DATA_VALIDATION,
+        IgnoreError::InconsistentColumnFormula => BrtCellIgnoreEC::F_CALC_COL,
+    }
 }
 
 fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
@@ -716,8 +767,8 @@ mod tests {
     use rust_xlsb_core::prelude::{
         BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginWsView,
         BrtBrk, BrtCellIsst, BrtCellRk, BrtColInfo, BrtColor, BrtEndSheet, BrtMargins,
-        BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel,
-        BrtSheetProtection, BrtWsFmtInfo, BrtWsProp,
+        BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr,
+        BrtSel, BrtSheetProtection, BrtWsFmtInfo, BrtWsProp,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID, SSTHolder, StyleRegistry};
 
@@ -1070,6 +1121,8 @@ mod tests {
         assert_eq!(records::<BrtBeginColBrk>(&out).len(), 0);
         assert_eq!(records::<BrtBrk>(&out).len(), 0);
         assert_eq!(records::<BrtSheetProtection>(&out).len(), 0);
+        assert_eq!(records::<BrtRangeProtection>(&out).len(), 0);
+        assert_eq!(records::<BrtBeginCellIgnoreECs>(&out).len(), 0);
     }
 
     #[test]
@@ -1761,5 +1814,175 @@ mod tests {
         assert_eq!(cells[0].rfx.rwLast, 1);
         assert_eq!(cells[0].rfx.colFirst, 0);
         assert_eq!(cells[0].rfx.colLast, 2);
+    }
+
+    #[test]
+    fn protected_ranges_follow_sheet_protection_and_precede_merges() {
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
+        sheet.write(0, 0, "x").expect("writes");
+        sheet.protect();
+        sheet
+            .unprotect_range_with_options(1, 1, 3, 2, "Editable", "abc123")
+            .expect("unprotect");
+        sheet.unprotect_range(5, 0, 5, 1).expect("default range");
+        sheet
+            .merge_range(7, 0, 7, 1, "merged", &Format::new())
+            .expect("merge");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let ranges = records::<BrtRangeProtection>(&out);
+        assert_eq!(ranges.len(), 2);
+        assert_eq!(ranges[0].protPwd, 0xC58F);
+        assert_eq!(ranges[0].sqRfX.crfx, 1);
+        assert_eq!(ranges[0].sqRfX.rgRefx[0].rwFirst, 1);
+        assert_eq!(ranges[0].sqRfX.rgRefx[0].rwLast, 3);
+        assert_eq!(ranges[0].sqRfX.rgRefx[0].colFirst, 1);
+        assert_eq!(ranges[0].sqRfX.rgRefx[0].colLast, 2);
+        assert_eq!(
+            ranges[0]
+                .RangeProtectionTitleSDRel
+                .rgchTitle
+                .try_to_string()
+                .expect("title"),
+            "Editable"
+        );
+        assert_eq!(ranges[0].RangeProtectionTitleSDRel.dwsdRel, 0);
+        assert_eq!(
+            ranges[1]
+                .RangeProtectionTitleSDRel
+                .rgchTitle
+                .try_to_string()
+                .expect("title"),
+            "Range2"
+        );
+
+        let ids = record_ids(&out);
+        let position = |id| ids.iter().position(|candidate| *candidate == id);
+        let protection = position(KnownID::BrtSheetProtection).expect("protection");
+        let first = position(KnownID::BrtRangeProtection).expect("range protection");
+        let merged = position(KnownID::BrtBeginMergeCells).expect("merged cells");
+        assert!(protection < first);
+        assert!(first < merged);
+    }
+
+    #[test]
+    fn ignored_errors_group_by_type_after_page_breaks() {
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
+        sheet.set_header("report");
+        sheet.set_page_breaks(&[20, 40]).expect("breaks");
+        sheet
+            .ignore_error_range(0, 0, 1, 1, IgnoreError::NumberStoredAsText)
+            .expect("first");
+        sheet
+            .ignore_error(3, 3, IgnoreError::NumberStoredAsText)
+            .expect("second");
+        sheet
+            .ignore_error(5, 0, IgnoreError::FormulaError)
+            .expect("formula");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let ids = record_ids(&out);
+        assert_eq!(
+            ids.iter()
+                .filter(|id| **id == KnownID::BrtBeginCellIgnoreECs)
+                .count(),
+            1
+        );
+        assert_eq!(
+            ids.iter()
+                .filter(|id| **id == KnownID::BrtEndCellIgnoreECs)
+                .count(),
+            1
+        );
+        let errors = records::<BrtCellIgnoreEC>(&out);
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].grbit, BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT);
+        assert_eq!(errors[0].sqrfxu.crfx, 2);
+        assert_eq!(errors[0].sqrfxu.rgRefx[0].rwFirst, 0);
+        assert_eq!(errors[0].sqrfxu.rgRefx[0].colLast, 1);
+        assert_eq!(errors[0].sqrfxu.rgRefx[1].rwFirst, 3);
+        assert_eq!(errors[0].sqrfxu.rgRefx[1].colFirst, 3);
+        assert_eq!(errors[1].grbit, BrtCellIgnoreEC::F_CALC_ERROR);
+        assert_eq!(errors[1].sqrfxu.crfx, 1);
+
+        let position = |id| ids.iter().position(|candidate| *candidate == id);
+        let breaks = position(KnownID::BrtEndRwBrk).expect("breaks");
+        let begin = position(KnownID::BrtBeginCellIgnoreECs).expect("ignore begin");
+        let end = position(KnownID::BrtEndCellIgnoreECs).expect("ignore end");
+        let sheet_end = position(KnownID::BrtEndSheet).expect("sheet end");
+        assert!(breaks < begin);
+        assert!(begin < end);
+        assert!(end < sheet_end);
+    }
+
+    #[test]
+    fn every_ignore_error_maps_to_its_spec_flag() {
+        let mappings = [
+            (IgnoreError::FormulaError, BrtCellIgnoreEC::F_CALC_ERROR),
+            (
+                IgnoreError::FormulaRefersToEmptyCells,
+                BrtCellIgnoreEC::F_EMPTY_CELL_REF,
+            ),
+            (
+                IgnoreError::NumberStoredAsText,
+                BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT,
+            ),
+            (
+                IgnoreError::FormulaOmitsCells,
+                BrtCellIgnoreEC::F_INCONSIST_RANGE,
+            ),
+            (
+                IgnoreError::FormulaDiffers,
+                BrtCellIgnoreEC::F_INCONSIST_FMLA,
+            ),
+            (
+                IgnoreError::TwoDigitTextYear,
+                BrtCellIgnoreEC::F_TEXT_DATE_INSUFF,
+            ),
+            (
+                IgnoreError::UnlockedCellsWithFormula,
+                BrtCellIgnoreEC::F_UNPROT_FMLA,
+            ),
+            (
+                IgnoreError::DataValidationError,
+                BrtCellIgnoreEC::F_DATA_VALIDATION,
+            ),
+            (
+                IgnoreError::InconsistentColumnFormula,
+                BrtCellIgnoreEC::F_CALC_COL,
+            ),
+        ];
+
+        for (error_type, flag) in mappings {
+            assert_eq!(ignore_error_flag(error_type), flag);
+        }
+    }
+
+    #[test]
+    fn ignored_errors_chunk_at_the_8191_range_limit() {
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
+        for row in 0..8_192 {
+            sheet
+                .ignore_error(row, 0, IgnoreError::NumberStoredAsText)
+                .expect("ignore");
+        }
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let errors = records::<BrtCellIgnoreEC>(&out);
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0].sqrfxu.crfx, 8_191);
+        assert_eq!(errors[1].sqrfxu.crfx, 1);
+        assert_eq!(errors[0].grbit, BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT);
+        assert_eq!(errors[1].grbit, BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT);
+        assert_eq!(errors[1].sqrfxu.rgRefx[0].rwFirst, 8_191);
     }
 }

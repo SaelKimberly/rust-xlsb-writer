@@ -1,12 +1,12 @@
 //! Worksheet data model and public write/layout API.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
 use crate::format::BorderSide;
-use crate::protection::{ProtectionOptions, SheetProtection, hash_password};
+use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
 use crate::{Color, Error, Format, Result, Url};
 
 pub const MAX_ROW: u32 = 1_048_575;
@@ -55,6 +55,28 @@ pub struct ColumnOptions {
     pub(crate) level: u8,
     pub(crate) collapsed: bool,
     pub(crate) best_fit: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IgnoreError {
+    /// Numbers stored as text.
+    NumberStoredAsText,
+    /// Formula evaluation errors such as divide by zero.
+    FormulaError,
+    /// Formulas that differ from surrounding formulas.
+    FormulaDiffers,
+    /// Formulas that refer to empty cells.
+    FormulaRefersToEmptyCells,
+    /// Formulas that omit cells in a range.
+    FormulaOmitsCells,
+    /// Cells in a table that violate data validation.
+    DataValidationError,
+    /// Two-digit text representations of a year.
+    TwoDigitTextYear,
+    /// Unlocked cells containing formulas.
+    UnlockedCellsWithFormula,
+    /// Formulas that differ from the calculated-column formula.
+    InconsistentColumnFormula,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,6 +315,9 @@ pub struct Worksheet {
     neg_infinity_value: Option<String>,
     hyperlinks: BTreeMap<(RowNum, ColNum), Url>,
     protection: Option<SheetProtection>,
+    unprotected_ranges: Vec<UnprotectedRange>,
+    ignored_errors: BTreeMap<IgnoreError, Vec<UncheckedRfX>>,
+    ignored_error_ranges: BTreeSet<(RowNum, ColNum, RowNum, ColNum)>,
 }
 
 impl Default for Worksheet {
@@ -344,6 +369,9 @@ impl Worksheet {
             neg_infinity_value: None,
             hyperlinks: BTreeMap::new(),
             protection: None,
+            unprotected_ranges: Vec::new(),
+            ignored_errors: BTreeMap::new(),
+            ignored_error_ranges: BTreeSet::new(),
         }
     }
 
@@ -1422,6 +1450,140 @@ impl Worksheet {
         self.protection
     }
 
+    /// Unprotects a range in a protected worksheet.
+    ///
+    /// The range gets the default name `RangeN`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when the range is reversed, or
+    /// [`Error::RowColumnLimit`] when it is out of bounds.
+    pub fn unprotect_range(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+    ) -> Result<&mut Self> {
+        self.unprotect_range_with_options(first_row, first_col, last_row, last_col, "", "")
+    }
+
+    /// Unprotects a range with an explicit name and optional password.
+    ///
+    /// An empty name becomes `RangeN`. An empty password means no password.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when the range is reversed,
+    /// [`Error::RowColumnLimit`] when it is out of bounds, or
+    /// [`Error::Parameter`] when the name exceeds 255 UTF-16 code units.
+    pub fn unprotect_range_with_options(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        name: &str,
+        password: &str,
+    ) -> Result<&mut Self> {
+        Self::check_range(first_row, first_col, last_row, last_col)?;
+        let name = if name.is_empty() {
+            let mut index = self.unprotected_ranges.len() + 1;
+            loop {
+                let candidate = format!("Range{index}");
+                if !self
+                    .unprotected_ranges
+                    .iter()
+                    .any(|range| range.name == candidate)
+                {
+                    break candidate;
+                }
+                index += 1;
+            }
+        } else {
+            if self
+                .unprotected_ranges
+                .iter()
+                .any(|range| range.name == name)
+            {
+                return Err(Error::Parameter(format!(
+                    "protected range name '{name}' is already used"
+                )));
+            }
+            name.to_owned()
+        };
+        if name.encode_utf16().count() > 255 {
+            return Err(Error::Parameter(
+                "protected range name exceeds 255 UTF-16 code units".to_owned(),
+            ));
+        }
+        self.unprotected_ranges.push(UnprotectedRange {
+            range: UncheckedRfX {
+                rwFirst: first_row,
+                rwLast: last_row,
+                colFirst: u32::from(first_col),
+                colLast: u32::from(last_col),
+            },
+            name,
+            password_hash: hash_password(password),
+        });
+        Ok(self)
+    }
+
+    /// Ignores an Excel error in one cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the cell is out of bounds or
+    /// [`Error::Parameter`] when the cell already has an ignored-error rule.
+    pub fn ignore_error(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        error_type: IgnoreError,
+    ) -> Result<&mut Self> {
+        self.ignore_error_range(row, col, row, col, error_type)
+    }
+
+    /// Ignores an Excel error in a range of cells.
+    ///
+    /// Ranges with the same error type share one record. Overlapping but
+    /// non-identical ranges are accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when the range is reversed,
+    /// [`Error::RowColumnLimit`] when it is out of bounds, or
+    /// [`Error::Parameter`] when the exact range was already used.
+    pub fn ignore_error_range(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        error_type: IgnoreError,
+    ) -> Result<&mut Self> {
+        Self::check_range(first_row, first_col, last_row, last_col)?;
+        if !self
+            .ignored_error_ranges
+            .insert((first_row, first_col, last_row, last_col))
+        {
+            return Err(Error::Parameter(format!(
+                "ignored-error range {first_row}:{first_col}:{last_row}:{last_col} was previously used"
+            )));
+        }
+        self.ignored_errors
+            .entry(error_type)
+            .or_default()
+            .push(UncheckedRfX {
+                rwFirst: first_row,
+                rwLast: last_row,
+                colFirst: u32::from(first_col),
+                colLast: u32::from(last_col),
+            });
+        Ok(self)
+    }
+
     /// Marks the worksheet as active when `enable` is true.
     ///
     /// An active worksheet is also selected and visible.
@@ -2213,6 +2375,22 @@ impl Worksheet {
         }
     }
 
+    fn check_range(
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+    ) -> Result<()> {
+        Self::check_row(first_row)?;
+        Self::check_col(first_col)?;
+        Self::check_row(last_row)?;
+        Self::check_col(last_col)?;
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub const fn cells(&self) -> &BTreeMap<u32, BTreeMap<u16, Cell>> {
         &self.cells
@@ -2271,6 +2449,14 @@ impl Worksheet {
 
     pub(crate) fn formats(&self) -> &[Format] {
         &self.formats
+    }
+
+    pub(crate) fn unprotected_ranges(&self) -> &[UnprotectedRange] {
+        &self.unprotected_ranges
+    }
+
+    pub(crate) const fn ignored_errors(&self) -> &BTreeMap<IgnoreError, Vec<UncheckedRfX>> {
+        &self.ignored_errors
     }
 
     pub(crate) fn name_ref(&self) -> &str {
@@ -3339,5 +3525,114 @@ mod tests {
             worksheet.set_default_row_height(409.6),
             Err(Error::ValueNotRepresentable(_))
         ));
+    }
+
+    #[test]
+    fn unprotected_ranges_get_default_names_and_password_hashes() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.unprotect_range(0, 0, 1, 1).expect("first range");
+        worksheet
+            .unprotect_range_with_options(2, 0, 2, 1, "Editable", "abc123")
+            .expect("named range");
+
+        assert_eq!(worksheet.unprotected_ranges().len(), 2);
+        assert_eq!(worksheet.unprotected_ranges()[0].name, "Range1");
+        assert_eq!(worksheet.unprotected_ranges()[0].password_hash, 0);
+        assert_eq!(worksheet.unprotected_ranges()[1].name, "Editable");
+        assert_eq!(worksheet.unprotected_ranges()[1].password_hash, 0xC58F);
+        assert_eq!(
+            worksheet.unprotected_ranges()[1].range,
+            UncheckedRfX {
+                rwFirst: 2,
+                rwLast: 2,
+                colFirst: 0,
+                colLast: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn unprotected_ranges_validate_limits_order_and_name_length() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.unprotect_range(MAX_ROW + 1, 0, 0, 0),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.unprotect_range(2, 0, 1, 0),
+            Err(Error::RowColumnOrder)
+        ));
+        let name = "x".repeat(256);
+        assert!(matches!(
+            worksheet.unprotect_range_with_options(0, 0, 0, 0, &name, ""),
+            Err(Error::Parameter(_))
+        ));
+        assert_eq!(worksheet.unprotected_ranges().len(), 0);
+    }
+
+    #[test]
+    fn ignored_errors_group_ranges_and_reject_exact_duplicates() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .ignore_error_range(0, 0, 1, 1, IgnoreError::NumberStoredAsText)
+            .expect("first");
+        worksheet
+            .ignore_error(2, 2, IgnoreError::NumberStoredAsText)
+            .expect("second");
+        worksheet
+            .ignore_error(3, 3, IgnoreError::FormulaError)
+            .expect("formula");
+
+        assert_eq!(worksheet.ignored_errors().len(), 2);
+        assert_eq!(
+            worksheet
+                .ignored_errors()
+                .get(&IgnoreError::NumberStoredAsText)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert!(matches!(
+            worksheet.ignore_error_range(0, 0, 1, 1, IgnoreError::FormulaError),
+            Err(Error::Parameter(_))
+        ));
+        assert_eq!(
+            worksheet
+                .ignored_errors()
+                .get(&IgnoreError::FormulaError)
+                .map(Vec::len),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn ignored_errors_validate_range_limits_and_order() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.ignore_error(0, MAX_COL + 1, IgnoreError::FormulaError),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.ignore_error_range(1, 0, 0, 0, IgnoreError::FormulaError),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(worksheet.ignored_errors().is_empty());
+    }
+
+    #[test]
+    fn protected_range_names_are_unique_and_defaults_skip_collisions() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .unprotect_range_with_options(0, 0, 0, 0, "Range2", "")
+            .expect("explicit");
+        worksheet
+            .unprotect_range(1, 0, 1, 0)
+            .expect("default skips Range2");
+        assert_eq!(worksheet.unprotected_ranges()[1].name, "Range3");
+
+        assert!(matches!(
+            worksheet.unprotect_range_with_options(2, 0, 2, 0, "Range3", ""),
+            Err(Error::Parameter(_))
+        ));
+        assert_eq!(worksheet.unprotected_ranges().len(), 2);
     }
 }

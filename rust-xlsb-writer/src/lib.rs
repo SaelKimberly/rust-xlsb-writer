@@ -37,7 +37,7 @@ pub use format::{
 pub use protection::ProtectionOptions;
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};
-pub use worksheet::{ColNum, RowNum, Worksheet};
+pub use worksheet::{ColNum, IgnoreError, RowNum, Worksheet};
 
 use mimalloc::MiMalloc;
 

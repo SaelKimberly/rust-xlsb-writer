@@ -11,18 +11,19 @@ pub use collection::*;
 pub use record::{
     BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
     BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
-    BrtColor, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
-    BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt, BrtFont, BrtHLink, BrtMargins,
-    BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel,
-    BrtSheetProtection, BrtStyle, BrtSupSelf, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr,
-    HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
+    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt,
+    BrtColInfo, BrtColor, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst,
+    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt, BrtFont,
+    BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
+    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder,
+    VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
     ACProductVersion, BErr, Blxf, Bold, BorderType, BrtColSpan, Cell, CodeName, FontFlags,
-    HeaderFooterString, RkNumber, SimpleRichStr, UncheckedRfX, UncheckedSqRfX,
-    XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    HeaderFooterString, RangeProtectionTitleSDRel, RkNumber, SimpleRichStr, UncheckedRfX,
+    UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
 };
 
 #[cfg(test)]
@@ -83,6 +84,7 @@ mod tests {
     #[case::xnum(|| checked_test::<Xnum>(8))]
     #[case::code_name(|| checked_test::<CodeName>(4))]
     #[case::xl_wide_string(|| checked_test::<XlWideString>(4))]
+    #[case::range_protection_title_sd_rel(|| checked_test::<RangeProtectionTitleSDRel>(10))]
     #[case::xl_nullable_wide_string(|| checked_test::<XlNullableWideString>(4))]
     #[case::header_footer_string(|| checked_test::<HeaderFooterString>(4))]
     #[case::simple_rich_str(|| checked_test::<SimpleRichStr>(5))]
@@ -121,6 +123,8 @@ mod tests {
     #[case::brt_calc_prop(|| checked_test::<BrtCalcProp>(26))]
     #[case::brt_file_sharing(|| checked_test::<BrtFileSharing>(8))]
     #[case::brt_sheet_protection(|| checked_test::<BrtSheetProtection>(66))]
+    #[case::brt_range_protection(|| checked_test::<BrtRangeProtection>(32))]
+    #[case::brt_cell_ignore_ec(|| checked_test::<BrtCellIgnoreEC>(8))]
     #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]
     #[case::brt_begin_ws_view(|| checked_test::<BrtBeginWsView>(30))]
     #[case::brt_end_ws_view(|| checked_test::<BrtEndWsView>(0))]
@@ -178,6 +182,8 @@ mod tests {
     #[case::brt_begin_slicers_ex(|| checked_test::<BrtBeginSlicersEx>(0))]
     #[case::brt_end_sheet(|| checked_test::<BrtEndSheet>(0))]
     #[case::brt_end_sheet_data(|| checked_test::<BrtEndSheetData>(0))]
+    #[case::brt_begin_cell_ignore_ecs(|| checked_test::<BrtBeginCellIgnoreECs>(0))]
+    #[case::brt_end_cell_ignore_ecs(|| checked_test::<BrtEndCellIgnoreECs>(0))]
     #[case::brt_end_single_cells(|| checked_test::<BrtEndSingleCells>(0))]
     #[case::brt_end_slicer_cache_ids(|| checked_test::<BrtEndSlicerCacheIDs>(0))]
     #[case::brt_end_slicer_cache_si_ranges(|| checked_test::<BrtEndSlicerCacheSiRanges>(0))]

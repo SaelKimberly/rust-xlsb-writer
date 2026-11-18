@@ -16,7 +16,7 @@ registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
 public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
 widths/formats, multi-sheet package assembly, workbook calculation mode,
-read-only recommendation, tab ratio, sheet protection, and `save`/
+read-only recommendation, tab ratio, sheet protection with unprotected ranges, ignored worksheet errors, and `save`/
 `save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
 table and emits `BrtCellIsst`; `ToCellValue` remains the low-level core
 contract and still converts `&str`/`String` to inline strings. `KnownID` covers
@@ -77,7 +77,8 @@ autofit-width hints, merged ranges, worksheet view/display state (including
 normal, page-layout, and page-break-preview modes and hidden unused rows), tab
 state, print state (page setup, text headers/footers, manual page breaks, print
 areas, and repeat titles), hyperlinks with external worksheet relationships,
-and a worksheet-local format table; `workbook.rs` owns the worksheet vector,
+unprotected ranges, ignored worksheet errors, and a worksheet-local format
+table; `workbook.rs` owns the worksheet vector,
 looks sheets up by index or exact name, and attaches detached `Worksheet::new`
 values through `push_worksheet`; `write` stores
 context-free `CellData` and `write_with_format` interns a `Format` by value.
@@ -151,7 +152,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 324 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 344 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -281,7 +282,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 324 unit tests and 6 doctests total: 179 in core, 145 in writer. Most core
+- 344 unit tests and 6 doctests total: 189 in core, 155 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
@@ -302,8 +303,8 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
   package parts, multi-sheet save, print/header/page-break serialization,
   print-area/repeat-title defined names, hyperlink records/relationships, workbook
-  calculation/read-only/tab-ratio records, and calamine round-trips for values
-  and temporal formats.
+  calculation/read-only/tab-ratio records, range protection/ignored-error
+  records, and calamine round-trips for values and temporal formats.
 - `criterion` is a dev-dependency in both crates but no benchmark exists.
 - No CI runs any of this. Run `cargo test --workspace` before claiming a change
   works, and update the affected size literal rather than loosening the

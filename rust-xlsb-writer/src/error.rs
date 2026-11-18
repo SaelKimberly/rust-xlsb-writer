@@ -33,6 +33,10 @@ pub enum Error {
     #[error("range start is after range end")]
     RowColumnOrder,
 
+    /// A method argument is invalid for the requested operation.
+    #[error("invalid parameter: {0}")]
+    Parameter(String),
+
     /// A worksheet index is outside the workbook.
     #[error("worksheet index out of range: {0}")]
     WorksheetIndex(usize),

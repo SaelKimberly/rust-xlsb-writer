@@ -786,6 +786,43 @@ mod tests {
     }
 
     #[test]
+    fn protected_ranges_and_ignored_errors_reach_the_sheet_part() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write(0, 0, "x").expect("writes");
+        worksheet.protect();
+        worksheet
+            .unprotect_range_with_options(1, 1, 2, 2, "Editable", "abc123")
+            .expect("unprotect");
+        worksheet
+            .ignore_error_range(0, 0, 1, 1, crate::IgnoreError::NumberStoredAsText)
+            .expect("ignore");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let ranges = records::<rust_xlsb_core::prelude::BrtRangeProtection>(&sheet);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].protPwd, 0xC58F);
+        assert_eq!(ranges[0].sqRfX.rgRefx[0].rwFirst, 1);
+        assert_eq!(
+            ranges[0]
+                .RangeProtectionTitleSDRel
+                .rgchTitle
+                .try_to_string()
+                .expect("title"),
+            "Editable"
+        );
+
+        let errors = records::<rust_xlsb_core::prelude::BrtCellIgnoreEC>(&sheet);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].grbit,
+            rust_xlsb_core::prelude::BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT
+        );
+        assert_eq!(errors[0].sqrfxu.crfx, 1);
+    }
+
+    #[test]
     fn package_has_expected_parts() {
         let mut workbook = crate::Workbook::new();
         workbook

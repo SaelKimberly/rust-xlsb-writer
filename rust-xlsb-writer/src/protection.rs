@@ -1,6 +1,9 @@
 //! Worksheet protection options and password verifier.
 
-use rust_xlsb_core::prelude::BrtSheetProtection;
+use rust_xlsb_core::prelude::{
+    BrtRangeProtection, BrtSheetProtection, RangeProtectionTitleSDRel, UncheckedRfX,
+    UncheckedSqRfX, XlStringExt, XlWideString,
+};
 
 /// Protection options for [`Worksheet::protect_with_options`](crate::Worksheet::protect_with_options).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,6 +117,34 @@ impl SheetProtection {
             fAutoFilter: options.use_autofilter as u32,
             fPivotTables: options.use_pivot_tables as u32,
             fSelUnlockedCells: options.select_unlocked_cells as u32,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the worksheet model and sheet serializer"
+)]
+pub(crate) struct UnprotectedRange {
+    pub(crate) range: UncheckedRfX,
+    pub(crate) name: String,
+    pub(crate) password_hash: u16,
+}
+
+impl UnprotectedRange {
+    pub(crate) fn record(&self) -> BrtRangeProtection {
+        BrtRangeProtection {
+            protPwd: self.password_hash,
+            sqRfX: UncheckedSqRfX {
+                crfx: 1,
+                rgRefx: vec![self.range],
+            },
+            RangeProtectionTitleSDRel: RangeProtectionTitleSDRel {
+                rgchTitle: XlWideString::construct(Some(self.name.as_str())),
+                dwsdRel: 0,
+                pSDRel: Vec::new(),
+            },
         }
     }
 }

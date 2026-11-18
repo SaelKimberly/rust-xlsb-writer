@@ -50,14 +50,14 @@ the breadth gap.
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
 | Hyperlinks | `write_url` and text/format/tooltip variants, internal and external targets, default hyperlink style, worksheet relationships |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks, print areas, repeat rows/columns |
-| Protection | sheet protection with optional legacy password verifier and selectable permissions |
+| Protection | sheet protection with optional legacy password verifier, selectable permissions, and unprotected ranges |
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 179 core + 145 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 189 core + 155 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -168,8 +168,8 @@ Status meanings:
 | `add_data_validation` | Missing | Validation records |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
 | `protect`, `protect_with_password`, `protect_with_options` | Supported | `BrtSheetProtection`; legacy verifier, no encryption |
-| `unprotect_range`, `unprotect_range_with_options` | Missing | `BrtRangeProtection` records |
-| `ignore_error`, `ignore_error_range` | Missing | Error-ignore records |
+| `unprotect_range`, `unprotect_range_with_options` | Supported | `BrtRangeProtection` records |
+| `ignore_error`, `ignore_error_range` | Supported | `BrtCellIgnoreEC` collection |
 | `set_serialize_headers`, serde serialization/deserialization | Missing | Serde integration |
 
 ### 3.5 Rich Objects
@@ -286,7 +286,7 @@ records or package parts that do not exist yet.
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
 | Deflate | Compression strategy and ZIP writer options |
 | Workbook behavior | Shipped: `BrtCalcProp`, `BrtFileSharing`, and `BrtBookView.iTabRatio` |
-| Worksheet protection | Shipped: `BrtSheetProtection`, legacy password verifier, permission options |
+| Worksheet protection | Shipped: `BrtSheetProtection`, `BrtRangeProtection`, legacy password verifier, permission options |
 
 ## 6. Roadmap
 
@@ -331,7 +331,8 @@ records; LibreOffice renders merged ranges and links; no stubs.
 | `add_table` | Structured tables and table styles | L |
 | `add_conditional_format` | Reporting and highlighting | L |
 | `add_data_validation` | Input constraints | M |
-| `unprotect_range` | Shared-workbook safety; basic `protect*` is shipped | M |
+| `unprotect_range` ✅ | Shared-workbook safety | M |
+| `ignore_error` ✅ | Suppress worksheet error indicators | S |
 | `set_formula_result` variants | Finishing touches for computed sheets | S–M |
 
 **Exit criteria:** filters/tables/validation survive calamine where readable;
@@ -437,7 +438,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 179 core + 145 writer unit tests and 6 doctests; calamine
+- Test evidence: 189 core + 155 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
@@ -446,8 +447,9 @@ parts.
   gridlines/headings/centering, fit-to-page, first page number, text
   headers/footers, manual page breaks, and hyperlinks; it normalizes paper size
   and drops black-and-white and draft state. It also drops the custom tab ratio,
-  manual calculation mode, and read-only recommendation on XLSB import, so those
-  records are proven by decode tests, not an XLSX round-trip. The XLSX round-trip keeps both an
+  manual calculation mode, read-only recommendation, protected ranges, and
+  ignored worksheet errors on XLSB import, so those records are proven by decode
+  tests, not an XLSX round-trip. The XLSX round-trip keeps both an
   external relationship and an internal `location`. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through
   `Report 3 of 3` in the header. Grouped rows preserve outline levels and
