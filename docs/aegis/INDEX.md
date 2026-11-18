@@ -8,3 +8,7 @@
 ## Plans
 
 - [XLSB writer API implementation plan](plans/2026-11-18-xlsxwriter-compatible-api.md)
+
+## Analysis
+
+- [rust-xlsb-writer ↔ rust_xlsxwriter capability gap and roadmap](../gap-analysis-rust-xlsxwriter.md)

@@ -1,0 +1,430 @@
+# rust-xlsb-writer ↔ rust_xlsxwriter capability gap and roadmap
+
+- Status: Current-state analysis
+- Date: 2026-11-18
+- Current writer: `rust-xlsb-writer` at commit `f96f942`
+- Reference: vendored `rust_xlsxwriter` v0.102.0, commit `d850973`
+- Scope: XLSB writer features. Reading and Arrow ingestion are separate
+  workstreams and are not scored here.
+- Related: `docs/aegis/specs/2026-11-18-xlsxwriter-compatible-api-design.md`,
+  `docs/aegis/plans/2026-11-18-xlsxwriter-compatible-api.md`
+
+## 1. Summary
+
+`rust-xlsb-writer` now has a usable, source-compatible subset of the
+`rust_xlsxwriter` API: owned workbooks and worksheets, cell values, basic
+`Format` styling, row/column layout, shared strings, multi-sheet XLSB packaging,
+and the three save entry points.
+
+It is not a feature-equivalent replacement. The largest gaps are:
+
+1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
+2. **Cell-level structural features** — no merged ranges, hyperlinks, rich
+   strings, cell/range formatting, or clear-cell operations.
+3. **Worksheet layout and view** — no hidden rows/columns, freeze panes,
+   autofit, grouping, page setup, print settings, or sheet state.
+4. **Analysis features** — no autofilters, tables, conditional formatting, data
+   validation, or protection.
+5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
+   sparklines.
+6. **Workbook metadata and packaging** — no defined names, document properties,
+   themes, chartsheets, VBA, or compressed ZIP.
+7. **Data ecosystem** — no `Result<T, E>` cells, `Formula`, `Url`, `ExcelDateTime`,
+   jiff, `rust_decimal`, serde, or Polars adapters.
+8. **Memory modes** — no constant-memory or low-memory worksheet writers.
+
+The current API surface is deliberately narrow: roughly 6 `Workbook`, 29
+`Worksheet`, and 26 `Format` public methods, versus 31, 165, and 52 methods in
+the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
+the breadth gap.
+
+## 2. What Already Works
+
+| Area | Current capability |
+|---|---|
+| Workbook | `new`, `add_worksheet`, `worksheet_from_index`, `save`, `save_to_buffer`, `save_to_writer` |
+| Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
+| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
+| Writes | generic `write`, `write_with_format`, `write_row`, `write_column`, typed string/number/boolean/blank/date/time/datetime helpers |
+| Cell layout | column width and range width, column format and range format, row height, row format |
+| Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, locked/hidden |
+| Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
+| Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
+| Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
+| Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
+| Verification | 119 core + 40 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+
+## 3. Capability Matrix
+
+Status meanings:
+
+- **Supported** — public API exists and is covered by tests.
+- **Partial** — some subset exists, but important modes are missing.
+- **Missing** — no public API.
+- **Not applicable / later** — XLSX-specific or outside the current XLSB writer
+  scope.
+
+### 3.1 Workbook
+
+| `rust_xlsxwriter` capability | Current | Gap |
+|---|---|---|
+| `new`, `add_worksheet`, `worksheet_from_index`, `save*` | Supported | — |
+| `worksheet_from_name` | Missing | Name lookup |
+| `worksheets`, `worksheets_mut`, `push_worksheet` | Missing | Worksheet collection access |
+| `add_worksheet_with_constant_memory` | Missing | Streaming writer |
+| `add_worksheet_with_low_memory` | Missing | Low-memory writer |
+| `new_worksheet_with_constant_memory`, `new_worksheet_with_low_memory` | Missing | Detached worksheet constructors |
+| `set_tempdir` | Missing | Temp-file policy for streaming |
+| `add_chartsheet` | Missing | Chartsheet packaging |
+| `define_name` | Missing | Defined-name records |
+| `set_properties` | Missing | Document properties part |
+| `set_default_format` | Missing | Workbook default format |
+| `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
+| `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
+| `use_zip_large_file`, `set_zip_compression_level` | Missing | Deflate/large-file ZIP |
+| `read_only_recommended` | Missing | Workbook view flag |
+| `set_calculation_mode` | Missing | Calculation properties |
+| `set_tab_ratio` | Missing | Workbook view |
+| `register_format`, `populate_string_table` | Missing | Advanced/low-level format and SST hooks |
+
+### 3.2 Worksheet Values And Formulas
+
+| Capability | Current | Gap |
+|---|---|---|
+| `write`, `write_with_format` | Supported | — |
+| `write_row`, `write_column` | Supported | No formatted variants |
+| `write_row_with_format`, `write_column_with_format` | Missing | Row/column formatted writes |
+| `write_row_matrix`, `write_column_matrix` | Missing | Matrix writes |
+| `write_string`, `write_number`, `write_boolean`, `write_blank` | Supported | — |
+| `write_datetime`, `write_date_with_format`, `write_time_with_format` | Supported | Unformatted `write_date`/`write_time` are additive extensions |
+| `write_date`, `write_time` (unformatted) | Supported extension | Not present in `rust_xlsxwriter` |
+| `write_formula`, `write_formula_with_format` | Missing | Formula records and result caching |
+| `write_array_formula`, `write_dynamic_array_formula` | Missing | Array/dynamic formula records |
+| `write_dynamic_formula` | Missing | Dynamic formula records |
+| `write_rich_string` | Missing | Rich-string cell records |
+| `write_url`, `write_url_with_text`, `write_url_with_options` | Missing | Hyperlink records and URL options |
+| `write_rich_string_with_format`, `write_url_with_format` | Missing | Formatted rich text and links |
+| `set_formula_result`, `set_formula_result_default` | Missing | Stored formula results |
+| `set_nan_value`, `set_infinity_value`, `set_neg_infinity_value` | Missing | Display text for non-finite numbers |
+| `set_hidden_zeroes` | Missing | Worksheet display option |
+
+### 3.3 Worksheet Layout, View, And Print
+
+| Capability | Current | Gap |
+|---|---|---|
+| `set_row_height`, `set_row_format` | Supported | — |
+| `set_row_height_pixels` | Missing | Pixel units |
+| `set_row_hidden`, `set_row_unhidden` | Missing | Row visibility |
+| `set_default_row_height`, `set_default_row_height_pixels` | Missing | Default row height |
+| `group_rows`, `group_rows_collapsed` | Missing | Outline groups |
+| `set_column_width`, `set_column_range_width` | Supported | — |
+| `set_column_width_pixels`, `set_column_range_width_pixels` | Missing | Pixel units |
+| `set_column_autofit_width` | Missing | Autofit width hint |
+| `set_column_format`, `set_column_range_format` | Supported | — |
+| `set_column_hidden`, `set_column_range_hidden` | Missing | Column visibility |
+| `group_columns`, `group_columns_collapsed` | Missing | Column outline groups |
+| `group_symbols_above`, `group_symbols_to_left` | Missing | Outline display |
+| `hide_unused_rows` | Missing | Row hiding |
+| `autofit`, `autofit_to_max_width` | Missing | Width calculation |
+| `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
+| `set_default_format` | Missing | Worksheet default format |
+| `set_cell_format`, `set_range_format`, `set_range_format_with_border` | Missing | Format-only edits |
+| `clear_cell`, `clear_cell_format` | Missing | Cell clearing |
+| `set_selection`, `set_top_left_cell` | Missing | View selection |
+| `set_freeze_panes`, `set_freeze_panes_top_cell` | Missing | Frozen panes |
+| `set_zoom`, `set_zoom_to_fit` | Missing | View zoom |
+| `set_screen_gridlines`, `set_print_gridlines` | Missing | Gridline display |
+| `set_right_to_left` | Missing | Sheet direction |
+| `set_active`, `set_selected`, `set_hidden`, `set_very_hidden` | Missing | Sheet state |
+| `set_first_tab`, `set_tab_color` | Missing | Tab state/color |
+| `set_landscape`, `set_portrait`, `set_paper_size`, `set_page_order` | Missing | Page setup |
+| `set_margins`, `set_header`, `set_footer` | Missing | Page layout |
+| `set_header_image`, `set_footer_image` | Missing | Header/footer images |
+| `set_print_area`, `set_repeat_rows`, `set_repeat_columns` | Missing | Print ranges |
+| `set_print_scale`, `set_print_fit_to_pages` | Missing | Print scaling |
+| `set_print_center_horizontally`, `set_print_center_vertically` | Missing | Print centering |
+| `set_print_gridlines`, `set_print_headings`, `set_print_black_and_white`, `set_print_draft` | Missing | Print options |
+| `set_page_breaks`, `set_vertical_page_breaks` | Missing | Manual page breaks |
+| `set_view_normal`, `set_view_page_layout`, `set_view_page_break_preview` | Missing | View modes |
+| `set_print_first_page_number` | Missing | Page numbering |
+
+### 3.4 Tables, Filters, Validation, And Protection
+
+| Capability | Current | Gap |
+|---|---|---|
+| `autofilter`, `filter_column`, `filter_automatic_off` | Missing | Autofilter records |
+| `add_table` | Missing | Table records/styles and column metadata |
+| `add_conditional_format` | Missing | DXF and conditional-format records |
+| `add_data_validation` | Missing | Validation records |
+| `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
+| `protect`, `protect_with_password`, `protect_with_options` | Missing | Sheet protection |
+| `unprotect_range`, `unprotect_range_with_options` | Missing | Unprotected ranges |
+| `ignore_error`, `ignore_error_range` | Missing | Error-ignore records |
+| `set_serialize_headers`, serde serialization/deserialization | Missing | Serde integration |
+
+### 3.5 Rich Objects
+
+| Capability | Current | Gap |
+|---|---|---|
+| `merge_range` | Missing | Merged-cell records |
+| `insert_image`, `embed_image`, image offsets/fit-to-cell | Missing | Drawing/image parts |
+| `insert_background_image` | Missing | Worksheet background |
+| `insert_chart`, `insert_chart_with_offset` | Missing | Chart parts |
+| `insert_note` | Missing | Comments/notes |
+| `insert_shape`, `insert_shape_with_offset` | Missing | Drawing shapes |
+| `insert_button`, `insert_button_with_offset` | Missing | Form controls |
+| `insert_checkbox`, `insert_checkbox_with_format` | Missing | Checkbox cells |
+| `show_all_notes`, `set_default_note_author` | Missing | Notes display |
+
+### 3.6 Formatting
+
+| `Format` capability | Current | Gap |
+|---|---|---|
+| `new`, bold, italic, font color/name/size | Supported | — |
+| `set_num_format`, `set_num_format_index` | Supported | — |
+| `set_align`, `set_text_wrap` | Supported | — |
+| `set_pattern`, background/foreground color | Supported | — |
+| `set_border`, four sides, four side colors | Supported | — |
+| `set_locked`, `set_hidden`, `unset_hidden` | Supported | — |
+| `merge` | Missing | Merge two formats |
+| `set_font_scheme`, `set_font_family`, `set_font_charset` | Missing | Font metadata |
+| `set_underline`, `set_font_strikethrough`, `set_font_script` | Missing | Font decoration |
+| `set_indent`, `set_rotation`, `set_reading_direction`, `set_shrink` | Missing | Text layout |
+| `set_border_diagonal`, diagonal color/type | Missing | Diagonal borders |
+| `set_hyperlink`, `unset_hyperlink_style` | Missing | Hyperlink style |
+| `set_unlocked` | Missing | Protection (only locked exists) |
+| `set_quote_prefix`, `unset_quote_prefix` | Missing | Text quote marker |
+| `set_checkbox`, `unset_checkbox` | Missing | Checkbox format |
+| `unset_bold`, `unset_italic`, `unset_font_strikethrough`, `unset_text_wrap`, `unset_shrink` | Missing | Reset helpers |
+
+### 3.7 Data Types And Features
+
+| Capability | Current | Gap |
+|---|---|---|
+| Strings, numbers, booleans, errors, blank | Supported | — |
+| `Option<T>` | Supported | — |
+| `Result<T, E>` | Missing | Error/value cell selection |
+| chrono `NaiveDate`/`NaiveTime`/`NaiveDateTime` | Supported | — |
+| `TimeDelta`, `DateTime<Utc>` | Supported | Additive extensions |
+| `ExcelDateTime` | Missing | Native Excel datetime type |
+| jiff civil types | Missing | Optional feature |
+| `rust_decimal::Decimal` | Missing | Optional feature |
+| `Formula` | Missing | Formula value type |
+| `Url` | Missing | Hyperlink value type |
+| Serde serialization | Missing | Optional feature |
+| Polars integration | Missing | Optional feature |
+
+### 3.8 Package And Runtime
+
+| Capability | Current | Gap |
+|---|---|---|
+| Multi-sheet XLSB package | Supported | — |
+| Styles part | Supported | — |
+| Shared strings part | Supported | — |
+| Content types and relationships | Supported | — |
+| Store-only ZIP | Supported | No compression |
+| Deflate compression | Missing | ZIP strategy |
+| ZIP compression level / large-file mode | Missing | Archive options |
+| Constant-memory writer | Missing | Streaming worksheet |
+| Low-memory writer | Missing | Reduced cell retention |
+| Temp-dir control | Missing | Streaming scratch space |
+| Document properties/themes/macros/chartsheets | Missing | Workbook parts |
+| Deterministic output timestamps | Supported | Fixed DOS timestamp |
+
+## 4. Behavioral And Contract Differences
+
+These are not necessarily missing features, but they matter for ports.
+
+| Area | `rust_xlsxwriter` | `rust-xlsb-writer` |
+|---|---|---|
+| Output format | XLSX | XLSB |
+| Error name | `XlsxError` | `Error` / `XlsbError`; no alias |
+| Save extension | `.xlsx` | `.xlsb`; extension is not validated |
+| Default font | Calibri 11 | Calibri 11 |
+| Integer precision | `i64`/`u64` cast to `f64` with possible loss | exact or `ValueNotRepresentable` |
+| Unformatted date/time | `write_datetime` only | `write_date`/`write_time` are additive extensions |
+| `IntoExcelDateTime` | `to_excel_serial_date(&self) -> f64` | `into_cell_data(self) -> Result<CellData>` |
+| `CellData` | internal | public but `#[doc(hidden)]` because it appears in a public trait signature |
+| Rich strings | supported | missing |
+| Formulas | supported | missing |
+| Row/column writes | formatted and unformatted variants | unformatted variants only |
+| Worksheet collection | full mutable/immutable access | index lookup only |
+| Memory modes | constant/low-memory | cell-retaining in-memory model |
+| ZIP | deflate, compression controls | store-only |
+
+## 5. Hidden Implementation Gaps
+
+The public API gap is only part of the problem. Each feature also needs XLSB
+records or package parts that do not exist yet.
+
+| Feature area | Missing implementation |
+|---|---|
+| Formulas | Formula token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError`-class records, cached results, shared/array formula state |
+| Merged cells | Merge-cell records and range bookkeeping |
+| Hyperlinks | Hyperlink records, URL/relationship plumbing, tooltip/display options |
+| Rich strings | Rich-string cell records and run formatting |
+| Tables | Table parts, table styles, column metadata, autofilter integration |
+| Conditional formats | DXF styles and conditional-format record groups |
+| Data validation | Validation records and prompt/error options |
+| Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
+| Chartsheets | Chartsheet parts and workbook relationships |
+| Notes | Comment/note parts and VML/drawing linkage |
+| Page setup/print | Worksheet print records and view records |
+| Defined names | Workbook defined-name records |
+| Document properties | Core/app/custom property parts |
+| Themes | Theme part and theme color indexes |
+| VBA | Macro project parts and content types |
+| Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
+| Deflate | Compression strategy and ZIP writer options |
+
+## 6. Roadmap
+
+Priority order favors features that make the writer useful for ordinary
+spreadsheet generation, then analysis features, then presentation and rich
+objects, then workbook metadata, then performance.
+
+### P0 — Spreadsheet completeness (recommended next)
+
+**Goal:** cover the common “write a real worksheet” path before adding visual
+objects.
+
+| Item | Why | Size |
+|---|---|---|
+| `IntoExcelData for Result<T, E>` | Common fallible-data pattern; cheap parity win | S |
+| `merge_range` | Very common layout feature; also unblocks styled reports | M |
+| `write_url` + formatted variants | Common in reports and dashboards | M |
+| Row/column hidden, default row height, sheet visibility, tab color | Basic worksheet state; low record complexity | S–M |
+| `set_freeze_panes`, `set_selection`, `set_top_left_cell` | Basic view usability | S–M |
+| `set_cell_format`, `set_range_format`, `clear_cell`, `clear_cell_format` | Format-only edits without rewriting values | S–M |
+| `write_formula` + `set_formula_result` | Biggest functional gap; enables computed reports | L |
+| `write_array_formula` / dynamic formulas | Common Excel 365 reporting | L |
+
+**Recommended split:** ship the S/M items first as “P0a”; treat the formula
+engine as “P0b” because it needs a token encoder and new record families.
+
+**Exit criteria:** public API exists; calamine reads values and formulas’
+cached results where supported; record-level tests assert formula/merge/link
+records; LibreOffice renders merged ranges and links; no stubs.
+
+### P1 — Analysis features
+
+| Item | Why | Size |
+|---|---|---|
+| `autofilter`, `filter_column` | Standard tabular output | M |
+| `add_table` | Structured tables and table styles | L |
+| `add_conditional_format` | Reporting and highlighting | L |
+| `add_data_validation` | Input constraints | M |
+| `protect` / `unprotect_range` | Shared-workbook safety | M |
+| `set_formula_result` variants, `set_nan_value`, `set_infinity_value`, hidden zeroes | Finishing touches for computed sheets | S–M |
+
+**Exit criteria:** filters/tables/validation survive calamine where readable;
+conditional formats and protection visible in LibreOffice; malformed ranges
+rejected before output.
+
+### P2 — Print and view
+
+| Item | Why | Size |
+|---|---|---|
+| Page setup: landscape/portrait, paper size, margins, order | Printing | M |
+| Headers/footers and header/footer images | Reporting | M |
+| Print area, repeat rows/columns, page breaks | Multi-page reports | M |
+| Print scale/fit-to-pages, centering, gridlines/headings | Print fidelity | M |
+| Zoom, gridlines, right-to-left, sheet active/selected | UX parity | S–M |
+| Group rows/columns, outline symbols | Collapsible reports | M |
+| Autofit and default row height | Readability | M |
+
+**Exit criteria:** PDF/print preview through LibreOffice shows the expected
+page layout; record-level tests cover print/view records.
+
+### P3 — Rich objects
+
+| Item | Why | Size |
+|---|---|---|
+| Images: insert, embed, offset, fit-to-cell | Common report requirement | L–XL |
+| Notes/comments | Annotation | M–L |
+| Shapes/textboxes, buttons, checkboxes | Form-like sheets | L |
+| Charts | Dashboards | XL |
+| Sparklines | Compact trend display | M |
+| Background image | Presentation | M |
+
+**Exit criteria:** each object opens in LibreOffice/Excel; relationships and
+media parts are present; no orphaned parts; visual render reviewed.
+
+### P4 — Workbook metadata and packaging
+
+| Item | Why | Size |
+|---|---|---|
+| Defined names | Formula readability | M |
+| Document properties | Metadata | S–M |
+| Themes and theme colors | Visual parity | M–L |
+| Chartsheets | Dashboard structure | L |
+| VBA project/signature | Macro-enabled workbooks | XL |
+| Calculation mode, read-only recommended, tab ratio | Workbook behavior | S |
+| Deflate/compression controls, large-file ZIP | Output size and scale | M |
+
+**Exit criteria:** workbook-level parts and relationships are complete;
+calamine/Excel opens metadata; macro-enabled output is tested only with a
+known-good sample.
+
+### P5 — Performance and data ecosystem
+
+| Item | Why | Size |
+|---|---|---|
+| Constant-memory writer | Large worksheets | L |
+| Low-memory writer | Reduced allocation | L |
+| Temp-dir control and streaming row sink | Large-file operation | M |
+| Serde serialization/deserialization | Structured Rust data | L |
+| Polars adapter | Data-pipeline use | L |
+| jiff and `rust_decimal` support | Optional type coverage | S–M |
+| Matrix writes | Convenience/performance | S |
+| Compression/large-file tuning | Throughput and size | M |
+
+**Exit criteria:** peak memory is measured against a large fixture; output is
+still deterministic; no cell data loss under streaming.
+
+## 7. What Not To Do
+
+- Do not add public methods that return `Unsupported` or silently write a
+  string instead of a formula. Unsupported features stay absent until their
+  records exist.
+- Do not copy XLSX packaging XML into XLSB. Each feature needs its MS-XLSB
+  record/part equivalent.
+- Do not claim full `rust_xlsxwriter` source compatibility. The current
+  contract is a source-compatible subset plus additive date/time helpers.
+- Do not prioritize charts/images before formulas, merges, links, and basic
+  worksheet state. The latter block more real reports.
+- Do not add a second owner for worksheet/package logic; `rust-xlsb-writer`
+  remains the only public writer.
+
+## 8. Immediate Recommendation
+
+The next milestone should be **P0a**:
+
+1. `Result<T, E>` cell values.
+2. `merge_range`.
+3. `write_url` and formatted variants.
+4. Row/column hidden, default row height, sheet visibility/tab color.
+5. Freeze panes and selection.
+6. `set_cell_format`, `set_range_format`, `clear_cell`.
+
+Then start **P0b** formula work as a separate spec because it needs a formula
+tokenizer/encoder and new core records. This ordering delivers visible utility
+before the largest single implementation risk.
+
+P0a is also the best compatibility test: it exercises the existing style,
+row/column, SST, and package pipelines without requiring new drawing or chart
+parts.
+
+## 9. Evidence And Limits
+
+- Writer API inventory: `rust-xlsb-writer/src/{workbook,worksheet,format,data}.rs`
+  and its public re-exports.
+- Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
+  and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
+- Test evidence: 119 core + 40 writer unit tests and 6 doctests; calamine
+  round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
+- No benchmark measures peak memory or throughput. Memory-mode gaps are
+  architectural, not benchmarked.
+- No Microsoft Excel validation was available. LibreOffice is the visual oracle.
+- XLSB record coverage is not the same as XLSX feature coverage; “missing”
+  means “not implemented in this writer”, not “impossible in XLSB”.

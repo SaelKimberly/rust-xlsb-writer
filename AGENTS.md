@@ -105,6 +105,7 @@ UTC.
 | `rust-xlsb-core/src/prelude/` | Public record/structure facade (`record/`, `structure/`, `scope.rs`, `collection.rs`) |
 | `rust-xlsb-writer/src/` | Public writer: `Workbook`, `Worksheet`, `Format`/`Color`, data traits, sheet serializer, package assembly |
 | `rust-xlsb-writer/examples/` | `showcase.rs`: styled XLSB table through the public API |
+| `docs/` | Capability gap/roadmap plus `docs/aegis/` specs, plans, and index |
 | `.github/` | `FUNDING.yml` only; no workflows, templates, or CI |
 
 ## Development Commands
@@ -230,6 +231,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
 | `rust-xlsb-writer/examples/showcase.rs` | Public-API showcase with row bands, fills, alignment, borders, temporal formats |
+| `docs/gap-analysis-rust-xlsxwriter.md` | Current capability gap versus `rust_xlsxwriter` and prioritized P0–P5 writer roadmap |
 | `rust-toolchain.toml` | Stable `1.100.0` pin at the root; `rust-xlsb-core/rust-toolchain.toml` duplicates it |
 
 ## Runtime/Tooling Preferences

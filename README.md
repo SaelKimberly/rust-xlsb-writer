@@ -46,6 +46,9 @@ The development of this project has several key milestones:
 
 As the project progresses, these milestones may be revised and new ones may be added.
 
+Capability gap versus `rust_xlsxwriter` and prioritized writer roadmap:
+[`docs/gap-analysis-rust-xlsxwriter.md`](docs/gap-analysis-rust-xlsxwriter.md).
+
 The condition for the release of version 1.0.0-alpha will be the recognition of this project by the open source community and the inclusion of participants in the OpenOffice or LibreOffice projects in the development, as well as integrations into other widely used software libraries and products.
 
 ## Contributing
