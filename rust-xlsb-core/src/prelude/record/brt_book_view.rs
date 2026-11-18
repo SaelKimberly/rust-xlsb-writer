@@ -51,13 +51,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scrollbar_flags_start_at_the_first_bit() {
+    fn example_flags_land_in_the_first_bit_byte() {
         let view = BrtBookView {
             fDspHScroll: true,
+            fDspVScroll: true,
+            fBotAdornment: true,
+            fAFDateGroup: true,
             ..BrtBookView::default()
         };
 
         let bytes = view.to_bytes().expect("serializes");
-        assert_eq!(bytes[28], 0x08);
+        assert_eq!(bytes[28], 0x78);
     }
 }
