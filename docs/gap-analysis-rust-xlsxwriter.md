@@ -47,13 +47,14 @@ the breadth gap.
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
+| Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number |
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 136 core + 78 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 143 core + 85 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -136,20 +137,21 @@ Status meanings:
 | `set_freeze_panes` | Supported | — |
 | `set_freeze_panes_top_cell` | Supported | — |
 | `set_zoom` | Supported | `set_zoom_to_fit` remains chartsheet-only |
-| `set_screen_gridlines` | Supported | `set_print_gridlines` missing |
+| `set_screen_gridlines` | Supported | — |
 | `set_right_to_left` | Supported | — |
 | `set_active`, `set_selected`, `set_hidden`, `set_very_hidden` | Supported | — |
 | `set_first_tab`, `set_tab_color` | Supported | — |
-| `set_landscape`, `set_portrait`, `set_paper_size`, `set_page_order` | Missing | Page setup |
-| `set_margins`, `set_header`, `set_footer` | Missing | Page layout |
+| `set_landscape`, `set_portrait`, `set_paper_size`, `set_page_order` | Supported | — |
+| `set_margins` | Supported | — |
+| `set_header`, `set_footer` | Missing | Page layout |
 | `set_header_image`, `set_footer_image` | Missing | Header/footer images |
 | `set_print_area`, `set_repeat_rows`, `set_repeat_columns` | Missing | Print ranges |
-| `set_print_scale`, `set_print_fit_to_pages` | Missing | Print scaling |
-| `set_print_center_horizontally`, `set_print_center_vertically` | Missing | Print centering |
-| `set_print_gridlines`, `set_print_headings`, `set_print_black_and_white`, `set_print_draft` | Missing | Print options |
+| `set_print_scale`, `set_print_fit_to_pages` | Supported | — |
+| `set_print_center_horizontally`, `set_print_center_vertically` | Supported | — |
+| `set_print_gridlines`, `set_print_headings`, `set_print_black_and_white`, `set_print_draft` | Supported | — |
 | `set_page_breaks`, `set_vertical_page_breaks` | Missing | Manual page breaks |
 | `set_view_normal`, `set_view_page_layout`, `set_view_page_break_preview` | Missing | View modes |
-| `set_print_first_page_number` | Missing | Page numbering |
+| `set_print_first_page_number` | Supported | — |
 
 ### 3.4 Tables, Filters, Validation, And Protection
 
@@ -333,13 +335,10 @@ rejected before output.
 
 | Item | Why | Size |
 |---|---|---|
-| Page setup: landscape/portrait, paper size, margins, order | Printing | M |
 | Headers/footers and header/footer images | Reporting | M |
 | Print area, repeat rows/columns, page breaks | Multi-page reports | M |
-| Print scale/fit-to-pages, centering, gridlines/headings | Print fidelity | M |
-| Sheet active/selected | UX parity | S–M |
 | Group rows/columns, outline symbols | Collapsible reports | M |
-| Autofit and default row height | Readability | M |
+| Autofit | Readability | M |
 
 **Exit criteria:** PDF/print preview through LibreOffice shows the expected
 page layout; record-level tests cover print/view records.
@@ -429,11 +428,13 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 136 core + 78 writer unit tests and 6 doctests; calamine
+- Test evidence: 143 core + 85 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
-  rendered freeze.
+  rendered freeze. It preserves orientation, page order, margins, print
+  gridlines/headings/centering, fit-to-page, and first page number; it
+  normalizes paper size and drops black-and-white and draft state.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are
   architectural, not benchmarked.
 - No Microsoft Excel validation was available. LibreOffice is the visual oracle.

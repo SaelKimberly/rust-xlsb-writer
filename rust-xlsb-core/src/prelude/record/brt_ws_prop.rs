@@ -6,6 +6,7 @@ use crate::assign_id;
 use crate::prelude::CodeName;
 
 #[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[deku(bit_order = "lsb")]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "bit layout mirrors the MS-XLSB record"
@@ -48,9 +49,31 @@ pub struct BrtWsProp {
     pub rwSync: u32, // TODO: RwNullable
     pub colSync: u32,
 
+    #[deku(
+        reader = "CodeName::from_reader_with_ctx(deku::reader, ())",
+        writer = "CodeName::to_writer(&self.strName, deku::writer, ())"
+    )]
     pub strName: CodeName,
 }
 
 impl Unchecked for BrtWsProp {}
 
 assign_id!(BrtWsProp);
+
+#[cfg(test)]
+mod tests {
+    use deku::DekuContainerWrite;
+
+    use super::*;
+
+    #[test]
+    fn fit_to_page_is_the_first_bit_of_the_second_byte() {
+        let prop = BrtWsProp {
+            fFitToPage: true,
+            ..BrtWsProp::default()
+        };
+
+        let bytes = prop.to_bytes().expect("serializes");
+        assert_eq!(&bytes[0..2], &[0x00, 0x01]);
+    }
+}

@@ -6,8 +6,8 @@ use rust_xlsb_core::prelude::{
     BrtBeginColInfos, BrtBeginMergeCells, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
     BrtBeginWsViews, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk,
     BrtColInfo, BrtColSpan, BrtEndColInfos, BrtEndMergeCells, BrtEndSheet, BrtEndSheetData,
-    BrtEndWsView, BrtEndWsViews, BrtMergeCell, BrtPane, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo,
-    BrtWsProp, Cell, UncheckedRfX, UncheckedSqRfX, Xnum,
+    BrtEndWsView, BrtEndWsViews, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, UncheckedRfX, UncheckedSqRfX, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -139,14 +139,35 @@ pub fn write_sheet(
         push(out, &BrtEndMergeCells::default())?;
     }
 
+    write_print_settings(sheet, out)?;
+
     push(out, &BrtEndSheet::default())?;
     Ok(())
 }
 
 fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let fit_to_page = sheet.page_setup().fit_to_pages.is_some();
     let Some(color) = sheet.tab_color() else {
-        return Ok(());
+        if !fit_to_page {
+            return Ok(());
+        }
+        return push(
+            out,
+            &BrtWsProp {
+                fShowAutoBreaks: true,
+                fPublish: true,
+                fRowSumsBelow: true,
+                fColSumsRight: true,
+                fFitToPage: true,
+                fShowOutlineSymbols: true,
+                fCondFmtCalc: true,
+                rwSync: u32::MAX,
+                colSync: u32::MAX,
+                ..BrtWsProp::default()
+            },
+        );
     };
+
     push(
         out,
         &BrtWsProp {
@@ -154,6 +175,7 @@ fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
             fPublish: true,
             fRowSumsBelow: true,
             fColSumsRight: true,
+            fFitToPage: fit_to_page,
             fShowOutlineSymbols: true,
             fCondFmtCalc: true,
             brtcolorTab: color.to_brt_color()?,
@@ -273,6 +295,77 @@ fn active_pane(freeze: Option<(u32, u16)>, selection: Option<UncheckedRfX>) -> u
         (false, true) => TOP_RIGHT,
         (false, false) => TOP_LEFT,
     }
+}
+
+fn write_print_settings(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let setup = sheet.page_setup();
+
+    if setup.has_print_options() {
+        push(
+            out,
+            &BrtPrintOptions {
+                fHCenter: setup.center_horizontally,
+                fVCenter: setup.center_vertically,
+                fPrintHeaders: setup.print_headings,
+                fPrintGrid: setup.print_gridlines,
+                unused: true,
+            },
+        )?;
+    }
+
+    if setup.has_margins() {
+        push(
+            out,
+            &BrtMargins {
+                xnumLeft: Xnum::from(setup.margin_left),
+                xnumRight: Xnum::from(setup.margin_right),
+                xnumTop: Xnum::from(setup.margin_top),
+                xnumBottom: Xnum::from(setup.margin_bottom),
+                xnumHeader: Xnum::from(setup.margin_header),
+                xnumFooter: Xnum::from(setup.margin_footer),
+            },
+        )?;
+    }
+
+    if setup.has_page_setup() {
+        let (scale, fit_width, fit_height) = if let Some((width, height)) = setup.fit_to_pages {
+            (0, u32::from(width), u32::from(height))
+        } else {
+            (u32::from(setup.print_scale), 0, 0)
+        };
+        let mut grbit = 0;
+        if setup.left_to_right {
+            grbit |= BrtPageSetup::F_LEFT_TO_RIGHT;
+        }
+        if setup.landscape {
+            grbit |= BrtPageSetup::F_LANDSCAPE;
+        }
+        if setup.black_and_white {
+            grbit |= BrtPageSetup::F_NO_COLOR;
+        }
+        if setup.draft {
+            grbit |= BrtPageSetup::F_DRAFT;
+        }
+        if setup.first_page.is_some() {
+            grbit |= BrtPageSetup::F_USE_PAGE;
+        }
+
+        push(
+            out,
+            &BrtPageSetup {
+                iPaperSize: u32::from(setup.paper_size),
+                iScale: scale,
+                iCopies: 1,
+                iPageStart: setup.first_page.map_or(0, i32::from),
+                iFitWidth: fit_width,
+                iFitHeight: fit_height,
+                grbit,
+                ..BrtPageSetup::without_printer_settings()
+            },
+        )?;
+    }
+
+    Ok(())
 }
 
 fn dimension(sheet: &Worksheet) -> BrtWsDim {
@@ -485,9 +578,10 @@ mod tests {
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
         BrtBeginMergeCells, BrtBeginWsView, BrtCellIsst, BrtCellRk, BrtColInfo, BrtColor,
-        BrtMergeCell, BrtPane, BrtRowHdr, BrtSel, BrtWsFmtInfo, BrtWsProp,
+        BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel,
+        BrtWsFmtInfo, BrtWsProp,
     };
-    use rust_xlsb_core::{BiffHead, CheckedBiff, SSTHolder, StyleRegistry};
+    use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID, SSTHolder, StyleRegistry};
 
     use super::*;
     use crate::Format;
@@ -509,6 +603,15 @@ mod tests {
             }
         }
         records
+    }
+
+    fn record_ids(part: &[u8]) -> Vec<KnownID> {
+        let mut reader = BufReader::new(part);
+        let mut ids = Vec::new();
+        while let Ok((head, _)) = BiffHead::read_from_with_data(&mut reader) {
+            ids.extend(head.known_id());
+        }
+        ids
     }
 
     #[test]
@@ -654,6 +757,181 @@ mod tests {
         assert_eq!(records::<BrtSel>(&out).len(), 0);
         assert_eq!(records::<BrtWsProp>(&out).len(), 0);
         assert_eq!(records::<BrtWsFmtInfo>(&out).len(), 0);
+        assert_eq!(records::<BrtPrintOptions>(&out).len(), 0);
+        assert_eq!(records::<BrtMargins>(&out).len(), 0);
+        assert_eq!(records::<BrtPageSetup>(&out).len(), 0);
+    }
+
+    #[test]
+    fn page_setup_and_print_options_serialize_in_order() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_landscape();
+        sheet.set_paper_size(9);
+        sheet.set_page_order(false);
+        sheet.set_margins(1.0, 1.1, 1.2, 1.3, 0.4, 0.5);
+        sheet.set_print_gridlines(true);
+        sheet.set_print_headings(true);
+        sheet.set_print_center_horizontally(true);
+        sheet.set_print_center_vertically(true);
+        sheet.set_print_black_and_white(true);
+        sheet.set_print_draft(true);
+        sheet.set_print_first_page_number(6);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let print = records::<BrtPrintOptions>(&out);
+        assert_eq!(print.len(), 1);
+        assert!(print[0].fHCenter);
+        assert!(print[0].fVCenter);
+        assert!(print[0].fPrintHeaders);
+        assert!(print[0].fPrintGrid);
+        assert!(print[0].unused);
+
+        let margins = records::<BrtMargins>(&out);
+        assert_eq!(margins.len(), 1);
+        assert_eq!(*margins[0].xnumLeft, 1.0);
+        assert_eq!(*margins[0].xnumRight, 1.1);
+        assert_eq!(*margins[0].xnumTop, 1.2);
+        assert_eq!(*margins[0].xnumBottom, 1.3);
+        assert_eq!(*margins[0].xnumHeader, 0.4);
+        assert_eq!(*margins[0].xnumFooter, 0.5);
+
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(setup.len(), 1);
+        assert_eq!(setup[0].iPaperSize, 9);
+        assert_eq!(setup[0].iScale, 100);
+        assert_eq!(setup[0].iCopies, 1);
+        assert_eq!(setup[0].iPageStart, 6);
+        assert_eq!(
+            setup[0].grbit,
+            BrtPageSetup::F_LEFT_TO_RIGHT
+                | BrtPageSetup::F_LANDSCAPE
+                | BrtPageSetup::F_NO_COLOR
+                | BrtPageSetup::F_DRAFT
+                | BrtPageSetup::F_USE_PAGE
+        );
+        assert!(setup[0].szRelID.is_null());
+
+        let ids = record_ids(&out);
+        let position = |id| ids.iter().position(|known| *known == id).expect("record");
+        assert!(position(BrtPrintOptions::default().id()) < position(BrtMargins::default().id()));
+        assert!(position(BrtMargins::default().id()) < position(BrtPageSetup::default().id()));
+    }
+
+    #[test]
+    fn print_scale_and_fit_are_mutually_exclusive() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_print_scale(50);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(
+            (setup[0].iScale, setup[0].iFitWidth, setup[0].iFitHeight),
+            (50, 0, 0)
+        );
+
+        sheet.set_print_fit_to_pages(2, 3);
+        out.clear();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(
+            (setup[0].iScale, setup[0].iFitWidth, setup[0].iFitHeight),
+            (0, 2, 3)
+        );
+
+        sheet.set_print_scale(75);
+        out.clear();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(
+            (setup[0].iScale, setup[0].iFitWidth, setup[0].iFitHeight),
+            (75, 0, 0)
+        );
+    }
+
+    #[test]
+    fn invalid_print_values_are_ignored() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_print_scale(9);
+        sheet.set_print_fit_to_pages(32_768, 2);
+        sheet.set_print_first_page_number(32_768);
+        sheet.set_margins(-1.0, 50.0, 1.0, f64::NAN, 0.4, 0.5);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        assert_eq!(records::<BrtPageSetup>(&out).len(), 0);
+        let margins = records::<BrtMargins>(&out);
+        assert_eq!(margins.len(), 1);
+        assert_eq!(*margins[0].xnumLeft, 0.7);
+        assert_eq!(*margins[0].xnumRight, 0.7);
+        assert_eq!(*margins[0].xnumTop, 1.0);
+        assert_eq!(*margins[0].xnumHeader, 0.4);
+        assert_eq!(*margins[0].xnumFooter, 0.5);
+    }
+
+    #[test]
+    fn print_black_white_and_draft_emit_page_setup() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_print_black_and_white(true);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        assert_eq!(records::<BrtPrintOptions>(&out).len(), 0);
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(setup.len(), 1);
+        assert_eq!(setup[0].grbit, BrtPageSetup::F_NO_COLOR);
+
+        sheet.set_print_draft(true);
+        out.clear();
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(
+            setup[0].grbit,
+            BrtPageSetup::F_NO_COLOR | BrtPageSetup::F_DRAFT
+        );
+    }
+
+    #[test]
+    fn fit_to_pages_sets_wsp_prop_flag() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_print_fit_to_pages(1, 2);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let props = records::<BrtWsProp>(&out);
+        assert_eq!(props.len(), 1);
+        assert!(props[0].fFitToPage);
+        let setup = records::<BrtPageSetup>(&out);
+        assert_eq!(
+            (setup[0].iScale, setup[0].iFitWidth, setup[0].iFitHeight),
+            (0, 1, 2)
+        );
+    }
+
+    #[test]
+    fn restoring_defaults_removes_print_records() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_landscape();
+        sheet.set_portrait();
+        sheet.set_margins(0.7, 0.7, 0.75, 0.75, 0.3, 0.3);
+        sheet.set_print_gridlines(true);
+        sheet.set_print_gridlines(false);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        assert_eq!(records::<BrtPrintOptions>(&out).len(), 0);
+        assert_eq!(records::<BrtMargins>(&out).len(), 0);
+        assert_eq!(records::<BrtPageSetup>(&out).len(), 0);
     }
 
     #[test]

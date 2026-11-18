@@ -13,6 +13,15 @@ const MAX_STRING_UTF16: usize = 32_767;
 const DEFAULT_ZOOM: u16 = 100;
 const MIN_ZOOM: u16 = 10;
 const MAX_ZOOM: u16 = 400;
+const DEFAULT_PRINT_SCALE: u16 = 100;
+const MAX_PAGE_DIMENSION: u16 = 32_767;
+const MAX_MARGIN: f64 = 49.0;
+const DEFAULT_MARGIN_LEFT: f64 = 0.7;
+const DEFAULT_MARGIN_RIGHT: f64 = 0.7;
+const DEFAULT_MARGIN_TOP: f64 = 0.75;
+const DEFAULT_MARGIN_BOTTOM: f64 = 0.75;
+const DEFAULT_MARGIN_HEADER: f64 = 0.3;
+const DEFAULT_MARGIN_FOOTER: f64 = 0.3;
 
 /// Zero-based row number.
 pub type RowNum = u32;
@@ -95,6 +104,86 @@ impl SheetView {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "print state maps directly to independent BIFF flags"
+)]
+pub struct PageSetup {
+    pub(crate) landscape: bool,
+    pub(crate) paper_size: u8,
+    pub(crate) left_to_right: bool,
+    pub(crate) margin_left: f64,
+    pub(crate) margin_right: f64,
+    pub(crate) margin_top: f64,
+    pub(crate) margin_bottom: f64,
+    pub(crate) margin_header: f64,
+    pub(crate) margin_footer: f64,
+    pub(crate) print_gridlines: bool,
+    pub(crate) print_headings: bool,
+    pub(crate) center_horizontally: bool,
+    pub(crate) center_vertically: bool,
+    pub(crate) black_and_white: bool,
+    pub(crate) draft: bool,
+    pub(crate) print_scale: u16,
+    pub(crate) fit_to_pages: Option<(u16, u16)>,
+    pub(crate) first_page: Option<u16>,
+}
+
+impl Default for PageSetup {
+    fn default() -> Self {
+        Self {
+            landscape: false,
+            paper_size: 0,
+            left_to_right: false,
+            margin_left: DEFAULT_MARGIN_LEFT,
+            margin_right: DEFAULT_MARGIN_RIGHT,
+            margin_top: DEFAULT_MARGIN_TOP,
+            margin_bottom: DEFAULT_MARGIN_BOTTOM,
+            margin_header: DEFAULT_MARGIN_HEADER,
+            margin_footer: DEFAULT_MARGIN_FOOTER,
+            print_gridlines: false,
+            print_headings: false,
+            center_horizontally: false,
+            center_vertically: false,
+            black_and_white: false,
+            draft: false,
+            print_scale: DEFAULT_PRINT_SCALE,
+            fit_to_pages: None,
+            first_page: None,
+        }
+    }
+}
+
+impl PageSetup {
+    pub(crate) const fn has_print_options(&self) -> bool {
+        self.print_gridlines
+            || self.print_headings
+            || self.center_horizontally
+            || self.center_vertically
+    }
+
+    pub(crate) fn has_margins(&self) -> bool {
+        self.margin_left != DEFAULT_MARGIN_LEFT
+            || self.margin_right != DEFAULT_MARGIN_RIGHT
+            || self.margin_top != DEFAULT_MARGIN_TOP
+            || self.margin_bottom != DEFAULT_MARGIN_BOTTOM
+            || self.margin_header != DEFAULT_MARGIN_HEADER
+            || self.margin_footer != DEFAULT_MARGIN_FOOTER
+    }
+
+    pub(crate) const fn has_page_setup(&self) -> bool {
+        self.landscape
+            || self.paper_size != 0
+            || self.left_to_right
+            || self.black_and_white
+            || self.draft
+            || self.print_scale != DEFAULT_PRINT_SCALE
+            || self.fit_to_pages.is_some()
+            || self.first_page.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     #[default]
@@ -118,6 +207,7 @@ pub struct Worksheet {
     first_tab: bool,
     tab_color: Option<Color>,
     default_row_height: Option<f64>,
+    page_setup: PageSetup,
 }
 
 impl Worksheet {
@@ -136,6 +226,7 @@ impl Worksheet {
             first_tab: false,
             tab_color: None,
             default_row_height: None,
+            page_setup: PageSetup::default(),
         }
     }
 
@@ -918,6 +1009,141 @@ impl Worksheet {
         self.set_default_row_height(f64::from(height) * 0.75)
     }
 
+    /// Sets the printed page orientation to landscape.
+    pub const fn set_landscape(&mut self) -> &mut Self {
+        self.page_setup.landscape = true;
+        self
+    }
+
+    /// Sets the printed page orientation to portrait.
+    pub const fn set_portrait(&mut self) -> &mut Self {
+        self.page_setup.landscape = false;
+        self
+    }
+
+    /// Sets the printer paper size.
+    ///
+    /// `0` uses the printer default. See the MS-XLSB paper-size table for the
+    /// standard values.
+    pub const fn set_paper_size(&mut self, paper_size: u8) -> &mut Self {
+        self.page_setup.paper_size = paper_size;
+        self
+    }
+
+    /// Sets the page print order.
+    ///
+    /// `true` prints down then over, the default; `false` prints over then
+    /// down.
+    pub const fn set_page_order(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.left_to_right = !enable;
+        self
+    }
+
+    /// Sets the printed page margins in inches.
+    ///
+    /// Values outside `0..49` are ignored individually; negative values keep
+    /// the current margin.
+    pub fn set_margins(
+        &mut self,
+        left: f64,
+        right: f64,
+        top: f64,
+        bottom: f64,
+        header: f64,
+        footer: f64,
+    ) -> &mut Self {
+        let setup = &mut self.page_setup;
+        if valid_margin(left) {
+            setup.margin_left = left;
+        }
+        if valid_margin(right) {
+            setup.margin_right = right;
+        }
+        if valid_margin(top) {
+            setup.margin_top = top;
+        }
+        if valid_margin(bottom) {
+            setup.margin_bottom = bottom;
+        }
+        if valid_margin(header) {
+            setup.margin_header = header;
+        }
+        if valid_margin(footer) {
+            setup.margin_footer = footer;
+        }
+        self
+    }
+
+    /// Prints gridlines when `enable` is true.
+    pub const fn set_print_gridlines(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.print_gridlines = enable;
+        self
+    }
+
+    /// Prints row and column headings when `enable` is true.
+    pub const fn set_print_headings(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.print_headings = enable;
+        self
+    }
+
+    /// Centers the printed output horizontally when `enable` is true.
+    pub const fn set_print_center_horizontally(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.center_horizontally = enable;
+        self
+    }
+
+    /// Centers the printed output vertically when `enable` is true.
+    pub const fn set_print_center_vertically(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.center_vertically = enable;
+        self
+    }
+
+    /// Sets the print scale percentage.
+    ///
+    /// Values outside `10..=400` are ignored. Setting a scale disables
+    /// fit-to-pages.
+    pub fn set_print_scale(&mut self, scale: u16) -> &mut Self {
+        if (MIN_ZOOM..=MAX_ZOOM).contains(&scale) {
+            self.page_setup.print_scale = scale;
+            self.page_setup.fit_to_pages = None;
+        }
+        self
+    }
+
+    /// Fits the printed output to a page width and height.
+    ///
+    /// Values above `32767` are ignored. Setting fit-to-pages disables an
+    /// explicit print scale.
+    pub const fn set_print_fit_to_pages(&mut self, width: u16, height: u16) -> &mut Self {
+        if width <= MAX_PAGE_DIMENSION && height <= MAX_PAGE_DIMENSION {
+            self.page_setup.fit_to_pages = Some((width, height));
+            self.page_setup.print_scale = DEFAULT_PRINT_SCALE;
+        }
+        self
+    }
+
+    /// Prints in black and white when `enable` is true.
+    pub const fn set_print_black_and_white(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.black_and_white = enable;
+        self
+    }
+
+    /// Omits graphics when printing when `enable` is true.
+    pub const fn set_print_draft(&mut self, enable: bool) -> &mut Self {
+        self.page_setup.draft = enable;
+        self
+    }
+
+    /// Sets the first printed page number.
+    ///
+    /// Values above `32767` are ignored.
+    pub const fn set_print_first_page_number(&mut self, page_number: u16) -> &mut Self {
+        if page_number <= MAX_PAGE_DIMENSION {
+            self.page_setup.first_page = Some(page_number);
+        }
+        self
+    }
+
     /// Applies a format to one cell without changing its value.
     ///
     /// A missing cell becomes a formatted blank cell.
@@ -1185,6 +1411,10 @@ impl Worksheet {
         self.default_row_height
     }
 
+    pub(crate) const fn page_setup(&self) -> &PageSetup {
+        &self.page_setup
+    }
+
     #[must_use]
     pub const fn row_options(&self) -> &BTreeMap<u32, RowOptions> {
         &self.rows
@@ -1242,6 +1472,10 @@ fn validate_row_height(height: f64) -> Result<()> {
             "row height is outside 0..=409.5",
         ))
     }
+}
+
+fn valid_margin(margin: f64) -> bool {
+    (0.0..MAX_MARGIN).contains(&margin)
 }
 
 fn pixels_to_width(pixels: u32) -> f64 {

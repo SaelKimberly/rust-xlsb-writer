@@ -13,6 +13,7 @@
 - [Worksheet views: freeze panes, selection, top-left cell](plans/2026-11-18-worksheet-views.md)
 - [Worksheet view options and pixel units](plans/2026-11-18-view-options-and-pixel-units.md)
 - [Worksheet tabs and default row height](plans/2026-11-18-worksheet-tabs-and-default-height.md)
+- [Worksheet page setup and print options](plans/2026-11-18-worksheet-page-setup.md)
 
 ## Analysis
 

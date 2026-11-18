@@ -199,6 +199,33 @@ fn tab_options_do_not_disturb_cell_values() {
 }
 
 #[test]
+fn page_setup_does_not_disturb_cell_values() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .set_landscape()
+        .set_paper_size(9)
+        .set_page_order(false)
+        .set_margins(0.5, 0.6, 0.7, 0.8, 0.2, 0.25)
+        .set_print_gridlines(true)
+        .set_print_headings(true)
+        .set_print_center_horizontally(true)
+        .set_print_center_vertically(true)
+        .set_print_black_and_white(true)
+        .set_print_draft(true)
+        .set_print_first_page_number(3);
+    sheet.set_print_fit_to_pages(1, 2);
+    sheet.write(0, 0, "printable").expect("write");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(
+        range.get((0, 0)),
+        Some(&Data::String("printable".to_owned()))
+    );
+}
+
+#[test]
 fn merged_range_keeps_top_left_value() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
