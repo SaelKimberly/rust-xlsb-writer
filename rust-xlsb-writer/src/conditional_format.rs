@@ -3,12 +3,14 @@
 use std::borrow::Cow;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginCFRule, BrtBeginColorScale, BrtBeginDatabar, BrtCFVO, BrtColor, BrtEndColorScale,
-    BrtEndDatabar, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DATABAR,
-    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES,
+    BrtBeginCFRule, BrtBeginColorScale, BrtBeginDatabar, BrtBeginIconSet, BrtCFVO, BrtColor,
+    BrtEndColorScale, BrtEndDatabar, BrtEndIconSet, CF_TEMPLATE_ABOVE_AVERAGE,
+    CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
+    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES,
     CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
-    CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
+    CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
+    CFVO_PERCENTILE, UncheckedRfX,
 };
 use rust_xlsb_core::push_record;
 
@@ -779,6 +781,43 @@ impl Threshold {
         })
     }
 
+    fn icon_cfvo(&self) -> Result<BrtCFVO> {
+        let (i_type, value) = match self.kind {
+            ConditionalFormatType::Number => (CFVO_NUM, self.number_value()?),
+            ConditionalFormatType::Percent => {
+                let value = self.number_value()?;
+                if !(0.0..=100.0).contains(&value) {
+                    return Err(Error::Parameter(
+                        "icon-set percentage must be in 0..=100".to_owned(),
+                    ));
+                }
+                (CFVO_PERCENT, value)
+            }
+            ConditionalFormatType::Percentile => {
+                let value = self.number_value()?;
+                if !(0.0..=100.0).contains(&value) {
+                    return Err(Error::Parameter(
+                        "icon-set percentile must be in 0..=100".to_owned(),
+                    ));
+                }
+                (CFVO_PERCENTILE, value)
+            }
+            ConditionalFormatType::Lowest | ConditionalFormatType::Highest => {
+                return Err(Error::Parameter(
+                    "icon-set thresholds must use a number, percent, or percentile".to_owned(),
+                ));
+            }
+        };
+
+        Ok(BrtCFVO {
+            iType: i_type,
+            numParam: value.into(),
+            fSaveGTE: 1,
+            fGTE: 1,
+            ..BrtCFVO::default()
+        })
+    }
+
     fn validate(&self, position: ThresholdPosition) -> Result<()> {
         if position == ThresholdPosition::Minimum && self.kind == ConditionalFormatType::Highest {
             return Err(Error::Parameter(
@@ -1226,6 +1265,268 @@ impl ConditionalFormat for ConditionalFormatDataBar {
     }
 }
 
+/// A standard Excel icon set.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum ConditionalFormatIconType {
+    /// Three arrows: up, sideways, down.
+    ThreeArrows,
+    /// Three gray arrows: up, sideways, down.
+    ThreeArrowsGray,
+    /// Three flags: red, yellow, green.
+    ThreeFlags,
+    /// Three rounded traffic lights.
+    ThreeTrafficLights,
+    /// Three traffic lights with a square rim.
+    ThreeTrafficLightsWithRim,
+    /// Three signs: circle, triangle, diamond.
+    ThreeSigns,
+    /// Three circled symbols: tick, exclamation, cross.
+    ThreeSymbolsCircled,
+    /// Three symbols: tick, exclamation, cross.
+    ThreeSymbols,
+    /// Four arrows: up, diagonal up, diagonal down, down.
+    FourArrows,
+    /// Four gray arrows: up, diagonal up, diagonal down, down.
+    FourArrowsGray,
+    /// Four circles from red to black.
+    FourRedToBlack,
+    /// Four histogram ratings.
+    FourHistograms,
+    /// Four traffic lights.
+    FourTrafficLights,
+    /// Five arrows: up, diagonal up, sideways, diagonal down, down.
+    FiveArrows,
+    /// Five gray arrows.
+    FiveArrowsGray,
+    /// Five histogram ratings.
+    FiveHistograms,
+    /// Five quadrants.
+    FiveQuadrants,
+}
+
+impl ConditionalFormatIconType {
+    const fn count(self) -> usize {
+        match self {
+            Self::ThreeArrows
+            | Self::ThreeArrowsGray
+            | Self::ThreeFlags
+            | Self::ThreeTrafficLights
+            | Self::ThreeTrafficLightsWithRim
+            | Self::ThreeSigns
+            | Self::ThreeSymbolsCircled
+            | Self::ThreeSymbols => 3,
+            Self::FourArrows
+            | Self::FourArrowsGray
+            | Self::FourRedToBlack
+            | Self::FourHistograms
+            | Self::FourTrafficLights => 4,
+            Self::FiveArrows
+            | Self::FiveArrowsGray
+            | Self::FiveHistograms
+            | Self::FiveQuadrants => 5,
+        }
+    }
+
+    const fn kpi(self) -> u32 {
+        match self {
+            Self::ThreeArrows => 0x00,
+            Self::ThreeArrowsGray => 0x01,
+            Self::ThreeFlags => 0x02,
+            Self::ThreeTrafficLights => 0x03,
+            Self::ThreeTrafficLightsWithRim => 0x04,
+            Self::ThreeSigns => 0x05,
+            Self::ThreeSymbolsCircled => 0x06,
+            Self::ThreeSymbols => 0x07,
+            Self::FourArrows => 0x08,
+            Self::FourArrowsGray => 0x09,
+            Self::FourRedToBlack => 0x0A,
+            Self::FourHistograms => 0x0B,
+            Self::FourTrafficLights => 0x0C,
+            Self::FiveArrows => 0x0D,
+            Self::FiveArrowsGray => 0x0E,
+            Self::FiveHistograms => 0x0F,
+            Self::FiveQuadrants => 0x10,
+        }
+    }
+
+    fn default_icons(self) -> Vec<ConditionalFormatCustomIcon> {
+        let values: &[f64] = match self.count() {
+            3 => &[0.0, 33.0, 67.0],
+            4 => &[0.0, 25.0, 50.0, 75.0],
+            _ => &[0.0, 20.0, 40.0, 60.0, 80.0],
+        };
+        let mut icons = Vec::with_capacity(values.len());
+        icons.extend(values.iter().map(|&value| ConditionalFormatCustomIcon {
+            threshold: Threshold::new(
+                ConditionalFormatType::Percent,
+                ConditionalFormatValue::Number(value),
+            ),
+        }));
+        icons
+    }
+}
+
+/// One icon threshold in a [`ConditionalFormatIconSet`].
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatCustomIcon {
+    threshold: Threshold,
+}
+
+impl ConditionalFormatCustomIcon {
+    /// Creates the default lowest threshold, `Percent(0)`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            threshold: Threshold::new(
+                ConditionalFormatType::Percent,
+                ConditionalFormatValue::Number(0.0),
+            ),
+        }
+    }
+
+    /// Sets the threshold type and value.
+    #[must_use]
+    pub fn set_rule(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.threshold = Threshold::new(rule_type, value.new_value());
+        self
+    }
+}
+
+impl Default for ConditionalFormatCustomIcon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// An icon-set conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatIconSet {
+    icon_type: ConditionalFormatIconType,
+    is_reversed: bool,
+    icon_only: bool,
+    icons: Vec<ConditionalFormatCustomIcon>,
+}
+
+impl ConditionalFormatIconSet {
+    /// Creates an icon set with three traffic lights and Excel's defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        let icon_type = ConditionalFormatIconType::ThreeTrafficLights;
+        Self {
+            icon_type,
+            is_reversed: false,
+            icon_only: false,
+            icons: icon_type.default_icons(),
+        }
+    }
+
+    /// Sets the icon type and restores that set's default thresholds.
+    #[must_use]
+    pub fn set_icon_type(mut self, icon_type: ConditionalFormatIconType) -> Self {
+        self.icon_type = icon_type;
+        self.icons = icon_type.default_icons();
+        self
+    }
+
+    /// Reverses the icon order.
+    #[must_use]
+    pub const fn reverse_icons(mut self, enable: bool) -> Self {
+        self.is_reversed = enable;
+        self
+    }
+
+    /// Hides cell values and shows only the icons.
+    #[must_use]
+    pub const fn show_icons_only(mut self, enable: bool) -> Self {
+        self.icon_only = enable;
+        self
+    }
+
+    /// Sets custom thresholds. The first is always forced to `Percent(0)`.
+    #[must_use]
+    pub fn set_icons(mut self, icons: &[ConditionalFormatCustomIcon]) -> Self {
+        let mut icons = icons.to_vec();
+        if let Some(first) = icons.first_mut() {
+            first.threshold = Threshold::new(
+                ConditionalFormatType::Percent,
+                ConditionalFormatValue::Number(0.0),
+            );
+        }
+        self.icons = icons;
+        self
+    }
+}
+
+impl Default for ConditionalFormatIconSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatIconSet {
+    fn validate(&self) -> Result<()> {
+        let expected = self.icon_type.count();
+        if self.icons.len() != expected {
+            return Err(Error::Parameter(format!(
+                "icon-set rule needs {expected} thresholds, found {}",
+                self.icons.len()
+            )));
+        }
+        for icon in &self.icons {
+            icon.threshold.icon_cfvo()?;
+        }
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        None
+    }
+
+    fn begin_rule(&self, priority: i32, _dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(BrtBeginCFRule {
+            iType: CF_TYPE_MULTISTATE,
+            iTemplate: CF_TEMPLATE_MULTISTATE,
+            dxfId: u32::MAX,
+            iPri: priority,
+            iParam: 0,
+            flags: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        })
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut flags = 0;
+        if self.icon_only {
+            flags |= BrtBeginIconSet::F_ICON;
+        }
+        if self.is_reversed {
+            flags |= BrtBeginIconSet::F_REVERSE;
+        }
+        push_record(
+            out,
+            &BrtBeginIconSet {
+                iSet: self.icon_type.kpi(),
+                flags,
+            },
+        )?;
+        for icon in &self.icons {
+            push_record(out, &icon.threshold.icon_cfvo()?)?;
+        }
+        push_record(out, &BrtEndIconSet::default())?;
+        Ok(())
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
 /// One worksheet conditional format and its target range.
 pub struct ConditionalFormatRange {
     pub(crate) range: UncheckedRfX,
@@ -1640,6 +1941,235 @@ mod tests {
             ConditionalFormatDataBar::new().set_fill_color(Color::Default),
         ] {
             assert!(bar.validate().is_err(), "{bar:?}");
+        }
+    }
+
+    #[test]
+    fn icon_sets_emit_kpi_defaults_and_end_markers() {
+        let cases: &[(ConditionalFormatIconType, u32, usize, &[f64])] = &[
+            (
+                ConditionalFormatIconType::ThreeArrows,
+                0,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeArrowsGray,
+                1,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeFlags,
+                2,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeTrafficLights,
+                3,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeTrafficLightsWithRim,
+                4,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeSigns,
+                5,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeSymbolsCircled,
+                6,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::ThreeSymbols,
+                7,
+                3,
+                &[0.0, 33.0, 67.0],
+            ),
+            (
+                ConditionalFormatIconType::FourArrows,
+                8,
+                4,
+                &[0.0, 25.0, 50.0, 75.0],
+            ),
+            (
+                ConditionalFormatIconType::FourArrowsGray,
+                9,
+                4,
+                &[0.0, 25.0, 50.0, 75.0],
+            ),
+            (
+                ConditionalFormatIconType::FourRedToBlack,
+                10,
+                4,
+                &[0.0, 25.0, 50.0, 75.0],
+            ),
+            (
+                ConditionalFormatIconType::FourHistograms,
+                11,
+                4,
+                &[0.0, 25.0, 50.0, 75.0],
+            ),
+            (
+                ConditionalFormatIconType::FourTrafficLights,
+                12,
+                4,
+                &[0.0, 25.0, 50.0, 75.0],
+            ),
+            (
+                ConditionalFormatIconType::FiveArrows,
+                13,
+                5,
+                &[0.0, 20.0, 40.0, 60.0, 80.0],
+            ),
+            (
+                ConditionalFormatIconType::FiveArrowsGray,
+                14,
+                5,
+                &[0.0, 20.0, 40.0, 60.0, 80.0],
+            ),
+            (
+                ConditionalFormatIconType::FiveHistograms,
+                15,
+                5,
+                &[0.0, 20.0, 40.0, 60.0, 80.0],
+            ),
+            (
+                ConditionalFormatIconType::FiveQuadrants,
+                16,
+                5,
+                &[0.0, 20.0, 40.0, 60.0, 80.0],
+            ),
+        ];
+        for &(icon_type, kpi, count, expected) in cases {
+            let rule = ConditionalFormatIconSet::new().set_icon_type(icon_type);
+            rule.validate().expect("valid icon set");
+            let record = rule.begin_rule(3, u32::MAX).expect("rule");
+            assert_eq!(record.iType, CF_TYPE_MULTISTATE);
+            assert_eq!(record.iTemplate, CF_TEMPLATE_MULTISTATE);
+            assert_eq!(record.dxfId, u32::MAX);
+            assert_eq!(record.iPri, 3);
+            assert_eq!(record.iParam, 0);
+            assert_eq!(record.flags, 0);
+            assert_eq!(record.cbFmla1, 0);
+            assert!(record.formula1.is_none());
+
+            let mut body = Vec::new();
+            rule.write_body(&mut body).expect("body");
+            let nested = records(&body);
+            assert_eq!(nested.len(), count + 2);
+            assert_eq!(nested[0].0, KnownID::BrtBeginIconSet);
+            let begin = BrtBeginIconSet::from_bytes((nested[0].1, 0))
+                .expect("begin")
+                .1;
+            assert_eq!(begin.iSet, kpi);
+            assert_eq!(begin.flags, 0);
+            assert_eq!(nested[count + 1].0, KnownID::BrtEndIconSet);
+
+            for (index, threshold) in nested[1..=count].iter().enumerate() {
+                assert_eq!(threshold.0, KnownID::BrtCFVO);
+                let cfvo = BrtCFVO::from_bytes((threshold.1, 0)).expect("cfvo").1;
+                assert_eq!(cfvo.iType, CFVO_PERCENT);
+                assert_eq!(f64::from(cfvo.numParam), expected[index]);
+                assert_eq!(cfvo.fSaveGTE, 1);
+                assert_eq!(cfvo.fGTE, 1);
+                assert_eq!(cfvo.cbFmla, 0);
+                assert!(cfvo.formula.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn icon_sets_encode_reverse_and_icon_only_flags() {
+        for (reverse, icon_only, expected) in [
+            (true, false, BrtBeginIconSet::F_REVERSE),
+            (false, true, BrtBeginIconSet::F_ICON),
+            (
+                true,
+                true,
+                BrtBeginIconSet::F_ICON | BrtBeginIconSet::F_REVERSE,
+            ),
+        ] {
+            let rule = ConditionalFormatIconSet::new()
+                .reverse_icons(reverse)
+                .show_icons_only(icon_only);
+            rule.validate().expect("valid icon set");
+            let mut body = Vec::new();
+            rule.write_body(&mut body).expect("body");
+            let nested = records(&body);
+            let begin = BrtBeginIconSet::from_bytes((nested[0].1, 0))
+                .expect("begin")
+                .1;
+            assert_eq!(begin.flags, expected);
+        }
+    }
+
+    #[test]
+    fn icon_sets_accept_custom_thresholds_and_force_first_to_zero() {
+        let icons = [
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Percent, 99),
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Percentile, 50),
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Number, 7),
+        ];
+        let rule = ConditionalFormatIconSet::new().set_icons(&icons);
+        rule.validate().expect("valid custom thresholds");
+        let mut body = Vec::new();
+        rule.write_body(&mut body).expect("body");
+        let nested = records(&body);
+        let cfvos = nested[1..4]
+            .iter()
+            .map(|(_, bytes)| BrtCFVO::from_bytes((*bytes, 0)).expect("cfvo").1)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cfvos.iter().map(|cfvo| cfvo.iType).collect::<Vec<_>>(),
+            [CFVO_PERCENT, CFVO_PERCENTILE, CFVO_NUM]
+        );
+        assert_eq!(
+            cfvos
+                .iter()
+                .map(|cfvo| f64::from(cfvo.numParam))
+                .collect::<Vec<_>>(),
+            [0.0, 50.0, 7.0]
+        );
+    }
+
+    #[test]
+    fn icon_sets_reject_bad_thresholds_and_counts() {
+        for rule in [
+            ConditionalFormatIconSet::new().set_icons(&[]),
+            ConditionalFormatIconSet::new().set_icons(&[ConditionalFormatCustomIcon::new()]),
+            ConditionalFormatIconSet::new().set_icons(&[
+                ConditionalFormatCustomIcon::new(),
+                ConditionalFormatCustomIcon::new(),
+                ConditionalFormatCustomIcon::new(),
+                ConditionalFormatCustomIcon::new(),
+            ]),
+        ] {
+            assert!(rule.validate().is_err());
+        }
+
+        for icon in [
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Percent, 101),
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Percentile, -1),
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Number, f64::NAN),
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Number, "text"),
+            ConditionalFormatCustomIcon::new().set_rule(ConditionalFormatType::Lowest, 0),
+        ] {
+            let rule = ConditionalFormatIconSet::new().set_icons(&[
+                ConditionalFormatCustomIcon::new(),
+                ConditionalFormatCustomIcon::new(),
+                icon,
+            ]);
+            assert!(rule.write_body(&mut Vec::new()).is_err());
         }
     }
 

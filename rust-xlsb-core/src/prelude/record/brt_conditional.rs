@@ -56,6 +56,8 @@ pub const CF_TYPE_GRADIENT: u32 = 3;
 pub const CF_TYPE_DATABAR: u32 = 4;
 /// `CF_TYPE_FILTER`.
 pub const CF_TYPE_FILTER: u32 = 5;
+/// `CF_TYPE_MULTISTATE`.
+pub const CF_TYPE_MULTISTATE: u32 = 6;
 
 /// `CF_TEMPLATE_EXPR`.
 pub const CF_TEMPLATE_EXPR: u32 = 0;
@@ -63,6 +65,8 @@ pub const CF_TEMPLATE_EXPR: u32 = 0;
 pub const CF_TEMPLATE_GRADIENT: u32 = 2;
 /// `CF_TEMPLATE_DATABAR`.
 pub const CF_TEMPLATE_DATABAR: u32 = 3;
+/// `CF_TEMPLATE_MULTISTATE`.
+pub const CF_TEMPLATE_MULTISTATE: u32 = 4;
 /// `CF_TEMPLATE_FILTER`.
 pub const CF_TEMPLATE_FILTER: u32 = 5;
 /// `CF_TEMPLATE_UNIQUEVALUES`.
@@ -208,9 +212,9 @@ impl Checked for BrtBeginCFRule {
                 }
                 self.check_no_formulas()
             }
-            (CF_TYPE_GRADIENT, CF_TEMPLATE_GRADIENT) | (CF_TYPE_DATABAR, CF_TEMPLATE_DATABAR) => {
-                self.check_no_dxf_rule()
-            }
+            (CF_TYPE_GRADIENT, CF_TEMPLATE_GRADIENT)
+            | (CF_TYPE_DATABAR, CF_TEMPLATE_DATABAR)
+            | (CF_TYPE_MULTISTATE, CF_TEMPLATE_MULTISTATE) => self.check_no_dxf_rule(),
             _ => Err("unsupported conditional-format type and template"),
         }
     }
@@ -363,6 +367,50 @@ pub struct BrtEndDatabar {}
 impl Unchecked for BrtEndDatabar {}
 
 assign_id!(BrtEndDatabar);
+
+/// `2.4.91`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BrtBeginIconSet {
+    pub iSet: u32,
+    /// Packed flags: bit 1 is `fIcon`, bit 2 is `fReverse`; all other bits are
+    /// reserved.
+    pub flags: u16,
+}
+
+impl BrtBeginIconSet {
+    /// `fIcon`: show only the icon.
+    pub const F_ICON: u16 = 1 << 1;
+    /// `fReverse`: reverse the icon order.
+    pub const F_REVERSE: u16 = 1 << 2;
+}
+
+impl Default for BrtBeginIconSet {
+    fn default() -> Self {
+        Self { iSet: 3, flags: 0 }
+    }
+}
+
+impl Checked for BrtBeginIconSet {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.iSet > 0x10 {
+            return Err("icon set is outside the KPISets range");
+        }
+        if self.flags & !(Self::F_ICON | Self::F_REVERSE) != 0 {
+            return Err("icon-set flags contain reserved bits");
+        }
+        Ok(())
+    }
+}
+
+assign_id!(BrtBeginIconSet);
+
+/// `2.4.445`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct BrtEndIconSet {}
+
+impl Unchecked for BrtEndIconSet {}
+
+assign_id!(BrtEndIconSet);
 
 /// `2.4.334`
 #[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
@@ -757,6 +805,94 @@ mod tests {
                 dxfId: 0,
                 ..rule.clone()
             },
+            BrtBeginCFRule {
+                iParam: 1,
+                ..rule.clone()
+            },
+            BrtBeginCFRule {
+                flags: BrtBeginCFRule::F_STOP_TRUE,
+                ..rule.clone()
+            },
+            BrtBeginCFRule {
+                cbFmla1: 9,
+                formula1: Some(number(1.0)),
+                ..rule
+            },
+        ] {
+            assert!(invalid.check().is_err());
+        }
+    }
+
+    #[test]
+    fn iconset_records_encode_flags_and_reject_reserved_bits() {
+        let set = BrtBeginIconSet::default();
+        set.check().expect("valid icon set");
+        assert_eq!(set.to_bytes().expect("serializes"), [3, 0, 0, 0, 0, 0]);
+
+        for (flags, expected) in [
+            (BrtBeginIconSet::F_ICON, [3, 0, 0, 0, 2, 0]),
+            (BrtBeginIconSet::F_REVERSE, [3, 0, 0, 0, 4, 0]),
+            (
+                BrtBeginIconSet::F_ICON | BrtBeginIconSet::F_REVERSE,
+                [3, 0, 0, 0, 6, 0],
+            ),
+        ] {
+            let set = BrtBeginIconSet {
+                flags,
+                ..set.clone()
+            };
+            set.check().expect("valid icon-set flag");
+            assert_eq!(set.to_bytes().expect("serializes"), expected);
+        }
+
+        for invalid in [
+            BrtBeginIconSet {
+                iSet: 0x11,
+                ..set.clone()
+            },
+            BrtBeginIconSet {
+                flags: 1,
+                ..set.clone()
+            },
+            BrtBeginIconSet {
+                flags: 1 << 3,
+                ..set
+            },
+        ] {
+            assert!(invalid.check().is_err());
+        }
+
+        assert_eq!(
+            BrtEndIconSet::default().to_bytes().expect("serializes"),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn multistate_rule_uses_no_dxf_flags_or_formulas() {
+        let rule = BrtBeginCFRule {
+            iType: CF_TYPE_MULTISTATE,
+            iTemplate: CF_TEMPLATE_MULTISTATE,
+            dxfId: u32::MAX,
+            iPri: 2,
+            iParam: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        rule.check().expect("valid icon-set rule");
+        let bytes = rule.to_bytes().expect("serializes");
+        assert_eq!(bytes.len(), 46);
+        assert_eq!(&bytes[0..4], &CF_TYPE_MULTISTATE.to_le_bytes());
+        assert_eq!(&bytes[4..8], &CF_TEMPLATE_MULTISTATE.to_le_bytes());
+        assert_eq!(&bytes[8..12], &u32::MAX.to_le_bytes());
+        assert_eq!(&bytes[12..16], &2_i32.to_le_bytes());
+        assert_eq!(&bytes[16..20], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[28..30], &[0, 0]);
+        assert_eq!(&bytes[30..34], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[42..46], &u32::MAX.to_le_bytes());
+
+        for invalid in [
             BrtBeginCFRule {
                 iParam: 1,
                 ..rule.clone()

@@ -11,25 +11,26 @@ pub use collection::*;
 pub use record::{
     BrtBeginAFilter, BrtBeginCFRule, BrtBeginColBrk, BrtBeginColorScale,
     BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar,
-    BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginList, BrtBeginListCol,
-    BrtBeginListCols, BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
-    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCFVO, BrtCalcProp,
-    BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString,
-    BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF,
-    BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale, BrtEndConditionalFormatting,
-    BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar, BrtEndFilterColumn, BrtEndFilters,
-    BrtEndHeaderFooter, BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk,
-    BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter,
-    BrtFmt, BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup,
-    BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
-    BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo,
-    BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DATABAR,
-    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES,
+    BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginIconSet, BrtBeginList,
+    BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst,
+    BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCFVO,
+    BrtCalcProp, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
+    BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter,
+    BrtDVal, BrtDXF, BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale,
+    BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar,
+    BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
+    BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
+    BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink,
+    BrtListPart, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
+    BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE,
+    CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
+    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES,
     CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
-    CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, DValStrings,
-    DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, XFProp, XFProps, Xti,
-    conditional_format_block,
+    CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
+    CFVO_PERCENTILE, DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign,
+    XFProp, XFProps, Xti, conditional_format_block,
 };
 pub use scope::*;
 pub use structure::{
@@ -118,6 +119,8 @@ mod tests {
     #[case::brt_end_color_scale(|| checked_test::<BrtEndColorScale>(0))]
     #[case::brt_begin_databar(|| checked_test::<BrtBeginDatabar>(3))]
     #[case::brt_end_databar(|| checked_test::<BrtEndDatabar>(0))]
+    #[case::brt_begin_icon_set(|| checked_test::<BrtBeginIconSet>(6))]
+    #[case::brt_end_icon_set(|| checked_test::<BrtEndIconSet>(0))]
     #[case::brt_cfvo(|| checked_test::<BrtCFVO>(24))]
     #[case::brt_begin_conditional_formatting(
         || checked_test::<BrtBeginConditionalFormatting>(28)

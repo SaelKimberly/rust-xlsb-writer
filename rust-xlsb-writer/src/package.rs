@@ -1047,13 +1047,14 @@ mod tests {
     use rust_xlsb_core::prelude::{
         Bold, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
-        BrtBeginFilters, BrtBeginList, BrtBeginListCol, BrtBeginListParts, BrtBeginWsView,
-        BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor, BrtCustomFilter,
-        BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart,
-        BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
-        CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-        CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_DATABAR,
-        CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CFVO_MAX, CFVO_MIN, CFVO_NUM,
+        BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
+        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
+        BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont,
+        BrtHLink, BrtListPart, BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient,
+        BrtWsFmtInfo, BrtXF, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
+        CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
+        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
         CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
@@ -1468,6 +1469,114 @@ mod tests {
         assert_eq!(colors.len(), 2);
         assert_eq!(colors[0], BrtColor::rgb(0x63, 0x8E, 0xC6));
         assert_eq!(colors[1], BrtColor::rgb(0xFF, 0x00, 0x00));
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        assert_eq!(records::<BrtDXF>(&styles), Vec::new());
+    }
+
+    #[test]
+    fn icon_sets_emit_nested_records_without_dxf() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_conditional_format(
+                0,
+                0,
+                4,
+                0,
+                &crate::ConditionalFormatIconSet::new()
+                    .set_icon_type(crate::ConditionalFormatIconType::ThreeTrafficLights),
+            )
+            .expect("default icon set");
+        worksheet
+            .add_conditional_format(
+                0,
+                0,
+                4,
+                0,
+                &crate::ConditionalFormatIconSet::new()
+                    .set_icon_type(crate::ConditionalFormatIconType::FiveArrows)
+                    .reverse_icons(true)
+                    .show_icons_only(true),
+            )
+            .expect("five-icon set");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let ids = record_ids(&sheet);
+        let first = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBeginConditionalFormatting)
+            .expect("first block");
+        assert_eq!(
+            &ids[first..first + 9],
+            &[
+                KnownID::BrtBeginConditionalFormatting,
+                KnownID::BrtBeginCFRule,
+                KnownID::BrtBeginIconSet,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtEndIconSet,
+                KnownID::BrtEndCFRule,
+                KnownID::BrtEndConditionalFormatting,
+            ]
+        );
+        assert_eq!(
+            &ids[first + 9..first + 20],
+            &[
+                KnownID::BrtBeginConditionalFormatting,
+                KnownID::BrtBeginCFRule,
+                KnownID::BrtBeginIconSet,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtEndIconSet,
+                KnownID::BrtEndCFRule,
+                KnownID::BrtEndConditionalFormatting,
+            ]
+        );
+
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 2);
+        for (index, rule) in rules.iter().enumerate() {
+            assert_eq!(rule.iType, CF_TYPE_MULTISTATE);
+            assert_eq!(rule.iTemplate, CF_TEMPLATE_MULTISTATE);
+            assert_eq!(rule.dxfId, u32::MAX);
+            assert_eq!(rule.iPri, i32::try_from(index + 1).expect("priority"));
+            assert_eq!(rule.iParam, 0);
+            assert_eq!(rule.flags, 0);
+            assert_eq!(rule.cbFmla1, 0);
+            assert!(rule.formula1.is_none());
+        }
+
+        let sets = records::<BrtBeginIconSet>(&sheet);
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0].iSet, 3);
+        assert_eq!(sets[0].flags, 0);
+        assert_eq!(sets[1].iSet, 13);
+        assert_eq!(
+            sets[1].flags,
+            BrtBeginIconSet::F_ICON | BrtBeginIconSet::F_REVERSE
+        );
+
+        let cfvos = records::<BrtCFVO>(&sheet);
+        assert_eq!(cfvos.len(), 8);
+        assert!(cfvos.iter().all(|cfvo| cfvo.iType == CFVO_PERCENT));
+        assert!(
+            cfvos
+                .iter()
+                .all(|cfvo| cfvo.fSaveGTE == 1 && cfvo.fGTE == 1)
+        );
+        assert_eq!(
+            cfvos
+                .iter()
+                .map(|cfvo| f64::from(cfvo.numParam))
+                .collect::<Vec<_>>(),
+            [0.0, 33.0, 67.0, 0.0, 20.0, 40.0, 60.0, 80.0]
+        );
 
         let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
         assert_eq!(records::<BrtDXF>(&styles), Vec::new());
