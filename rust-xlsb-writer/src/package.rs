@@ -1192,6 +1192,10 @@ mod tests {
     #[test]
     fn document_custom_properties_add_custom_part() {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 11, 18).expect("date");
+        let utc = chrono::DateTime::from_naive_utc_and_offset(
+            date.and_hms_opt(12, 34, 56).expect("time"),
+            chrono::Utc,
+        );
         let properties = crate::DocProperties::new()
             .set_creation_datetime(&date)
             .set_custom_property("Text", "A & B <C>")
@@ -1200,7 +1204,8 @@ mod tests {
             .set_custom_property("Ratio", 1.5_f64)
             .set_custom_property("Review date", &date)
             .set_custom_property("A\u{1}B", "control")
-            .set_custom_property("Quote\"\nLine", "quote");
+            .set_custom_property("Quote\"\nLine", "quote")
+            .set_custom_property("UTC review", &utc);
         let mut workbook = crate::Workbook::new();
         workbook.set_properties(&properties);
         workbook.add_worksheet();
@@ -1224,6 +1229,9 @@ mod tests {
         assert!(
             custom.contains(r#"pid="8" name="Quote&quot;&#xA;Line"><vt:lpwstr>quote</vt:lpwstr>"#)
         );
+        assert!(custom.contains(
+            r#"pid="9" name="UTC review"><vt:filetime>2026-11-18T12:34:56Z</vt:filetime>"#
+        ));
 
         let core = String::from_utf8(part_bytes(&bytes, "docProps/core.xml").expect("core"))
             .expect("core UTF-8");

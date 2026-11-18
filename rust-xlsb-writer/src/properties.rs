@@ -132,7 +132,7 @@ impl DocProperties {
 }
 
 /// A custom document property stored with its user-defined name.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CustomProperty {
     pub(crate) name: String,
     pub(crate) value: CustomPropertyValue,
@@ -182,6 +182,12 @@ pub enum CustomPropertyValue {
     Real(f64),
     Bool(bool),
     DateTime(String),
+}
+
+impl Default for CustomPropertyValue {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
 }
 
 /// Types that can be stored as a custom document property.

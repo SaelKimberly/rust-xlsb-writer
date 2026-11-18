@@ -86,7 +86,7 @@ Status meanings:
 | `set_tempdir` | Missing | Temp-file policy for streaming |
 | `add_chartsheet` | Missing | Chartsheet packaging |
 | `define_name` | Missing | Defined-name records |
-| `set_properties` | Supported | Core/app/custom strings, typed custom values, and creation time |
+| `set_properties` | Partial | Core/app/custom strings, typed values, and chrono creation time; no jiff/`ExcelDateTime` inputs |
 | `set_default_format` | Missing | Workbook default format |
 | `use_excel_2023_theme`, `use_custom_theme` | Missing | Theme part and theme indexes |
 | `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
@@ -378,7 +378,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 | Item | Why | Size |
 |---|---|---|
 | Defined names | Formula readability | M |
-| Document properties | ✅ Core/app/custom properties and creation time | — |
+| Document properties | Partial: core/app/custom properties and chrono creation time; jiff/`ExcelDateTime` inputs missing | S–M |
 | Themes and theme colors | Visual parity | M–L |
 | Chartsheets | Dashboard structure | L |
 | VBA project/signature | Macro-enabled workbooks | XL |
