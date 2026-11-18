@@ -29,6 +29,7 @@
 - [Workbook default format](plans/2026-11-18-workbook-default-format.md)
 - [Worksheet default format](plans/2026-11-18-worksheet-default-format.md)
 - [Worksheet autofit and limits](plans/2026-11-18-worksheet-autofit.md)
+- [Optional jiff and rust_decimal adapters](plans/2026-11-18-optional-jiff-and-decimal-adapters.md)
 
 ## Analysis
 

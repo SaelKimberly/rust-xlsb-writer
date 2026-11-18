@@ -30,8 +30,8 @@ It is not a feature-equivalent replacement. The largest gaps are:
 6. **Workbook metadata and packaging** — no user-defined names, themes,
    chartsheets, VBA, or compressed ZIP; core/app/custom document properties are
    present.
-7. **Data ecosystem** — no `Formula`, `ExcelDateTime`, jiff,
-   `rust_decimal`, serde, or Polars adapters.
+7. **Data ecosystem** — no `Formula`, `ExcelDateTime`, serde, or Polars
+   adapters; optional `jiff` and `rust_decimal` input features exist.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
 The current API surface is deliberately narrow: roughly 13 `Workbook`, 106
@@ -45,7 +45,7 @@ the breadth gap.
 |---|---|
 | Workbook | `new`, `add_worksheet`, standalone `Worksheet::new` with `push_worksheet`, lookup by index or exact name, collection access, calculation mode, read-only recommendation, tab ratio, default cell format, `save`, `save_to_buffer`, `save_to_writer` |
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
-| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, non-finite display strings |
+| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, optional `jiff` civil values and `rust_decimal::Decimal`, non-finite display strings |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, approximate autofit with row/width limits, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
@@ -60,7 +60,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 193 core + 194 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 193 core + 194 writer unit tests, 6 doctests; 3 optional-adapter tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -222,8 +222,8 @@ Status meanings:
 | chrono `NaiveDate`/`NaiveTime`/`NaiveDateTime` | Supported | — |
 | `TimeDelta`, `DateTime<Utc>` | Supported | Additive extensions |
 | `ExcelDateTime` | Missing | Native Excel datetime type |
-| jiff civil types | Missing | Optional feature |
-| `rust_decimal::Decimal` | Missing | Optional feature |
+| jiff civil types | Supported | Optional `jiff` feature; borrowed dates, times, datetimes |
+| `rust_decimal::Decimal` | Supported | Optional `rust_decimal` feature; converted to `f64` |
 | `Formula` | Missing | Formula value type |
 | `Url` | Supported | Text, tooltip, internal/file/URL targets |
 | Serde serialization | Missing | Optional feature |
@@ -443,8 +443,9 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 193 core + 194 writer unit tests and 6 doctests; calamine
-  round-trips; LibreOffice render and XLSX round-trip of
+- Test evidence: 193 core + 194 writer unit tests and 6 doctests in default
+  builds, plus 3 feature-gated writer tests for `jiff` and `rust_decimal`;
+  calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a

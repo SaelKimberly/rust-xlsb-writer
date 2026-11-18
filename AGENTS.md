@@ -109,7 +109,9 @@ fractions rounded to milliseconds, so they are normally `BrtCellReal`.
 `DateTime<Utc>` uses its UTC wall clock. Values outside 1900-01-01..9999-12-31,
 chrono leap seconds, and a time that rounds past midnight are rejected. There is
 no 1904-system support (`BrtWbProp` does not exist) and no timezone other than
-UTC.
+UTC. Optional borrowed `jiff` civil values map through `chrono` in `data.rs`, so
+they use the same serial rules; optional `rust_decimal::Decimal` values convert
+to `f64` without allocating.
 
 ## Key Directories
 
@@ -158,6 +160,8 @@ Verified state on this branch:
 
 - `cargo test --workspace` → 387 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
+- `cargo test --workspace --all-features` → 390 unit tests and 6 doctests pass,
+  including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
 - `Cargo.lock` is gitignored, so a fresh resolve can pick different minor
@@ -270,14 +274,16 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - `rusqlite` uses the `bundled` feature, so a C compiler is needed and the first
   build compiles SQLite from source.
 - `rust-xlsb-writer` depends on `rust-xlsb-core`, `mimalloc`, `thiserror`, and
-  `chrono`; its dev-dependencies add `calamine`, `deku`, `criterion`, and
-  `rstest`. Core no longer depends on `calamine`.
+  `chrono`; optional `jiff` and `rust_decimal` dependencies are enabled by the
+  same-named features. Its dev-dependencies add `calamine`, `deku`, `criterion`,
+  and `rstest`. Core no longer depends on `calamine`.
 - Dependency set, latest major/minor for this toolchain: `deku 0.20`,
   `rusqlite 0.43`, `strum 0.28`, `criterion 0.8`, `zerocopy 0.8.63`,
   `thiserror 2.0.21`, `num_enum 0.7.6`, `xxhash-rust 0.8.21`,
   `concat-idents 1.1.5`, `chrono 0.4` (no `clock`, `std` only),
   `mimalloc 0.1.52`, `rstest 0.28` (dev), `calamine 0.38` (writer dev,
-  `chrono` feature enabled).
+  `chrono` feature enabled), `jiff 0.2` (optional), `rust_decimal 1.40`
+  (optional).
 - No release tooling, changelog, or publish workflow. Version is `0.1.0` and the
   README defers `1.0.0-alpha` to community adoption.
 
@@ -287,7 +293,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 387 unit tests and 6 doctests total: 193 in core, 194 in writer. Most core
+- 387 unit tests and 6 doctests in default builds: 193 in core, 194 in writer.
+  `--all-features` adds 3 writer tests for the optional `jiff` and
+  `rust_decimal` adapters, for 390 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

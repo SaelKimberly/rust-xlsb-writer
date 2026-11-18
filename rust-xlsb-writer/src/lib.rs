@@ -14,6 +14,14 @@
  limitations under the License.
 */
 
+//! Optional input adapters:
+//!
+//! - `jiff`: writes borrowed `jiff::civil::Date`, `Time`, and `DateTime`
+//!   values.
+//! - `rust_decimal`: writes `rust_decimal::Decimal` values as Excel numbers.
+//!
+//! Both features are disabled by default.
+
 mod data;
 #[cfg(test)]
 mod e2e;
