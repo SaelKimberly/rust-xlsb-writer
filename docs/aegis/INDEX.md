@@ -38,6 +38,7 @@
 - [Data validation](plans/2026-11-19-data-validation.md)
 - [Basic tables](plans/2026-11-19-basic-tables.md)
 - [Conditional formatting: top/bottom, average, and duplicate rules](plans/2026-11-19-conditional-format-rule-families.md)
+- [Conditional formatting: 2- and 3-color scales](plans/2026-11-19-conditional-format-color-scales.md)
 
 ## Analysis
 

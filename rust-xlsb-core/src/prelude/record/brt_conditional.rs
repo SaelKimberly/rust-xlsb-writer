@@ -5,7 +5,7 @@
 
 use deku::{DekuRead, DekuWrite};
 
-use crate::prelude::{UncheckedRfX, UncheckedSqRfX, XlNullableWideString};
+use crate::prelude::{UncheckedRfX, UncheckedSqRfX, XlNullableWideString, Xnum};
 use crate::{Checked, Unchecked, assign_id};
 
 /// `2.5.98.6`
@@ -50,11 +50,15 @@ impl Checked for CFParsedFormula {
 pub const CF_TYPE_CELL_IS: u32 = 1;
 /// `CF_TYPE_EXPRIS`.
 pub const CF_TYPE_EXPRESSION: u32 = 2;
+/// `CF_TYPE_GRADIENT`.
+pub const CF_TYPE_GRADIENT: u32 = 3;
 /// `CF_TYPE_FILTER`.
 pub const CF_TYPE_FILTER: u32 = 5;
 
 /// `CF_TEMPLATE_EXPR`.
 pub const CF_TEMPLATE_EXPR: u32 = 0;
+/// `CF_TEMPLATE_GRADIENT`.
+pub const CF_TEMPLATE_GRADIENT: u32 = 2;
 /// `CF_TEMPLATE_FILTER`.
 pub const CF_TEMPLATE_FILTER: u32 = 5;
 /// `CF_TEMPLATE_UNIQUEVALUES`.
@@ -69,6 +73,17 @@ pub const CF_TEMPLATE_DUPLICATE_VALUES: u32 = 0x1B;
 pub const CF_TEMPLATE_EQUAL_ABOVE_AVERAGE: u32 = 0x1D;
 /// `CF_TEMPLATE_EQUALBELOWAVERAGE`.
 pub const CF_TEMPLATE_EQUAL_BELOW_AVERAGE: u32 = 0x1E;
+
+/// `CFVONUM`.
+pub const CFVO_NUM: u32 = 1;
+/// `CFVOMIN`.
+pub const CFVO_MIN: u32 = 2;
+/// `CFVOMAX`.
+pub const CFVO_MAX: u32 = 3;
+/// `CFVOPERCENT`.
+pub const CFVO_PERCENT: u32 = 4;
+/// `CFVOPERCENTILE`.
+pub const CFVO_PERCENTILE: u32 = 5;
 
 /// `2.4.23`
 #[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
@@ -189,6 +204,7 @@ impl Checked for BrtBeginCFRule {
                 }
                 self.check_no_formulas()
             }
+            (CF_TYPE_GRADIENT, CF_TEMPLATE_GRADIENT) => self.check_scale_rule(),
             _ => Err("unsupported conditional-format type and template"),
         }
     }
@@ -241,6 +257,16 @@ impl BrtBeginCFRule {
         self.check_no_formulas()
     }
 
+    const fn check_scale_rule(&self) -> Result<(), &'static str> {
+        if self.dxfId != u32::MAX {
+            return Err("color scales must not reference a differential format");
+        }
+        if self.iParam != 0 || self.flags != 0 {
+            return Err("color scales use only zero parameters and flags");
+        }
+        self.check_no_formulas()
+    }
+
     const fn check_average_rule(&self) -> Result<(), &'static str> {
         if self.flags & (Self::F_BOTTOM | Self::F_PERCENT) != 0 {
             return Err("average conditional formats must not set fBottom or fPercent");
@@ -275,6 +301,74 @@ pub struct BrtEndCFRule {}
 impl Unchecked for BrtEndCFRule {}
 
 assign_id!(BrtEndCFRule);
+
+/// `2.4.28`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct BrtBeginColorScale {}
+
+impl Unchecked for BrtBeginColorScale {}
+
+assign_id!(BrtBeginColorScale);
+
+/// `2.4.385`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct BrtEndColorScale {}
+
+impl Unchecked for BrtEndColorScale {}
+
+assign_id!(BrtEndColorScale);
+
+/// `2.4.334`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BrtCFVO {
+    pub iType: u32,
+    pub numParam: Xnum,
+    pub fSaveGTE: u32,
+    pub fGTE: u32,
+    pub cbFmla: u32,
+    #[deku(cond = "*cbFmla != 0", default = "None")]
+    pub formula: Option<CFParsedFormula>,
+}
+
+impl Default for BrtCFVO {
+    fn default() -> Self {
+        Self {
+            iType: CFVO_MIN,
+            numParam: Xnum::default(),
+            fSaveGTE: 0,
+            fGTE: 0,
+            cbFmla: 0,
+            formula: None,
+        }
+    }
+}
+
+impl Checked for BrtCFVO {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.fSaveGTE > 1 || self.fGTE > 1 {
+            return Err("conditional-format value flags must be 0 or 1");
+        }
+        if self.cbFmla != 0 || self.formula.is_some() {
+            return Err("conditional-format value formulas are not supported");
+        }
+        if !self.numParam.is_finite() {
+            return Err("conditional-format value must be finite");
+        }
+        match self.iType {
+            CFVO_MIN | CFVO_MAX | CFVO_NUM => Ok(()),
+            CFVO_PERCENT | CFVO_PERCENTILE => {
+                if (0.0..=100.0).contains(&f64::from(self.numParam)) {
+                    Ok(())
+                } else {
+                    Err("conditional-format percentage must be in 0..=100")
+                }
+            }
+            _ => Err("unsupported conditional-format value type"),
+        }
+    }
+}
+
+assign_id!(BrtCFVO);
 
 /// `2.4.34`
 #[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
@@ -483,6 +577,111 @@ mod tests {
             ..BrtBeginCFRule::default()
         };
         assert!(duplicate.check().is_err());
+    }
+
+    #[test]
+    fn gradient_rule_uses_no_dxf_flags_or_formulas() {
+        let rule = BrtBeginCFRule {
+            iType: CF_TYPE_GRADIENT,
+            iTemplate: CF_TEMPLATE_GRADIENT,
+            dxfId: u32::MAX,
+            iPri: 1,
+            iParam: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        rule.check().expect("valid color scale");
+        let bytes = rule.to_bytes().expect("serializes");
+        assert_eq!(bytes.len(), 46);
+        assert_eq!(&bytes[0..4], &CF_TYPE_GRADIENT.to_le_bytes());
+        assert_eq!(&bytes[4..8], &CF_TEMPLATE_GRADIENT.to_le_bytes());
+        assert_eq!(&bytes[8..12], &u32::MAX.to_le_bytes());
+        assert_eq!(&bytes[16..20], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[28..30], &[0, 0]);
+        assert_eq!(&bytes[30..34], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[42..46], &u32::MAX.to_le_bytes());
+    }
+
+    #[test]
+    fn gradient_rule_rejects_format_flags_and_formulas() {
+        let mut rule = BrtBeginCFRule {
+            iType: CF_TYPE_GRADIENT,
+            iTemplate: CF_TEMPLATE_GRADIENT,
+            dxfId: u32::MAX,
+            iPri: 1,
+            iParam: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        rule.dxfId = 0;
+        assert!(rule.check().is_err());
+        rule.dxfId = u32::MAX;
+        rule.flags = BrtBeginCFRule::F_STOP_TRUE;
+        assert!(rule.check().is_err());
+        rule.flags = 0;
+        rule.cbFmla1 = 9;
+        rule.formula1 = Some(number(1.0));
+        assert!(rule.check().is_err());
+    }
+
+    #[test]
+    fn cfvo_encodes_thresholds_and_rejects_bad_values() {
+        let cfvo = BrtCFVO::default();
+        cfvo.check().expect("valid minimum");
+        let bytes = cfvo.to_bytes().expect("serializes");
+        assert_eq!(bytes.len(), 24);
+        assert_eq!(&bytes[0..4], &CFVO_MIN.to_le_bytes());
+        assert_eq!(&bytes[4..12], &0.0_f64.to_le_bytes());
+        assert_eq!(&bytes[12..16], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[16..20], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[20..24], &0_u32.to_le_bytes());
+
+        for (i_type, value) in [
+            (CFVO_NUM, 5.5),
+            (CFVO_PERCENT, 0.0),
+            (CFVO_PERCENT, 100.0),
+            (CFVO_PERCENTILE, 50.0),
+        ] {
+            let cfvo = BrtCFVO {
+                iType: i_type,
+                numParam: value.into(),
+                ..BrtCFVO::default()
+            };
+            cfvo.check().expect("valid threshold");
+        }
+
+        for (i_type, value) in [(CFVO_PERCENT, 100.1), (CFVO_PERCENTILE, -1.0)] {
+            let cfvo = BrtCFVO {
+                iType: i_type,
+                numParam: value.into(),
+                ..BrtCFVO::default()
+            };
+            assert!(cfvo.check().is_err());
+        }
+
+        let cfvo = BrtCFVO {
+            iType: CFVO_NUM,
+            numParam: f64::NAN.into(),
+            ..BrtCFVO::default()
+        };
+        assert!(cfvo.check().is_err());
+    }
+
+    #[test]
+    fn cfvo_rejects_formulas_and_reserved_flags() {
+        let cfvo = BrtCFVO {
+            cbFmla: 1,
+            ..BrtCFVO::default()
+        };
+        assert!(cfvo.check().is_err());
+
+        let cfvo = BrtCFVO {
+            fSaveGTE: 2,
+            ..BrtCFVO::default()
+        };
+        assert!(cfvo.check().is_err());
     }
 
     #[test]

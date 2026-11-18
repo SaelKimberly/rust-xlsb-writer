@@ -3,13 +3,16 @@
 use std::borrow::Cow;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginCFRule, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
-    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS,
-    CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CFParsedFormula, UncheckedRfX,
+    BrtBeginCFRule, BrtBeginColorScale, BrtCFVO, BrtColor, BrtEndColorScale,
+    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DUPLICATE_VALUES,
+    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
+    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS,
+    CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CFParsedFormula, CFVO_MAX, CFVO_MIN,
+    CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
 };
+use rust_xlsb_core::push_record;
 
-use crate::{Error, Format, Result};
+use crate::{Color, Error, Format, Result};
 
 /// A value accepted by a cell conditional-format rule.
 #[derive(Clone, Debug, PartialEq)]
@@ -211,6 +214,12 @@ pub trait ConditionalFormat {
     /// Builds the rule record for the given priority and DXF id.
     #[doc(hidden)]
     fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule>;
+
+    /// Writes records nested between `BrtBeginCFRule` and `BrtEndCFRule`.
+    #[doc(hidden)]
+    fn write_body(&self, _out: &mut Vec<u8>) -> Result<()> {
+        Ok(())
+    }
 
     /// Clones the rule into a boxed trait object.
     #[doc(hidden)]
@@ -676,6 +685,425 @@ impl ConditionalFormat for ConditionalFormatDuplicate {
     }
 }
 
+/// A color-scale threshold type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConditionalFormatType {
+    /// The lowest value in the range.
+    Lowest,
+    /// A literal number.
+    Number,
+    /// A percentage between the range minimum and maximum.
+    Percent,
+    /// A percentile of the range.
+    Percentile,
+    /// The highest value in the range.
+    Highest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScalePosition {
+    Minimum,
+    Midpoint,
+    Maximum,
+}
+
+#[derive(Clone, Debug)]
+struct ScaleStop {
+    kind: ConditionalFormatType,
+    value: ConditionalFormatValue,
+}
+
+impl ScaleStop {
+    const fn lowest() -> Self {
+        Self {
+            kind: ConditionalFormatType::Lowest,
+            value: ConditionalFormatValue::Number(0.0),
+        }
+    }
+
+    const fn highest() -> Self {
+        Self {
+            kind: ConditionalFormatType::Highest,
+            value: ConditionalFormatValue::Number(0.0),
+        }
+    }
+
+    const fn percentile(value: f64) -> Self {
+        Self {
+            kind: ConditionalFormatType::Percentile,
+            value: ConditionalFormatValue::Number(value),
+        }
+    }
+
+    const fn new(kind: ConditionalFormatType, value: ConditionalFormatValue) -> Self {
+        Self { kind, value }
+    }
+
+    fn number_value(&self) -> Result<f64> {
+        match &self.value {
+            ConditionalFormatValue::Number(value) if value.is_finite() => Ok(*value),
+            ConditionalFormatValue::Number(_) => Err(Error::Parameter(
+                "color-scale threshold must be finite".to_owned(),
+            )),
+            ConditionalFormatValue::String(_) => Err(Error::Parameter(
+                "color-scale threshold must be numeric".to_owned(),
+            )),
+        }
+    }
+
+    fn cfvo(&self) -> Result<BrtCFVO> {
+        let (i_type, value) = match self.kind {
+            ConditionalFormatType::Lowest => (CFVO_MIN, 0.0),
+            ConditionalFormatType::Highest => (CFVO_MAX, 0.0),
+            ConditionalFormatType::Number => (CFVO_NUM, self.number_value()?),
+            ConditionalFormatType::Percent | ConditionalFormatType::Percentile => {
+                let value = self.number_value()?;
+                if !(0.0..=100.0).contains(&value) {
+                    return Err(Error::Parameter(
+                        "color-scale percentage must be in 0..=100".to_owned(),
+                    ));
+                }
+                let i_type = if self.kind == ConditionalFormatType::Percent {
+                    CFVO_PERCENT
+                } else {
+                    CFVO_PERCENTILE
+                };
+                (i_type, value)
+            }
+        };
+
+        Ok(BrtCFVO {
+            iType: i_type,
+            numParam: value.into(),
+            ..BrtCFVO::default()
+        })
+    }
+
+    fn validate(&self, position: ScalePosition) -> Result<()> {
+        if position == ScalePosition::Minimum && self.kind == ConditionalFormatType::Highest {
+            return Err(Error::Parameter(
+                "color-scale minimum cannot use the highest threshold".to_owned(),
+            ));
+        }
+        if position == ScalePosition::Maximum && self.kind == ConditionalFormatType::Lowest {
+            return Err(Error::Parameter(
+                "color-scale maximum cannot use the lowest threshold".to_owned(),
+            ));
+        }
+        if position == ScalePosition::Midpoint
+            && matches!(
+                self.kind,
+                ConditionalFormatType::Lowest | ConditionalFormatType::Highest
+            )
+        {
+            return Err(Error::Parameter(
+                "color-scale midpoint must use a numeric threshold".to_owned(),
+            ));
+        }
+        self.cfvo().map(|_| ())
+    }
+}
+
+fn scale_color(color: Color) -> Result<BrtColor> {
+    if matches!(color, Color::Default | Color::Automatic) {
+        return Err(Error::Parameter(
+            "color-scale colors must be explicit".to_owned(),
+        ));
+    }
+    color.to_brt_color()
+}
+
+fn write_scale_body(stops: &[&ScaleStop], colors: &[BrtColor], out: &mut Vec<u8>) -> Result<()> {
+    push_record(out, &BrtBeginColorScale::default())?;
+    for stop in stops {
+        push_record(out, &stop.cfvo()?)?;
+    }
+    for color in colors {
+        push_record(out, color)?;
+    }
+    push_record(out, &BrtEndColorScale::default())?;
+    Ok(())
+}
+
+const TWO_COLOR_MIN: Color = Color::RGB(0x00FF_EF9C);
+const TWO_COLOR_MAX: Color = Color::RGB(0x0063_BE7B);
+const THREE_COLOR_MIN: Color = Color::RGB(0x00F8_696B);
+const THREE_COLOR_MID: Color = Color::RGB(0x00FF_EB84);
+const THREE_COLOR_MAX: Color = Color::RGB(0x0063_BE7B);
+
+/// A two-color scale conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormat2ColorScale {
+    min: ScaleStop,
+    max: ScaleStop,
+    min_color: Color,
+    max_color: Color,
+    stop_if_true: bool,
+}
+
+impl ConditionalFormat2ColorScale {
+    /// Creates a two-color scale with Excel's default yellow-to-green colors.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            min: ScaleStop::lowest(),
+            max: ScaleStop::highest(),
+            min_color: TWO_COLOR_MIN,
+            max_color: TWO_COLOR_MAX,
+            stop_if_true: false,
+        }
+    }
+
+    /// Sets the minimum threshold type and value.
+    #[must_use]
+    pub fn set_minimum(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.min = ScaleStop::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the maximum threshold type and value.
+    #[must_use]
+    pub fn set_maximum(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.max = ScaleStop::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the minimum color.
+    #[must_use]
+    pub fn set_minimum_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        if color.is_valid() {
+            self.min_color = color;
+        }
+        self
+    }
+
+    /// Sets the maximum color.
+    #[must_use]
+    pub fn set_maximum_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        if color.is_valid() {
+            self.max_color = color;
+        }
+        self
+    }
+
+    /// Sets the stop-if-true option. Color scales cannot use it.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormat2ColorScale {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormat2ColorScale {
+    fn validate(&self) -> Result<()> {
+        if self.stop_if_true {
+            return Err(Error::Parameter(
+                "color scales cannot set stop_if_true".to_owned(),
+            ));
+        }
+        self.min.validate(ScalePosition::Minimum)?;
+        self.max.validate(ScalePosition::Maximum)?;
+        scale_color(self.min_color)?;
+        scale_color(self.max_color)?;
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        None
+    }
+
+    fn begin_rule(&self, priority: i32, _dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(BrtBeginCFRule {
+            iType: CF_TYPE_GRADIENT,
+            iTemplate: CF_TEMPLATE_GRADIENT,
+            dxfId: u32::MAX,
+            iPri: priority,
+            iParam: 0,
+            flags: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        })
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        let colors = [scale_color(self.min_color)?, scale_color(self.max_color)?];
+        write_scale_body(&[&self.min, &self.max], &colors, out)
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+/// A three-color scale conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormat3ColorScale {
+    min: ScaleStop,
+    mid: ScaleStop,
+    max: ScaleStop,
+    min_color: Color,
+    mid_color: Color,
+    max_color: Color,
+    stop_if_true: bool,
+}
+
+impl ConditionalFormat3ColorScale {
+    /// Creates a three-color scale with Excel's default red-yellow-green colors.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            min: ScaleStop::lowest(),
+            mid: ScaleStop::percentile(50.0),
+            max: ScaleStop::highest(),
+            min_color: THREE_COLOR_MIN,
+            mid_color: THREE_COLOR_MID,
+            max_color: THREE_COLOR_MAX,
+            stop_if_true: false,
+        }
+    }
+
+    /// Sets the minimum threshold type and value.
+    #[must_use]
+    pub fn set_minimum(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.min = ScaleStop::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the midpoint threshold type and value.
+    #[must_use]
+    pub fn set_midpoint(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.mid = ScaleStop::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the maximum threshold type and value.
+    #[must_use]
+    pub fn set_maximum(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.max = ScaleStop::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the minimum color.
+    #[must_use]
+    pub fn set_minimum_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        if color.is_valid() {
+            self.min_color = color;
+        }
+        self
+    }
+
+    /// Sets the midpoint color.
+    #[must_use]
+    pub fn set_midpoint_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        if color.is_valid() {
+            self.mid_color = color;
+        }
+        self
+    }
+
+    /// Sets the maximum color.
+    #[must_use]
+    pub fn set_maximum_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        if color.is_valid() {
+            self.max_color = color;
+        }
+        self
+    }
+
+    /// Sets the stop-if-true option. Color scales cannot use it.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormat3ColorScale {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormat3ColorScale {
+    fn validate(&self) -> Result<()> {
+        if self.stop_if_true {
+            return Err(Error::Parameter(
+                "color scales cannot set stop_if_true".to_owned(),
+            ));
+        }
+        self.min.validate(ScalePosition::Minimum)?;
+        self.mid.validate(ScalePosition::Midpoint)?;
+        self.max.validate(ScalePosition::Maximum)?;
+        scale_color(self.min_color)?;
+        scale_color(self.mid_color)?;
+        scale_color(self.max_color)?;
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        None
+    }
+
+    fn begin_rule(&self, priority: i32, _dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(BrtBeginCFRule {
+            iType: CF_TYPE_GRADIENT,
+            iTemplate: CF_TEMPLATE_GRADIENT,
+            dxfId: u32::MAX,
+            iPri: priority,
+            iParam: 0,
+            flags: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        })
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        let colors = [
+            scale_color(self.min_color)?,
+            scale_color(self.mid_color)?,
+            scale_color(self.max_color)?,
+        ];
+        write_scale_body(&[&self.min, &self.mid, &self.max], &colors, out)
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
 /// One worksheet conditional format and its target range.
 pub struct ConditionalFormatRange {
     pub(crate) range: UncheckedRfX,
@@ -697,6 +1125,10 @@ impl ConditionalFormatRange {
         self.conditional_format.begin_rule(priority, dxf_id)
     }
 
+    pub(crate) fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.conditional_format.write_body(out)
+    }
+
     pub(crate) fn dxf_format(&self) -> Option<&Format> {
         self.conditional_format.dxf_format()
     }
@@ -704,8 +1136,23 @@ impl ConditionalFormatRange {
 
 #[cfg(test)]
 mod tests {
+    use deku::DekuContainerRead;
+    use rust_xlsb_core::{BiffHead, KnownID};
+
     use super::*;
 
+    fn records(data: &[u8]) -> Vec<(KnownID, &[u8])> {
+        let mut result = Vec::new();
+        let mut pos = 0;
+        while pos < data.len() {
+            let (used, head) = BiffHead::from_data(&data[pos..]).expect("record header");
+            let start = pos + used;
+            let end = start + head.size() as usize;
+            result.push((head.known_id().expect("known record"), &data[start..end]));
+            pos = end;
+        }
+        result
+    }
     #[test]
     fn builds_numeric_and_string_formulas() {
         let (number, second) = InternalRule::GreaterThan(ConditionalFormatValue::Number(1.5))
@@ -878,5 +1325,150 @@ mod tests {
                 "{rule:?}"
             );
         }
+    }
+
+    #[test]
+    fn two_color_scale_uses_default_thresholds_and_colors() {
+        let scale = ConditionalFormat2ColorScale::new();
+        scale.validate().expect("valid scale");
+        let rule = scale.begin_rule(4, u32::MAX).expect("rule");
+        assert_eq!(rule.iType, CF_TYPE_GRADIENT);
+        assert_eq!(rule.iTemplate, CF_TEMPLATE_GRADIENT);
+        assert_eq!(rule.dxfId, u32::MAX);
+        assert_eq!(rule.iPri, 4);
+        assert_eq!(rule.iParam, 0);
+        assert_eq!(rule.flags, 0);
+        assert_eq!(rule.cbFmla1, 0);
+        assert!(rule.formula1.is_none());
+
+        let mut body = Vec::new();
+        scale.write_body(&mut body).expect("body");
+        assert_eq!(body.len(), 82);
+        let records = records(&body);
+        assert_eq!(
+            records.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [
+                KnownID::BrtBeginColorScale,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtColor,
+                KnownID::BrtEndColorScale,
+            ]
+        );
+
+        let (_, min) = BrtCFVO::from_bytes((records[1].1, 0)).expect("minimum");
+        assert_eq!(min.iType, CFVO_MIN);
+        assert_eq!(f64::from(min.numParam), 0.0);
+        let (_, max) = BrtCFVO::from_bytes((records[2].1, 0)).expect("maximum");
+        assert_eq!(max.iType, CFVO_MAX);
+        let (_, min_color) = BrtColor::from_bytes((records[3].1, 0)).expect("minimum color");
+        assert_eq!(min_color, BrtColor::rgb(0xFF, 0xEF, 0x9C));
+        let (_, max_color) = BrtColor::from_bytes((records[4].1, 0)).expect("maximum color");
+        assert_eq!(max_color, BrtColor::rgb(0x63, 0xBE, 0x7B));
+    }
+
+    #[test]
+    fn three_color_scale_maps_thresholds_and_colors() {
+        let scale = ConditionalFormat3ColorScale::new()
+            .set_minimum(ConditionalFormatType::Number, 2)
+            .set_midpoint(ConditionalFormatType::Percent, 60)
+            .set_maximum(ConditionalFormatType::Percentile, 90)
+            .set_minimum_color(Color::Red)
+            .set_midpoint_color(Color::White)
+            .set_maximum_color(Color::Blue);
+        scale.validate().expect("valid scale");
+
+        let mut body = Vec::new();
+        scale.write_body(&mut body).expect("body");
+        let records = records(&body);
+        assert_eq!(
+            records.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [
+                KnownID::BrtBeginColorScale,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtColor,
+                KnownID::BrtColor,
+                KnownID::BrtEndColorScale,
+            ]
+        );
+
+        let (_, min) = BrtCFVO::from_bytes((records[1].1, 0)).expect("minimum");
+        assert_eq!(min.iType, CFVO_NUM);
+        assert_eq!(f64::from(min.numParam), 2.0);
+        let (_, mid) = BrtCFVO::from_bytes((records[2].1, 0)).expect("midpoint");
+        assert_eq!(mid.iType, CFVO_PERCENT);
+        assert_eq!(f64::from(mid.numParam), 60.0);
+        let (_, max) = BrtCFVO::from_bytes((records[3].1, 0)).expect("maximum");
+        assert_eq!(max.iType, CFVO_PERCENTILE);
+        assert_eq!(f64::from(max.numParam), 90.0);
+
+        let (_, start_color) = BrtColor::from_bytes((records[4].1, 0)).expect("minimum color");
+        assert_eq!(start_color, BrtColor::rgb(0xFF, 0x00, 0x00));
+        let (_, middle_color) = BrtColor::from_bytes((records[5].1, 0)).expect("midpoint color");
+        assert_eq!(middle_color, BrtColor::rgb(0xFF, 0xFF, 0xFF));
+        let (_, end_color) = BrtColor::from_bytes((records[6].1, 0)).expect("maximum color");
+        assert_eq!(end_color, BrtColor::rgb(0x00, 0x00, 0xFF));
+    }
+
+    #[test]
+    fn three_color_scale_defaults_to_percentile_midpoint() {
+        let scale = ConditionalFormat3ColorScale::new();
+        scale.validate().expect("valid scale");
+        let mut body = Vec::new();
+        scale.write_body(&mut body).expect("body");
+        let records = records(&body);
+        let (_, mid) = BrtCFVO::from_bytes((records[2].1, 0)).expect("midpoint");
+        assert_eq!(mid.iType, CFVO_PERCENTILE);
+        assert_eq!(f64::from(mid.numParam), 50.0);
+    }
+
+    #[test]
+    fn color_scale_validation_rejects_bad_thresholds_and_stop() {
+        assert!(
+            ConditionalFormat2ColorScale::new()
+                .set_minimum(ConditionalFormatType::Highest, 1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormat2ColorScale::new()
+                .set_maximum(ConditionalFormatType::Lowest, 1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormat2ColorScale::new()
+                .set_minimum(ConditionalFormatType::Percent, 101)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormat3ColorScale::new()
+                .set_midpoint(ConditionalFormatType::Lowest, 0)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormat3ColorScale::new()
+                .set_midpoint(ConditionalFormatType::Percentile, -1)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormat2ColorScale::new()
+                .set_minimum(ConditionalFormatType::Number, "text")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormat2ColorScale::new()
+                .set_stop_if_true(true)
+                .validate()
+                .is_err()
+        );
     }
 }

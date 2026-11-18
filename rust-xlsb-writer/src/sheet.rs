@@ -226,6 +226,7 @@ fn write_conditional_formats(
             out,
             &conditional_format.begin_rule(priority, dxf_ids[index].unwrap_or(u32::MAX))?,
         )?;
+        conditional_format.write_body(out)?;
         push(out, &BrtEndCFRule::default())?;
         push(out, &BrtEndConditionalFormatting::default())?;
     }

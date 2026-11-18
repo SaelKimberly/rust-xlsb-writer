@@ -1047,12 +1047,13 @@ mod tests {
     use rust_xlsb_core::prelude::{
         Bold, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters, BrtBeginList,
-        BrtBeginListCol, BrtBeginListParts, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp,
-        BrtCellRString, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing,
-        BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr, BrtSheetProtection,
-        BrtTableStyleClient, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_DUPLICATE_VALUES,
-        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_UNIQUE_VALUES,
-        CF_TYPE_EXPRESSION, CF_TYPE_FILTER,
+        BrtBeginListCol, BrtBeginListParts, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO,
+        BrtCalcProp, BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet,
+        BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr,
+        BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_DUPLICATE_VALUES,
+        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
+        CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CFVO_MAX,
+        CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1275,6 +1276,102 @@ mod tests {
 
         let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
         assert_eq!(records::<BrtDXF>(&styles).len(), 2);
+    }
+
+    #[test]
+    fn color_scales_emit_nested_records_without_dxf() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_conditional_format(0, 0, 4, 0, &crate::ConditionalFormat2ColorScale::new())
+            .expect("two-color scale");
+        worksheet
+            .add_conditional_format(
+                0,
+                2,
+                4,
+                2,
+                &crate::ConditionalFormat3ColorScale::new()
+                    .set_minimum(crate::ConditionalFormatType::Number, 2)
+                    .set_midpoint(crate::ConditionalFormatType::Percent, 60)
+                    .set_maximum(crate::ConditionalFormatType::Percentile, 90),
+            )
+            .expect("three-color scale");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let ids = record_ids(&sheet);
+        let first = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBeginConditionalFormatting)
+            .expect("first block");
+        assert_eq!(
+            &ids[first..first + 10],
+            &[
+                KnownID::BrtBeginConditionalFormatting,
+                KnownID::BrtBeginCFRule,
+                KnownID::BrtBeginColorScale,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtColor,
+                KnownID::BrtEndColorScale,
+                KnownID::BrtEndCFRule,
+                KnownID::BrtEndConditionalFormatting,
+            ]
+        );
+        let second = first + 10;
+        assert_eq!(
+            &ids[second..second + 12],
+            &[
+                KnownID::BrtBeginConditionalFormatting,
+                KnownID::BrtBeginCFRule,
+                KnownID::BrtBeginColorScale,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtColor,
+                KnownID::BrtColor,
+                KnownID::BrtEndColorScale,
+                KnownID::BrtEndCFRule,
+                KnownID::BrtEndConditionalFormatting,
+            ]
+        );
+
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 2);
+        for (index, rule) in rules.iter().enumerate() {
+            assert_eq!(rule.iType, CF_TYPE_GRADIENT);
+            assert_eq!(rule.iTemplate, CF_TEMPLATE_GRADIENT);
+            assert_eq!(rule.dxfId, u32::MAX);
+            assert_eq!(rule.iPri, i32::try_from(index + 1).expect("priority"));
+            assert_eq!(rule.iParam, 0);
+            assert_eq!(rule.flags, 0);
+            assert_eq!(rule.cbFmla1, 0);
+            assert_eq!(rule.cbFmla2, 0);
+            assert!(rule.formula1.is_none());
+            assert!(rule.formula2.is_none());
+        }
+
+        let cfvos = records::<BrtCFVO>(&sheet);
+        assert_eq!(
+            cfvos.iter().map(|cfvo| cfvo.iType).collect::<Vec<_>>(),
+            [CFVO_MIN, CFVO_MAX, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE]
+        );
+        assert_eq!(f64::from(cfvos[2].numParam), 2.0);
+        assert_eq!(f64::from(cfvos[3].numParam), 60.0);
+        assert_eq!(f64::from(cfvos[4].numParam), 90.0);
+        assert_eq!(records::<BrtColor>(&sheet).len(), 5);
+        assert_eq!(
+            ids.iter()
+                .filter(|id| **id == KnownID::BrtEndColorScale)
+                .count(),
+            2
+        );
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        assert_eq!(records::<BrtDXF>(&styles), Vec::new());
     }
 
     #[test]

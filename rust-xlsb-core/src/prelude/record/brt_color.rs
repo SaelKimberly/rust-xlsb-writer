@@ -1,5 +1,6 @@
 use deku::{DekuRead, DekuWrite};
 
+use crate::assign_id;
 use crate::prelude::Checked;
 
 #[derive(Clone, Default, DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq)]
@@ -153,6 +154,8 @@ impl Checked for BrtColor {
         self.check_internal()
     }
 }
+
+assign_id!(BrtColor);
 
 #[test]
 fn test_brt_color() {

@@ -67,11 +67,13 @@ pub use brt_cell_st::BrtCellSt;
 pub use brt_col_info::BrtColInfo;
 pub use brt_color::BrtColor;
 pub use brt_conditional::{
-    BrtBeginCFRule, BrtBeginConditionalFormatting, BrtEndCFRule, BrtEndConditionalFormatting,
-    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DUPLICATE_VALUES,
-    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
-    CF_TEMPLATE_FILTER, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS, CF_TYPE_EXPRESSION,
-    CF_TYPE_FILTER, CFParsedFormula, conditional_format_block,
+    BrtBeginCFRule, BrtBeginColorScale, BrtBeginConditionalFormatting, BrtCFVO, BrtEndCFRule,
+    BrtEndColorScale, BrtEndConditionalFormatting, CF_TEMPLATE_ABOVE_AVERAGE,
+    CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE,
+    CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
+    CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS, CF_TYPE_EXPRESSION, CF_TYPE_FILTER,
+    CF_TYPE_GRADIENT, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
+    conditional_format_block,
 };
 pub use brt_dval::{BrtBeginDVals, BrtDVal, BrtEndDVals, DValStrings, DVals};
 pub use brt_dxf::{BrtDXF, XFProp, XFProps};
