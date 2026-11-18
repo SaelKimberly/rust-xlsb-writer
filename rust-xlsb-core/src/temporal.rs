@@ -130,10 +130,10 @@ mod tests {
     use chrono::{Datelike, TimeZone};
 
     use super::*;
-    use crate::Workbook;
     use crate::context::NumberEncoding;
+    use crate::test_context::TestContext;
 
-    fn stored(value: &dyn ToCellValue, workbook: &Workbook) -> f64 {
+    fn stored(value: &dyn ToCellValue, workbook: &TestContext) -> f64 {
         match value.to_cell_value(workbook).expect("converts") {
             CellValue::Number(NumberEncoding::Real(value)) => value,
             CellValue::Number(NumberEncoding::Rk(rk)) => rk.value(),
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn serial_matches_the_1900_epoch() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let cases = [
             (date(1900, 1, 1), 1.0),
             (date(1900, 2, 28), 59.0),
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn dates_use_rk_integers() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let value = date(2026, 11, 18).to_cell_value(&workbook).unwrap();
         match value {
             CellValue::Number(NumberEncoding::Rk(rk)) => assert_eq!(rk.value(), 46_344.0),
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn times_round_to_milliseconds() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let noon = NaiveTime::from_hms_nano_opt(12, 0, 0, 0).unwrap();
         assert_eq!(stored(&noon, &workbook), 0.5);
         assert!(matches!(
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn time_rounding_into_the_next_day_is_rejected() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let time = NaiveTime::from_hms_nano_opt(23, 59, 59, 999_600_000).unwrap();
         assert!(matches!(
             time.to_cell_value(&workbook),
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn leap_seconds_are_rejected() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let leap = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
         assert!(matches!(
             leap.to_cell_value(&workbook),
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn datetimes_add_the_day_fraction() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let datetime = date(2026, 11, 18)
             .and_hms_milli_opt(12, 34, 56, 789)
             .unwrap();
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn datetime_rounding_carries_into_the_next_day() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let datetime = date(2026, 11, 18)
             .and_hms_nano_opt(23, 59, 59, 999_600_000)
             .unwrap();
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn datetime_carry_skips_the_fake_1900_leap_day() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let last_moment_of_february = date(1900, 2, 28)
             .and_hms_nano_opt(23, 59, 59, 999_600_000)
             .unwrap();
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn utc_datetimes_use_the_utc_wall_clock() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         let naive = date(2026, 11, 18)
             .and_hms_milli_opt(12, 34, 56, 789)
             .unwrap();
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn durations_round_to_milliseconds() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         assert_eq!(
             stored(&TimeDelta::milliseconds(-1500), &workbook),
             -1500.0 / 86_400_000.0
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn out_of_range_dates_are_rejected() {
-        let workbook = Workbook::new().unwrap();
+        let workbook = TestContext::new();
         for date in [date(1899, 12, 31), date(10_000, 1, 1)] {
             assert!(matches!(
                 date.to_cell_value(&workbook),

@@ -120,11 +120,11 @@ impl<T: ToCellValue + ?Sized> ToCellValue for &T {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Workbook;
+    use crate::test_context::TestContext;
 
     #[test]
     fn inline_strings_are_default() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
         let text = "hello";
 
         assert_eq!(
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn unit_and_none_are_blank() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
 
         assert_eq!(
             ().to_cell_value(&workbook).expect("converts"),
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn integers_use_the_context_policy() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
 
         assert!(matches!(
             (-42_i32).to_cell_value(&workbook).expect("converts"),
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn integers_outside_f64_precision_error() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
 
         assert!(matches!(
             i64::MAX.to_cell_value(&workbook),
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn booleans_and_errors_keep_their_type() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
 
         assert_eq!(
             true.to_cell_value(&workbook).expect("converts"),
@@ -205,8 +205,8 @@ mod tests {
 
     #[test]
     fn shared_string_is_validated_against_the_target_workbook() {
-        let first = Workbook::new().expect("in-memory workbook");
-        let second = Workbook::new().expect("in-memory workbook");
+        let first = TestContext::new();
+        let second = TestContext::new();
         let hello = first.shared_string("hello").expect("interns");
         let other = first.shared_string("other").expect("interns");
         let one = second.shared_string("only").expect("interns");
@@ -222,14 +222,14 @@ mod tests {
             Err(Error::SharedStringOutOfRange { id: 1, len: 1 })
         ));
         assert!(matches!(
-            hello.to_cell_value(&Workbook::new().expect("empty")),
+            hello.to_cell_value(&TestContext::new()),
             Err(Error::SharedStringOutOfRange { id: 0, len: 0 })
         ));
     }
 
     #[test]
     fn references_forward_to_the_inner_value() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
         let value = 3.75_f64;
 
         assert_eq!(

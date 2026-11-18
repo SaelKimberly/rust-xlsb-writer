@@ -157,7 +157,7 @@ pub trait WbContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Workbook;
+    use crate::test_context::TestContext;
 
     fn rk_int(value: i32) -> NumberEncoding {
         NumberEncoding::Rk(RkNumber::int(value).expect("fits"))
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn store_integer_rejects_values_f64_cannot_hold() {
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
 
         assert_eq!(workbook.store_integer(42).expect("fits"), rk_int(42));
         assert_eq!(
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn context_is_object_safe() {
         fn accepts(_: &dyn WbContext) {}
-        let workbook = Workbook::new().expect("in-memory workbook");
+        let workbook = TestContext::new();
         accepts(&workbook);
     }
 }

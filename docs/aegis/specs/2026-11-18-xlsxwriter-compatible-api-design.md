@@ -479,10 +479,12 @@ pub trait IntoExcelData {
 }
 ```
 
-`CellData` is context-free:
+`CellData` is context-free. It is public but `#[doc(hidden)]` because
+`IntoExcelDateTime::into_cell_data` exposes it in a public trait signature:
 
 ```rust
-enum CellData {
+#[doc(hidden)]
+pub enum CellData {
     Blank,
     Bool(bool),
     Error(BErr),
@@ -622,22 +624,25 @@ I/O failure during the final write can still leave a partial file.
 ```rust
 pub enum Error {
     Core(#[from] rust_xlsb_core::Error),
+    Sst(#[from] rust_xlsb_core::SSTHolderError),
     Io(#[from] std::io::Error),
     InvalidSheetName(String),
     SheetNameReused(String),
     RowColumnLimit,
     RowColumnOrder,
+    WorksheetIndex(usize),
     StringTooLong,
     ValueNotRepresentable(&'static str),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub type XlsbError = Error;
 ```
 
 `ValueNotRepresentable` is used for `u64` / `i64` values that cannot be stored
 exactly. `RowColumnLimit` is used for out-of-range rows or columns.
 `RowColumnOrder` is used when a range's first column is greater than its last.
+`WorksheetIndex` is used by `worksheet_from_index`.
 `StringTooLong` is used above 32,767 UTF-16 code units.
 
 No `XlsxError` alias. A `XlsxError` name in ported code is a mechanical rename.

@@ -265,14 +265,16 @@ type, and the core record helper the writer needs.
 - Add `chrono` dependency and `calamine` dev-dependency. Add `thiserror`.
 - Add `error.rs` with:
   - `Core(#[from] rust_xlsb_core::Error)`
+  - `Sst(#[from] rust_xlsb_core::SSTHolderError)`
   - `Io(#[from] std::io::Error)`
   - `InvalidSheetName(String)`
   - `SheetNameReused(String)`
   - `RowColumnLimit`
   - `RowColumnOrder`
+  - `WorksheetIndex(usize)`
   - `StringTooLong`
   - `ValueNotRepresentable(&'static str)`
-- Export `Error`, `Result<T>`, and `XlsbError`.
+- Export `Error`, `Result<T, E = Error>`, and `XlsbError`.
 - Re-export `push_record` from `rust-xlsb-core/src/lib.rs` so the writer does
   not duplicate the record framing helper.
 

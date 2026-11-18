@@ -9,26 +9,26 @@ The long-term goal is cell-by-cell writing plus batched
 Apache Arrow ingestion, with styles, low RAM use, and exact IEEE 754 float
 fidelity.
 
-Current reality: the binary record layer plus the value-conversion contract
-(`ToCellValue`/`CellValue`), the workbook context (`WbContext`,
-`NumberPolicy`), minimal `Workbook`/`Worksheet` types owning the
-shared-string table, a workbook style registry (`CellStyle`/`StyleRegistry`),
-row- and column-level default styles on `Worksheet`, and `chrono` temporal
-values (dates, times, datetimes, durations) encoded as Excel serial numbers.
-Package assembly still lives only in the `e2e` test module
-(`src/e2e/`): the harness builds a minimal XLSB package and the tests read it
-back with `calamine`, so layout, BIFF framing, number policy, and every
-implemented cell record are proven together. There is no public worksheet or
-cell writer yet. `KnownID` covers 860 of the 878 records in revision 22.0;
-every id it does carry matches the spec. Treat the README as a roadmap, not as a
-description of shipped API.
+Current reality: `rust-xlsb-core` owns the binary record layer, the
+value-conversion contract (`ToCellValue`/`CellValue`), the workbook context
+(`WbContext`, `NumberPolicy`), the shared-string table (`SSTHolder`), the style
+registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
+public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
+`Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
+widths/formats, multi-sheet package assembly, and `save`/`save_to_buffer`/
+`save_to_writer`. The public write path stores strings in the shared-string
+table and emits `BrtCellIsst`; `ToCellValue` remains the low-level core
+contract and still converts `&str`/`String` to inline strings. `KnownID` covers
+860 of the 878 records in revision 22.0; every id it does carry matches the
+spec. Treat the README as a roadmap, not as a description of shipped API.
 
 [MS-XLSB]: https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xlsb/acc8aa92-1f02-4167-99f5-84f9f676b95a
 
 ## Architecture & Data Flow
 
-Two crates. `rust-xlsb-core` holds all live code; `rust-xlsb-writer` is a stub
-whose entire body is commented out.
+Two crates. `rust-xlsb-core` is the low-level record, style, shared-string, and
+value-conversion layer. `rust-xlsb-writer` owns the public workbook model and
+package pipeline.
 
 Record pipeline, in the order bytes are produced:
 
@@ -65,20 +65,27 @@ contiguous `0..len`.
 Value conversion is separate from records. `ToCellValue::to_cell_value(&dyn
 WbContext)` returns a semantic `CellValue`; `WbContext` supplies the
 shared-string table (`shared_strings`, `shared_string`) and a `NumberPolicy`
-that chooses `Real` or a lossless `Rk` encoding. `Workbook` owns one `SSTHolder`,
-`Worksheet` borrows it, and both implement `WbContext`. `&str`/`String` convert
-to inline strings; only an explicit `SharedString` goes into the SST, and its id
-is range-checked against the target workbook at conversion time.
+that chooses `Real` or a lossless `Rk` encoding. `&str`/`String` convert to
+inline strings at this low-level layer; only an explicit `SharedString` goes
+into the SST, and its id is range-checked against the target context at
+conversion time.
 
-Formatting is separate again. `Workbook` owns a `StyleRegistry`
-(`styles.rs`) seeded with the default `BrtXF` at index 0. `CellStyle` pairs a
-`BrtFont`, `BrtFill`, `BrtBorder` and the direct `BrtXF` attributes; `add_style`
-interns each component, patches `iFont`/`iFill`/`ixBorder`/`ixfeParent`, and
-deduplicates the resulting XF. `add_number_format` allocates custom `iFmt` ids
-from 164. `Worksheet` stores row and non-overlapping column-range style indexes;
-the writer emits `BrtColInfo` for columns and sets `BrtRowHdr.ixfe` with
-`fGhostDirty` for rows. `StyleRegistry::write_to_biff` emits the complete
-Styles part record sequence.
+The public writer has its own `IntoExcelData` / `IntoExcelDateTime` path.
+`Worksheet` owns sparse cells, row options, column options, and a
+worksheet-local format table; `write` stores context-free `CellData` and
+`write_with_format` interns a `Format` by value. At save, the writer creates an
+`SSTHolder`, turns high-level strings into shared strings (`BrtCellIsst`), and
+converts numbers through `WbContext`.
+
+Formatting is separate again. Core's `StyleRegistry` (`styles.rs`) is seeded
+with the default `BrtXF` at index 0. `CellStyle` pairs a `BrtFont`, `BrtFill`,
+`BrtBorder`, and the direct `BrtXF` attributes; `add_style` interns each
+component, patches `iFont`/`iFill`/`ixBorder`/`ixfeParent`, and deduplicates
+the resulting XF. `add_number_format` allocates custom `iFmt` ids from 164. The
+public `Format` builder maps to `CellStyle` at save; `Worksheet` stores row and
+per-column width/format options; the writer emits coalesced `BrtColInfo`
+records and sets `BrtRowHdr.ixfe` with `fGhostDirty` for rows.
+`StyleRegistry::write_to_biff` emits the complete Styles part record sequence.
 
 Temporal conversion lives in `temporal.rs` and reuses the same path.
 `NaiveDate` becomes an integer day serial in the 1900 system, so dates are
@@ -94,10 +101,10 @@ UTC.
 | Path | Contents |
 |---|---|
 | `Cargo.toml` | Virtual workspace manifest; members and shared `[workspace.package]` metadata |
-| `rust-xlsb-core/src/` | All working code: record framing, id catalogue, value conversion, temporal serials, workbook context, shared strings |
+| `rust-xlsb-core/src/` | Low-level layer: record framing, id catalogue, value conversion, temporal serials, context, shared strings, style registry |
 | `rust-xlsb-core/src/prelude/` | Public record/structure facade (`record/`, `structure/`, `scope.rs`, `collection.rs`) |
-| `rust-xlsb-writer/src/lib.rs` | Stub crate; only a `MiMalloc` global allocator is live |
-| `rust-xlsb-core/examples/` | `showcase.rs`: writes one styled XLSB row per `ToCellValue` implementation (alignments, fills, borders) |
+| `rust-xlsb-writer/src/` | Public writer: `Workbook`, `Worksheet`, `Format`/`Color`, data traits, sheet serializer, package assembly |
+| `rust-xlsb-writer/examples/` | `showcase.rs`: styled XLSB table through the public API |
 | `.github/` | `FUNDING.yml` only; no workflows, templates, or CI |
 
 ## Development Commands
@@ -133,7 +140,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 145 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 158 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -155,11 +162,12 @@ crates opt in with `[lints] workspace = true`.
   such as `BrtXF`, `BrtWsProp` keep their specification spelling; do not
   "clean up" names. Outside the prelude, use snake_case for functions and
   variables.
-- **Errors.** One crate-level enum, `Error` in `err.rs`, with a
-  `pub type Result<T>` alias; it is built on `thiserror`. Subsystems that need
-  their own variants define a local error enum (`SSTHolderError`) and convert
-  with `#[from]`. Every public fallible function documents a `# Errors`
-  section, and doctests accompany public constructors.
+- **Errors.** Core has `Error` in `err.rs` with `pub type Result<T>`; the
+  writer has its own `Error`/`Result<T, E = Error>` in `error.rs` and wraps core
+  errors with `#[from]`. Subsystems that need their own variants define a
+  local error enum (`SSTHolderError`) and convert with `#[from]`. Every public
+  fallible function documents a `# Errors` section, and doctests accompany
+  public constructors.
 - **Error fidelity.** The blanket `BiffWrite` impl discards the underlying deku
   error and returns `Error::ValidationError("Invalid BIFF record")`. If you need
   the cause, format it, as `KnownID::try_deku_literal` does.
@@ -173,10 +181,11 @@ crates opt in with `[lints] workspace = true`.
 - **Zero-sized markers.** `scope.rs` and `collection.rs` generate `BrtBegin*`/
   `BrtEnd*` structs via `concat-idents`. Scope markers serialize to exactly 0
   bytes; collection markers carry a `u32 count`.
-- **Unsafe is deliberate.** `BiffHead::const_from_data` parses with raw pointer
-  offsets, and `read_from_with_data` / `RawBiffLiteral::packed` use
-  `set_len`/`new_uninit_slice`. Keep the same style when extending them, keep
-  the uninitialized regions fully written before `assume_init`, and add a test.
+- **Unsafe is deliberate.** `BiffHead::read_from_with_data` /
+  `RawBiffLiteral::packed` use `set_len`/`new_uninit_slice`. Keep the same
+  style when extending them, keep the uninitialized regions fully written
+  before `assume_init`, and add a test. `BiffHead::const_from_data` is now a
+  safe slice parser.
 - **Adding a record** requires all of: deku derives with the correct bit layout,
   a `Checked` impl (or `Unchecked`), `assign_id!(TypeName)`, a re-export in
   `prelude/mod.rs`, and an `#[case::<name>(|| checked_test::<TypeName>(SIZE))]`
@@ -209,13 +218,18 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/styles.rs` | `CellStyle`/`StyleRegistry` deduplication and Styles part emission |
 | `rust-xlsb-core/src/context.rs` | `SharedString`, `WbContext`, `NumberPolicy`, `NumberEncoding` |
 | `rust-xlsb-core/src/cell_value.rs` | `CellValue`, `ToCellValue` and its impl matrix |
-| `rust-xlsb-core/src/workbook.rs` | `Workbook` (owns `SSTHolder` and `StyleRegistry`) and `Worksheet<'wb>` row/column style maps |
 | `rust-xlsb-core/src/temporal.rs` | `chrono` → Excel serial conversion for dates, times, datetimes, durations |
-| `rust-xlsb-core/src/e2e/mod.rs` | End-to-end cell tests read back through `calamine` |
-| `rust-xlsb-core/src/e2e/harness.rs` | Builds the minimal package, ZIP included, for those tests; reused by the showcase example |
-| `rust-xlsb-core/examples/showcase.rs` | Runnable XLSB showcase of every `ToCellValue` implementor, with row bands, fills, alignments, and borders |
+| `rust-xlsb-core/src/test_context.rs` | Test-only `TestContext` for low-level conversion tests |
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
-| `rust-xlsb-writer/src/lib.rs` | Stub; allocator plus ~500 lines of commented prototype |
+| `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, save entry points |
+| `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, write and layout API |
+| `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
+| `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
+| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans |
+| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only ZIP |
+| `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
+| `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
+| `rust-xlsb-writer/examples/showcase.rs` | Public-API showcase with row bands, fills, alignment, borders, temporal formats |
 | `rust-toolchain.toml` | Stable `1.100.0` pin at the root; `rust-xlsb-core/rust-toolchain.toml` duplicates it |
 
 ## Runtime/Tooling Preferences
@@ -231,55 +245,52 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   dependency resolution to drift between checkouts.
 - `rusqlite` uses the `bundled` feature, so a C compiler is needed and the first
   build compiles SQLite from source.
-- `rust-xlsb-writer` depends only on `rust-xlsb-core` and `mimalloc`. Other
-  crates were removed because no code referenced them; add one back together
-  with the code that uses it, otherwise cargo's `unused_dependencies` lint
-  fires.
+- `rust-xlsb-writer` depends on `rust-xlsb-core`, `mimalloc`, `thiserror`, and
+  `chrono`; its dev-dependencies add `calamine`, `deku`, `criterion`, and
+  `rstest`. Core no longer depends on `calamine`.
 - Dependency set, latest major/minor for this toolchain: `deku 0.20`,
   `rusqlite 0.43`, `strum 0.28`, `criterion 0.8`, `zerocopy 0.8.63`,
   `thiserror 2.0.21`, `num_enum 0.7.6`, `xxhash-rust 0.8.21`,
   `concat-idents 1.1.5`, `chrono 0.4` (no `clock`, `std` only),
-  `mimalloc 0.1.52`, `rstest 0.28` (dev), `calamine 0.38` (dev, `chrono`
-  feature enabled, reads generated packages back in `e2e` tests).
+  `mimalloc 0.1.52`, `rstest 0.28` (dev), `calamine 0.38` (writer dev,
+  `chrono` feature enabled).
 - No release tooling, changelog, or publish workflow. Version is `0.1.0` and the
   README defers `1.0.0-alpha` to community adoption.
 
 ## Testing & QA
 
 - Every test lives inside the crate: `#[cfg(test)] mod tests` next to the code
-  it covers, plus the `#[cfg(test)] mod e2e` package suite (`src/e2e/`). There
-  is no `tests/`, `benches/`, or fixture directory. `examples/showcase.rs` is a
-  runnable demo, not a test; it includes the `e2e` harness by path.
-- 145 unit tests and 6 doctests total. Most unit tests are rstest cases in the
-  `test_biff_export` table in `prelude/mod.rs`, each calling the generic
-  `checked_test::<T>`: `Default` → `to_bytes` → exact byte-size assert →
-  `from_bytes` → `check()` on both → `PartialEq`, `Hash`, and `Debug` equality.
+  it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
+  (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
+  no `tests/`, `benches/`, or fixture directory.
+- 158 unit tests and 6 doctests total: 119 in core, 39 in writer. Most core
+  unit tests are rstest cases in the `test_biff_export` table in
+  `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
+  `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
+  `PartialEq`, `Hash`, and `Debug` equality.
 - Case names are `test_biff_export::case_<N>_<name>`; the size passed to
   `checked_test` is the assertion, so change it whenever a record layout
   changes.
-- Hand-written tests: `biff_id::tests::test_known_ids` (literal packing, header
-  parse), `sst_sqlite::tests::test_sst_sqlite` (push, batch, SST counters, item
-  decode), `prelude::structure::xl_wide_string::tests::test_xl_wide_string`,
-  `prelude::record::brt_color::test_brt_color` plus its LSB/RGB byte-layout
-  regressions, and `prelude::record::brt_row_hdr::ghost_dirty_lands_in_the_lsb_first_bit`.
-- `e2e` tests are the package-level oracle: cells are built through
-  `ToCellValue` against a real `Workbook`, written, then parsed with `calamine`
-  0.38 (dev-dependency) to assert value and position. They also assert which
-  cell record a conversion picked, that temporal serials round-trip at
-  millisecond precision, and that the Shared Strings part is omitted when the
-  table is empty. `calamine` is an independent reader, so these tests
-  run in CI without LibreOffice or Excel. Header boundary cases (`0x80`,
-  `0x4000`, `0x200000` size thresholds, `Incomplete`, `ConsumeFailed`) are
-  still untested.
+- Hand-written core tests: `biff_id::tests::test_known_ids` (literal packing,
+  header parse), `biff_head::tests` (varint sizes `0x80`/`0x4000`/`0x200000`
+  and two-byte body reads), `sst_sqlite::tests::test_sst_sqlite` (push, batch,
+  SST counters, item decode), `prelude::structure::xl_wide_string::tests`,
+  `prelude::record::brt_color` LSB/RGB regressions,
+  `prelude::record::brt_font::tests::default_font_matches_excel`, and
+  `prelude::record::brt_row_hdr::ghost_dirty_lands_in_the_lsb_first_bit`.
+- Hand-written writer tests cover `Format` mapping/dedup/validation,
+  `IntoExcelData`, worksheet bounds and overrides, sheet record layout
+  (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
+  package parts, multi-sheet save, and calamine round-trips for values and
+  temporal formats.
 - `criterion` is a dev-dependency in both crates but no benchmark exists.
 - No CI runs any of this. Run `cargo test --workspace` before claiming a change
   works, and update the affected size literal rather than loosening the
   assertion.
-- `cargo run -p rust-xlsb-core --example showcase -- showcase.xlsb` writes a
-  workbook with one styled row per `ToCellValue` implementation, for manual
-  inspection in LibreOffice or Excel. LibreOffice does not let XLSB row/column
-  defaults reach cells with an explicit cell XF, so the example also mirrors its
-  visible styles per cell; the row/column style records are still emitted.
+- `cargo run -p rust-xlsb-writer --example showcase -- showcase.xlsb` writes a
+  styled table through the public API for manual inspection in LibreOffice or
+  Excel. LibreOffice rendering is the visual oracle for fills, borders,
+  alignment, row/column widths, and temporal formats.
 
 ## Commit Style
 

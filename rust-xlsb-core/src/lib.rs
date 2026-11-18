@@ -16,7 +16,7 @@
 
 #![deny(dead_code)]
 
-// Allows the `e2e` harness to be included by the `showcase` example as-is.
+// Allows tests to refer to the crate by its external name.
 #[cfg(test)]
 extern crate self as rust_xlsb_core;
 mod biff;
@@ -30,12 +30,11 @@ pub mod prelude;
 mod sst_sqlite;
 mod styles;
 mod temporal;
-mod workbook;
 
 #[cfg(test)]
-mod e2e;
+mod test_context;
 
-pub use biff::{BiffWrite, write_as_biff, write_as_empty_biff};
+pub use biff::{BiffWrite, push_record, write_as_biff, write_as_empty_biff};
 pub use biff_head::BiffHead;
 pub use biff_id::{KnownID, RawBiffLiteral};
 pub use cell_value::{CellValue, ToCellValue};
@@ -44,7 +43,6 @@ pub use context::{NumberEncoding, NumberPolicy, SharedString, WbContext};
 pub use err::{Error, Result};
 pub use sst_sqlite::{SSTHolder, SSTHolderError};
 pub use styles::{CellStyle, StyleRegistry};
-pub use workbook::{Workbook, Worksheet};
 
 #[allow(clippy::crate_in_macro_def)]
 #[macro_export]

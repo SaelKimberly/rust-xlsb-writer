@@ -60,88 +60,57 @@ impl BiffHead {
         }
     }
 
-    #[expect(
-        clippy::ptr_offset_by_literal,
-        reason = "each header byte is reached by stepping one byte past the previous varint field"
-    )]
     pub const fn const_from_data(data: &[u8]) -> Result<(usize, Self)> {
         let len = data.len();
-
         if len < 2 {
-            Err(Error::Incomplete(len, 2))
-        } else {
-            unsafe {
-                let (id, mut p) = match [data[0], data[1]] {
-                    [id @ 0x00..0x80, sz @ 0x00..0x80] => {
-                        return Ok((
-                            2,
-                            Self {
-                                id: id as u16,
-                                size: sz as u32,
-                            },
-                        ));
-                    }
-                    [id @ 0x00..0x80, _] => {
-                        if len == 2 {
-                            return Err(Error::Incomplete(2, 3));
-                        }
-                        (id as u16, data.as_ptr().offset(1))
-                    }
-                    id @ [0x80..=u8::MAX, 0x00..0x80] => {
-                        if len == 2 {
-                            return Err(Error::Incomplete(2, 3));
-                        }
-                        (u16::from_le_bytes(id), data.as_ptr().offset(2))
-                    }
-                    id => {
-                        cold_path();
-                        return Err(Error::TooLargeRecordId(
-                            u16::from_le_bytes(id),
-                            Self::MAX_ID,
-                        ));
-                    }
-                };
+            return Err(Error::Incomplete(len, 2));
+        }
 
-                let size = {
-                    let mut sz = *p as u32;
+        let (id, mut pos) = match (data[0], data[1]) {
+            (id, size) if id < 0x80 && size < 0x80 => {
+                return Ok((
+                    2,
+                    Self {
+                        id: id as u16,
+                        size: size as u32,
+                    },
+                ));
+            }
+            (id, _) if id < 0x80 => (id as u16, 1),
+            (_, _) if data[0] >= 0x80 && data[1] < 0x80 => {
+                (u16::from_le_bytes([data[0], data[1]]), 2)
+            }
+            _ => {
+                cold_path();
+                return Err(Error::TooLargeRecordId(
+                    u16::from_le_bytes([data[0], data[1]]),
+                    Self::MAX_ID,
+                ));
+            }
+        };
 
-                    if *p > 0x7f {
-                        if data.len() == 3 {
-                            return Err(Error::Incomplete(3, 4));
-                        }
-                        p = p.offset(1);
-                        sz ^= ((!*p) as u32) << 7;
-
-                        if *p > 0x7f {
-                            if data.len() == 4 {
-                                return Err(Error::Incomplete(4, 5));
-                            }
-                            p = p.offset(1);
-                            sz ^= ((!*p) as u32) << 14;
-
-                            if *p > 0x7f {
-                                if data.len() == 5 {
-                                    return Err(Error::Incomplete(5, 6));
-                                }
-                                p = p.offset(1);
-                                sz ^= ((!*p) as u32) << 21;
-
-                                if *p > 0x7f {
-                                    return Err(Error::TooLargeRecordBody(
-                                        sz as usize,
-                                        Self::MAX_SIZE as usize,
-                                    ));
-                                }
-                            }
-                        }
-                    }
-
-                    sz
-                };
-
-                Ok((p.offset_from_unsigned(data.as_ptr()) + 1, Self { id, size }))
+        let mut size = 0_u32;
+        let mut shift = 0_u32;
+        loop {
+            if pos >= len {
+                return Err(Error::Incomplete(len, pos + 1));
+            }
+            let byte = data[pos];
+            size |= ((byte & 0x7f) as u32) << shift;
+            pos += 1;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+            if shift > 21 {
+                return Err(Error::TooLargeRecordBody(
+                    size as usize,
+                    Self::MAX_SIZE as usize,
+                ));
             }
         }
+
+        Ok((pos, Self { id, size }))
     }
 
     #[must_use]
@@ -228,5 +197,38 @@ impl BiffHead {
         } else {
             Ok((head, None))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::BufReader;
+
+    use super::*;
+
+    #[test]
+    fn header_roundtrips_varint_sizes() {
+        for size in [0, 0x7f, 0x80, 0x3fff, 0x4000, 0x1f_ffff, 0x20_0000] {
+            let head = BiffHead::new(1, size).expect("valid head");
+            let (raw, len) = head.as_raw_data();
+            let (consumed, decoded) = BiffHead::const_from_data(&raw[..len]).expect("decodes");
+            assert_eq!(consumed, len);
+            assert_eq!(decoded, head);
+        }
+    }
+
+    #[test]
+    fn reads_body_after_two_byte_size() {
+        let size = 145;
+        let head = BiffHead::new(1, size).expect("valid head");
+        let mut bytes = Vec::new();
+        head.push_to(&mut bytes).expect("header");
+        bytes.extend(std::iter::repeat_n(0, size as usize));
+        let mut reader = BufReader::new(bytes.as_slice());
+
+        let (decoded, body) = BiffHead::read_from_with_data(&mut reader).expect("reads");
+
+        assert_eq!(decoded.size(), size);
+        assert_eq!(body.expect("body").len(), size as usize);
     }
 }

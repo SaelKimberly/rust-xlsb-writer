@@ -79,6 +79,22 @@ impl BrtColor {
         }
     }
 
+    /// Creates a theme color with a tint/shade amount in the signed 16-bit
+    /// range used by `BrtColor`.
+    #[must_use]
+    pub const fn theme(index: u8, n_tint_and_shade: i16) -> Self {
+        Self {
+            fValidRGB: false,
+            xColorType: ColorType::ThemeColorIndex,
+            index,
+            nTintAndShade: n_tint_and_shade,
+            bRed: 0,
+            bGreen: 0,
+            bBlue: 0,
+            bAlpha: 0xff,
+        }
+    }
+
     const fn check_internal(&self) -> Result<(), &'static str> {
         match self.xColorType {
             ColorType::ApplicationDetermined => Ok(()),

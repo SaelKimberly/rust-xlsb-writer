@@ -20,7 +20,11 @@ workspace = true
 [dependencies]
 rust-xlsb-core = { path = "../rust-xlsb-core" }
 mimalloc = "0.1.52"
+thiserror = "^2.0.21"
+chrono = { version = "0.4.40", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+calamine = { version = "^0.38.0", features = ["chrono"] }
 criterion = "^0.8"
+deku = "^0.20"
 rstest.workspace = true
