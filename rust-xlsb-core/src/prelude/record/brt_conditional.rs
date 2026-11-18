@@ -52,6 +52,8 @@ pub const CF_TYPE_CELL_IS: u32 = 1;
 pub const CF_TYPE_EXPRESSION: u32 = 2;
 /// `CF_TYPE_GRADIENT`.
 pub const CF_TYPE_GRADIENT: u32 = 3;
+/// `CF_TYPE_DATABAR`.
+pub const CF_TYPE_DATABAR: u32 = 4;
 /// `CF_TYPE_FILTER`.
 pub const CF_TYPE_FILTER: u32 = 5;
 
@@ -59,6 +61,8 @@ pub const CF_TYPE_FILTER: u32 = 5;
 pub const CF_TEMPLATE_EXPR: u32 = 0;
 /// `CF_TEMPLATE_GRADIENT`.
 pub const CF_TEMPLATE_GRADIENT: u32 = 2;
+/// `CF_TEMPLATE_DATABAR`.
+pub const CF_TEMPLATE_DATABAR: u32 = 3;
 /// `CF_TEMPLATE_FILTER`.
 pub const CF_TEMPLATE_FILTER: u32 = 5;
 /// `CF_TEMPLATE_UNIQUEVALUES`.
@@ -204,7 +208,9 @@ impl Checked for BrtBeginCFRule {
                 }
                 self.check_no_formulas()
             }
-            (CF_TYPE_GRADIENT, CF_TEMPLATE_GRADIENT) => self.check_scale_rule(),
+            (CF_TYPE_GRADIENT, CF_TEMPLATE_GRADIENT) | (CF_TYPE_DATABAR, CF_TEMPLATE_DATABAR) => {
+                self.check_no_dxf_rule()
+            }
             _ => Err("unsupported conditional-format type and template"),
         }
     }
@@ -257,12 +263,12 @@ impl BrtBeginCFRule {
         self.check_no_formulas()
     }
 
-    const fn check_scale_rule(&self) -> Result<(), &'static str> {
+    const fn check_no_dxf_rule(&self) -> Result<(), &'static str> {
         if self.dxfId != u32::MAX {
-            return Err("color scales must not reference a differential format");
+            return Err("this conditional format must not reference a differential format");
         }
         if self.iParam != 0 || self.flags != 0 {
-            return Err("color scales use only zero parameters and flags");
+            return Err("this conditional format uses only zero parameters and flags");
         }
         self.check_no_formulas()
     }
@@ -317,6 +323,46 @@ pub struct BrtEndColorScale {}
 impl Unchecked for BrtEndColorScale {}
 
 assign_id!(BrtEndColorScale);
+
+/// `2.4.43`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BrtBeginDatabar {
+    pub bLenMin: u8,
+    pub bLenMax: u8,
+    pub fShowValue: u8,
+}
+
+impl Default for BrtBeginDatabar {
+    fn default() -> Self {
+        Self {
+            bLenMin: 10,
+            bLenMax: 90,
+            fShowValue: 1,
+        }
+    }
+}
+
+impl Checked for BrtBeginDatabar {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.bLenMin > self.bLenMax || self.bLenMax > 100 {
+            return Err("data-bar lengths must satisfy 0 <= minimum <= maximum <= 100");
+        }
+        if self.fShowValue > 1 {
+            return Err("data-bar show-value flag must be 0 or 1");
+        }
+        Ok(())
+    }
+}
+
+assign_id!(BrtBeginDatabar);
+
+/// `2.4.399`
+#[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct BrtEndDatabar {}
+
+impl Unchecked for BrtEndDatabar {}
+
+assign_id!(BrtEndDatabar);
 
 /// `2.4.334`
 #[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
@@ -624,6 +670,109 @@ mod tests {
         rule.cbFmla1 = 9;
         rule.formula1 = Some(number(1.0));
         assert!(rule.check().is_err());
+    }
+
+    #[test]
+    fn databar_records_encode_lengths_and_show_value() {
+        let bar = BrtBeginDatabar::default();
+        bar.check().expect("valid data bar");
+        let bytes = bar.to_bytes().expect("serializes");
+        assert_eq!(bytes, [10, 90, 1]);
+
+        let bar = BrtBeginDatabar {
+            fShowValue: 0,
+            ..BrtBeginDatabar::default()
+        };
+        bar.check().expect("valid bar-only data bar");
+        assert_eq!(bar.to_bytes().expect("serializes"), [10, 90, 0]);
+
+        for bar in [
+            BrtBeginDatabar {
+                bLenMin: 0,
+                bLenMax: 0,
+                ..BrtBeginDatabar::default()
+            },
+            BrtBeginDatabar {
+                bLenMin: 100,
+                bLenMax: 100,
+                ..BrtBeginDatabar::default()
+            },
+        ] {
+            bar.check().expect("valid boundary data bar");
+        }
+
+        for bar in [
+            BrtBeginDatabar {
+                bLenMin: 91,
+                ..BrtBeginDatabar::default()
+            },
+            BrtBeginDatabar {
+                bLenMax: 101,
+                ..BrtBeginDatabar::default()
+            },
+            BrtBeginDatabar {
+                fShowValue: 2,
+                ..BrtBeginDatabar::default()
+            },
+        ] {
+            assert!(bar.check().is_err());
+        }
+
+        assert_eq!(
+            BrtEndDatabar::default().to_bytes().expect("serializes"),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn databar_rule_uses_no_dxf_flags_or_formulas() {
+        let rule = BrtBeginCFRule {
+            iType: CF_TYPE_DATABAR,
+            iTemplate: CF_TEMPLATE_DATABAR,
+            dxfId: u32::MAX,
+            iPri: 1,
+            iParam: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        rule.check().expect("valid data bar");
+        let bytes = rule.to_bytes().expect("serializes");
+        assert_eq!(
+            bytes,
+            [
+                4, 0, 0, 0, 3, 0, 0, 0, 255, 255, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255,
+            ]
+        );
+        assert_eq!(&bytes[0..4], &CF_TYPE_DATABAR.to_le_bytes());
+        assert_eq!(&bytes[4..8], &CF_TEMPLATE_DATABAR.to_le_bytes());
+        assert_eq!(&bytes[8..12], &u32::MAX.to_le_bytes());
+        assert_eq!(&bytes[28..30], &[0, 0]);
+        assert_eq!(&bytes[30..34], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[42..46], &u32::MAX.to_le_bytes());
+
+        for invalid in [
+            BrtBeginCFRule {
+                dxfId: 0,
+                ..rule.clone()
+            },
+            BrtBeginCFRule {
+                iParam: 1,
+                ..rule.clone()
+            },
+            BrtBeginCFRule {
+                flags: BrtBeginCFRule::F_STOP_TRUE,
+                ..rule.clone()
+            },
+            BrtBeginCFRule {
+                cbFmla1: 9,
+                formula1: Some(number(1.0)),
+                ..rule
+            },
+        ] {
+            assert!(invalid.check().is_err());
+        }
     }
 
     #[test]

@@ -3,12 +3,12 @@
 use std::borrow::Cow;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginCFRule, BrtBeginColorScale, BrtCFVO, BrtColor, BrtEndColorScale,
-    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DUPLICATE_VALUES,
-    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
-    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS,
-    CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CFParsedFormula, CFVO_MAX, CFVO_MIN,
-    CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
+    BrtBeginCFRule, BrtBeginColorScale, BrtBeginDatabar, BrtCFVO, BrtColor, BrtEndColorScale,
+    BrtEndDatabar, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DATABAR,
+    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES,
+    CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
+    CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
 };
 use rust_xlsb_core::push_record;
 
@@ -685,7 +685,7 @@ impl ConditionalFormat for ConditionalFormatDuplicate {
     }
 }
 
-/// A color-scale threshold type.
+/// A conditional-format threshold type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConditionalFormatType {
     /// The lowest value in the range.
@@ -701,19 +701,19 @@ pub enum ConditionalFormatType {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScalePosition {
+enum ThresholdPosition {
     Minimum,
     Midpoint,
     Maximum,
 }
 
 #[derive(Clone, Debug)]
-struct ScaleStop {
+struct Threshold {
     kind: ConditionalFormatType,
     value: ConditionalFormatValue,
 }
 
-impl ScaleStop {
+impl Threshold {
     const fn lowest() -> Self {
         Self {
             kind: ConditionalFormatType::Lowest,
@@ -743,10 +743,10 @@ impl ScaleStop {
         match &self.value {
             ConditionalFormatValue::Number(value) if value.is_finite() => Ok(*value),
             ConditionalFormatValue::Number(_) => Err(Error::Parameter(
-                "color-scale threshold must be finite".to_owned(),
+                "conditional-format threshold must be finite".to_owned(),
             )),
             ConditionalFormatValue::String(_) => Err(Error::Parameter(
-                "color-scale threshold must be numeric".to_owned(),
+                "conditional-format threshold must be numeric".to_owned(),
             )),
         }
     }
@@ -760,7 +760,7 @@ impl ScaleStop {
                 let value = self.number_value()?;
                 if !(0.0..=100.0).contains(&value) {
                     return Err(Error::Parameter(
-                        "color-scale percentage must be in 0..=100".to_owned(),
+                        "conditional-format percentage must be in 0..=100".to_owned(),
                     ));
                 }
                 let i_type = if self.kind == ConditionalFormatType::Percent {
@@ -779,44 +779,48 @@ impl ScaleStop {
         })
     }
 
-    fn validate(&self, position: ScalePosition) -> Result<()> {
-        if position == ScalePosition::Minimum && self.kind == ConditionalFormatType::Highest {
+    fn validate(&self, position: ThresholdPosition) -> Result<()> {
+        if position == ThresholdPosition::Minimum && self.kind == ConditionalFormatType::Highest {
             return Err(Error::Parameter(
-                "color-scale minimum cannot use the highest threshold".to_owned(),
+                "conditional-format minimum cannot use the highest threshold".to_owned(),
             ));
         }
-        if position == ScalePosition::Maximum && self.kind == ConditionalFormatType::Lowest {
+        if position == ThresholdPosition::Maximum && self.kind == ConditionalFormatType::Lowest {
             return Err(Error::Parameter(
-                "color-scale maximum cannot use the lowest threshold".to_owned(),
+                "conditional-format maximum cannot use the lowest threshold".to_owned(),
             ));
         }
-        if position == ScalePosition::Midpoint
+        if position == ThresholdPosition::Midpoint
             && matches!(
                 self.kind,
                 ConditionalFormatType::Lowest | ConditionalFormatType::Highest
             )
         {
             return Err(Error::Parameter(
-                "color-scale midpoint must use a numeric threshold".to_owned(),
+                "conditional-format midpoint must use a numeric threshold".to_owned(),
             ));
         }
         self.cfvo().map(|_| ())
     }
 }
 
-fn scale_color(color: Color) -> Result<BrtColor> {
+fn conditional_color(color: Color) -> Result<BrtColor> {
     if matches!(color, Color::Default | Color::Automatic) {
         return Err(Error::Parameter(
-            "color-scale colors must be explicit".to_owned(),
+            "conditional-format colors must be explicit".to_owned(),
         ));
     }
     color.to_brt_color()
 }
 
-fn write_scale_body(stops: &[&ScaleStop], colors: &[BrtColor], out: &mut Vec<u8>) -> Result<()> {
+fn write_scale_body(
+    thresholds: &[&Threshold],
+    colors: &[BrtColor],
+    out: &mut Vec<u8>,
+) -> Result<()> {
     push_record(out, &BrtBeginColorScale::default())?;
-    for stop in stops {
-        push_record(out, &stop.cfvo()?)?;
+    for threshold in thresholds {
+        push_record(out, &threshold.cfvo()?)?;
     }
     for color in colors {
         push_record(out, color)?;
@@ -834,8 +838,8 @@ const THREE_COLOR_MAX: Color = Color::RGB(0x0063_BE7B);
 /// A two-color scale conditional format applied to a worksheet range.
 #[derive(Clone, Debug)]
 pub struct ConditionalFormat2ColorScale {
-    min: ScaleStop,
-    max: ScaleStop,
+    min: Threshold,
+    max: Threshold,
     min_color: Color,
     max_color: Color,
     stop_if_true: bool,
@@ -846,8 +850,8 @@ impl ConditionalFormat2ColorScale {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            min: ScaleStop::lowest(),
-            max: ScaleStop::highest(),
+            min: Threshold::lowest(),
+            max: Threshold::highest(),
             min_color: TWO_COLOR_MIN,
             max_color: TWO_COLOR_MAX,
             stop_if_true: false,
@@ -861,7 +865,7 @@ impl ConditionalFormat2ColorScale {
         rule_type: ConditionalFormatType,
         value: impl IntoConditionalFormatValue,
     ) -> Self {
-        self.min = ScaleStop::new(rule_type, value.new_value());
+        self.min = Threshold::new(rule_type, value.new_value());
         self
     }
 
@@ -872,7 +876,7 @@ impl ConditionalFormat2ColorScale {
         rule_type: ConditionalFormatType,
         value: impl IntoConditionalFormatValue,
     ) -> Self {
-        self.max = ScaleStop::new(rule_type, value.new_value());
+        self.max = Threshold::new(rule_type, value.new_value());
         self
     }
 
@@ -917,10 +921,10 @@ impl ConditionalFormat for ConditionalFormat2ColorScale {
                 "color scales cannot set stop_if_true".to_owned(),
             ));
         }
-        self.min.validate(ScalePosition::Minimum)?;
-        self.max.validate(ScalePosition::Maximum)?;
-        scale_color(self.min_color)?;
-        scale_color(self.max_color)?;
+        self.min.validate(ThresholdPosition::Minimum)?;
+        self.max.validate(ThresholdPosition::Maximum)?;
+        conditional_color(self.min_color)?;
+        conditional_color(self.max_color)?;
         Ok(())
     }
 
@@ -943,7 +947,10 @@ impl ConditionalFormat for ConditionalFormat2ColorScale {
     }
 
     fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
-        let colors = [scale_color(self.min_color)?, scale_color(self.max_color)?];
+        let colors = [
+            conditional_color(self.min_color)?,
+            conditional_color(self.max_color)?,
+        ];
         write_scale_body(&[&self.min, &self.max], &colors, out)
     }
 
@@ -955,9 +962,9 @@ impl ConditionalFormat for ConditionalFormat2ColorScale {
 /// A three-color scale conditional format applied to a worksheet range.
 #[derive(Clone, Debug)]
 pub struct ConditionalFormat3ColorScale {
-    min: ScaleStop,
-    mid: ScaleStop,
-    max: ScaleStop,
+    min: Threshold,
+    mid: Threshold,
+    max: Threshold,
     min_color: Color,
     mid_color: Color,
     max_color: Color,
@@ -969,9 +976,9 @@ impl ConditionalFormat3ColorScale {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            min: ScaleStop::lowest(),
-            mid: ScaleStop::percentile(50.0),
-            max: ScaleStop::highest(),
+            min: Threshold::lowest(),
+            mid: Threshold::percentile(50.0),
+            max: Threshold::highest(),
             min_color: THREE_COLOR_MIN,
             mid_color: THREE_COLOR_MID,
             max_color: THREE_COLOR_MAX,
@@ -986,7 +993,7 @@ impl ConditionalFormat3ColorScale {
         rule_type: ConditionalFormatType,
         value: impl IntoConditionalFormatValue,
     ) -> Self {
-        self.min = ScaleStop::new(rule_type, value.new_value());
+        self.min = Threshold::new(rule_type, value.new_value());
         self
     }
 
@@ -997,7 +1004,7 @@ impl ConditionalFormat3ColorScale {
         rule_type: ConditionalFormatType,
         value: impl IntoConditionalFormatValue,
     ) -> Self {
-        self.mid = ScaleStop::new(rule_type, value.new_value());
+        self.mid = Threshold::new(rule_type, value.new_value());
         self
     }
 
@@ -1008,7 +1015,7 @@ impl ConditionalFormat3ColorScale {
         rule_type: ConditionalFormatType,
         value: impl IntoConditionalFormatValue,
     ) -> Self {
-        self.max = ScaleStop::new(rule_type, value.new_value());
+        self.max = Threshold::new(rule_type, value.new_value());
         self
     }
 
@@ -1063,12 +1070,12 @@ impl ConditionalFormat for ConditionalFormat3ColorScale {
                 "color scales cannot set stop_if_true".to_owned(),
             ));
         }
-        self.min.validate(ScalePosition::Minimum)?;
-        self.mid.validate(ScalePosition::Midpoint)?;
-        self.max.validate(ScalePosition::Maximum)?;
-        scale_color(self.min_color)?;
-        scale_color(self.mid_color)?;
-        scale_color(self.max_color)?;
+        self.min.validate(ThresholdPosition::Minimum)?;
+        self.mid.validate(ThresholdPosition::Midpoint)?;
+        self.max.validate(ThresholdPosition::Maximum)?;
+        conditional_color(self.min_color)?;
+        conditional_color(self.mid_color)?;
+        conditional_color(self.max_color)?;
         Ok(())
     }
 
@@ -1092,11 +1099,126 @@ impl ConditionalFormat for ConditionalFormat3ColorScale {
 
     fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
         let colors = [
-            scale_color(self.min_color)?,
-            scale_color(self.mid_color)?,
-            scale_color(self.max_color)?,
+            conditional_color(self.min_color)?,
+            conditional_color(self.mid_color)?,
+            conditional_color(self.max_color)?,
         ];
         write_scale_body(&[&self.min, &self.mid, &self.max], &colors, out)
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+const DATA_BAR_COLOR: Color = Color::RGB(0x0063_8EC6);
+
+/// A data-bar conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatDataBar {
+    min: Threshold,
+    max: Threshold,
+    fill_color: Color,
+    bar_only: bool,
+}
+
+impl ConditionalFormatDataBar {
+    /// Creates a data bar with Excel's automatic minimum and maximum and blue fill.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            min: Threshold::lowest(),
+            max: Threshold::highest(),
+            fill_color: DATA_BAR_COLOR,
+            bar_only: false,
+        }
+    }
+
+    /// Sets the minimum threshold type and value.
+    #[must_use]
+    pub fn set_minimum(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.min = Threshold::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the maximum threshold type and value.
+    #[must_use]
+    pub fn set_maximum(
+        mut self,
+        rule_type: ConditionalFormatType,
+        value: impl IntoConditionalFormatValue,
+    ) -> Self {
+        self.max = Threshold::new(rule_type, value.new_value());
+        self
+    }
+
+    /// Sets the data-bar fill color.
+    #[must_use]
+    pub fn set_fill_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        if color.is_valid() {
+            self.fill_color = color;
+        }
+        self
+    }
+
+    /// Hides the cell value and shows only the data bar.
+    #[must_use]
+    pub const fn set_bar_only(mut self, enable: bool) -> Self {
+        self.bar_only = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormatDataBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatDataBar {
+    fn validate(&self) -> Result<()> {
+        self.min.validate(ThresholdPosition::Minimum)?;
+        self.max.validate(ThresholdPosition::Maximum)?;
+        conditional_color(self.fill_color)?;
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        None
+    }
+
+    fn begin_rule(&self, priority: i32, _dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(BrtBeginCFRule {
+            iType: CF_TYPE_DATABAR,
+            iTemplate: CF_TEMPLATE_DATABAR,
+            dxfId: u32::MAX,
+            iPri: priority,
+            iParam: 0,
+            flags: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        })
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        push_record(
+            out,
+            &BrtBeginDatabar {
+                fShowValue: u8::from(!self.bar_only),
+                ..BrtBeginDatabar::default()
+            },
+        )?;
+        push_record(out, &self.min.cfvo()?)?;
+        push_record(out, &self.max.cfvo()?)?;
+        push_record(out, &conditional_color(self.fill_color)?)?;
+        push_record(out, &BrtEndDatabar::default())?;
+        Ok(())
     }
 
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
@@ -1424,6 +1546,101 @@ mod tests {
         let (_, mid) = BrtCFVO::from_bytes((records[2].1, 0)).expect("midpoint");
         assert_eq!(mid.iType, CFVO_PERCENTILE);
         assert_eq!(f64::from(mid.numParam), 50.0);
+    }
+
+    #[test]
+    fn data_bar_uses_min_max_thresholds_color_and_show_value() {
+        let bar = ConditionalFormatDataBar::new()
+            .set_minimum(ConditionalFormatType::Number, 3)
+            .set_maximum(ConditionalFormatType::Percent, 90)
+            .set_fill_color(Color::Green);
+        bar.validate().expect("valid data bar");
+        let rule = bar.begin_rule(3, 0).expect("rule");
+        assert_eq!(rule.iType, CF_TYPE_DATABAR);
+        assert_eq!(rule.iTemplate, CF_TEMPLATE_DATABAR);
+        assert_eq!(rule.dxfId, u32::MAX);
+        assert_eq!(rule.iPri, 3);
+        assert_eq!(rule.iParam, 0);
+        assert_eq!(rule.flags, 0);
+        assert_eq!(rule.cbFmla1, 0);
+        assert!(rule.formula1.is_none());
+
+        let mut body = Vec::new();
+        bar.write_body(&mut body).expect("body");
+        let nested = records(&body);
+        assert_eq!(
+            nested.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [
+                KnownID::BrtBeginDatabar,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtEndDatabar,
+            ]
+        );
+        let (_, begin) = BrtBeginDatabar::from_bytes((nested[0].1, 0)).expect("begin");
+        assert_eq!(begin.bLenMin, 10);
+        assert_eq!(begin.bLenMax, 90);
+        assert_eq!(begin.fShowValue, 1);
+        let (_, min) = BrtCFVO::from_bytes((nested[1].1, 0)).expect("minimum");
+        assert_eq!(min.iType, CFVO_NUM);
+        assert_eq!(f64::from(min.numParam), 3.0);
+        let (_, max) = BrtCFVO::from_bytes((nested[2].1, 0)).expect("maximum");
+        assert_eq!(max.iType, CFVO_PERCENT);
+        assert_eq!(f64::from(max.numParam), 90.0);
+        let (_, color) = BrtColor::from_bytes((nested[3].1, 0)).expect("color");
+        assert_eq!(color, BrtColor::rgb(0x00, 0x80, 0x00));
+
+        let mut body = Vec::new();
+        ConditionalFormatDataBar::new()
+            .set_bar_only(true)
+            .write_body(&mut body)
+            .expect("bar-only body");
+        let (_, begin) =
+            BrtBeginDatabar::from_bytes((records(&body)[0].1, 0)).expect("bar-only begin");
+        assert_eq!(begin.fShowValue, 0);
+    }
+
+    #[test]
+    fn data_bar_ignores_invalid_fill_color_and_accepts_bounds() {
+        let bar = ConditionalFormatDataBar::new().set_fill_color(Color::RGB(0x0100_0000));
+        bar.validate().expect("invalid color leaves the default");
+        let mut body = Vec::new();
+        bar.write_body(&mut body).expect("body");
+        let nested = records(&body);
+        let (_, color) = BrtColor::from_bytes((nested[3].1, 0)).expect("color");
+        assert_eq!(color, BrtColor::rgb(0x63, 0x8E, 0xC6));
+
+        for bar in [
+            ConditionalFormatDataBar::new()
+                .set_minimum(ConditionalFormatType::Percent, 0)
+                .set_maximum(ConditionalFormatType::Percent, 100),
+            ConditionalFormatDataBar::new()
+                .set_minimum(ConditionalFormatType::Percentile, 0)
+                .set_maximum(ConditionalFormatType::Percentile, 100),
+            ConditionalFormatDataBar::new()
+                .set_minimum(ConditionalFormatType::Number, -1.5)
+                .set_maximum(ConditionalFormatType::Number, 1.5),
+            ConditionalFormatDataBar::new()
+                .set_minimum(ConditionalFormatType::Lowest, 0)
+                .set_maximum(ConditionalFormatType::Highest, 0),
+        ] {
+            bar.validate().expect("valid boundary data bar");
+        }
+    }
+
+    #[test]
+    fn data_bar_rejects_bad_thresholds_and_implicit_color() {
+        for bar in [
+            ConditionalFormatDataBar::new().set_minimum(ConditionalFormatType::Highest, 1),
+            ConditionalFormatDataBar::new().set_maximum(ConditionalFormatType::Lowest, 1),
+            ConditionalFormatDataBar::new().set_minimum(ConditionalFormatType::Percent, 101),
+            ConditionalFormatDataBar::new().set_maximum(ConditionalFormatType::Percentile, -1),
+            ConditionalFormatDataBar::new().set_minimum(ConditionalFormatType::Number, "text"),
+            ConditionalFormatDataBar::new().set_fill_color(Color::Default),
+        ] {
+            assert!(bar.validate().is_err(), "{bar:?}");
+        }
     }
 
     #[test]

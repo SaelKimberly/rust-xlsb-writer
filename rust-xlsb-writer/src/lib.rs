@@ -45,8 +45,8 @@ mod worksheet;
 pub use conditional_format::{
     ConditionalFormat, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
     ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatDuplicate, ConditionalFormatTop,
-    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue,
+    ConditionalFormatCellRule, ConditionalFormatDataBar, ConditionalFormatDuplicate,
+    ConditionalFormatTop, ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue,
     IntoConditionalFormatValue,
 };
 #[doc(hidden)]

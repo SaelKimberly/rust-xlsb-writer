@@ -1046,14 +1046,15 @@ mod tests {
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
         Bold, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
-        BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters, BrtBeginList,
-        BrtBeginListCol, BrtBeginListParts, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO,
-        BrtCalcProp, BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet,
-        BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr,
-        BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_DUPLICATE_VALUES,
-        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
-        CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CFVO_MAX,
-        CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
+        BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
+        BrtBeginFilters, BrtBeginList, BrtBeginListCol, BrtBeginListParts, BrtBeginWsView,
+        BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor, BrtCustomFilter,
+        BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart,
+        BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
+        CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+        CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_DATABAR,
+        CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CFVO_MAX, CFVO_MIN, CFVO_NUM,
+        CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1372,6 +1373,134 @@ mod tests {
 
         let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
         assert_eq!(records::<BrtDXF>(&styles), Vec::new());
+    }
+
+    #[test]
+    fn data_bars_emit_nested_records_without_dxf() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_conditional_format(0, 0, 4, 0, &crate::ConditionalFormatDataBar::new())
+            .expect("default data bar");
+        worksheet
+            .add_conditional_format(
+                0,
+                2,
+                4,
+                2,
+                &crate::ConditionalFormatDataBar::new()
+                    .set_minimum(crate::ConditionalFormatType::Number, 2)
+                    .set_maximum(crate::ConditionalFormatType::Percentile, 90)
+                    .set_fill_color(crate::Color::Red)
+                    .set_bar_only(true),
+            )
+            .expect("custom data bar");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let ids = record_ids(&sheet);
+        let first = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBeginConditionalFormatting)
+            .expect("first block");
+        assert_eq!(
+            &ids[first..first + 9],
+            &[
+                KnownID::BrtBeginConditionalFormatting,
+                KnownID::BrtBeginCFRule,
+                KnownID::BrtBeginDatabar,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtEndDatabar,
+                KnownID::BrtEndCFRule,
+                KnownID::BrtEndConditionalFormatting,
+            ]
+        );
+        assert_eq!(
+            &ids[first + 9..first + 18],
+            &[
+                KnownID::BrtBeginConditionalFormatting,
+                KnownID::BrtBeginCFRule,
+                KnownID::BrtBeginDatabar,
+                KnownID::BrtCFVO,
+                KnownID::BrtCFVO,
+                KnownID::BrtColor,
+                KnownID::BrtEndDatabar,
+                KnownID::BrtEndCFRule,
+                KnownID::BrtEndConditionalFormatting,
+            ]
+        );
+
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 2);
+        for (index, rule) in rules.iter().enumerate() {
+            assert_eq!(rule.iType, CF_TYPE_DATABAR);
+            assert_eq!(rule.iTemplate, CF_TEMPLATE_DATABAR);
+            assert_eq!(rule.dxfId, u32::MAX);
+            assert_eq!(rule.iPri, i32::try_from(index + 1).expect("priority"));
+            assert_eq!(rule.iParam, 0);
+            assert_eq!(rule.flags, 0);
+            assert_eq!(rule.cbFmla1, 0);
+            assert!(rule.formula1.is_none());
+        }
+
+        let bars = records::<BrtBeginDatabar>(&sheet);
+        assert_eq!(bars.len(), 2);
+        assert_eq!(
+            (bars[0].bLenMin, bars[0].bLenMax, bars[0].fShowValue),
+            (10, 90, 1)
+        );
+        assert_eq!(
+            (bars[1].bLenMin, bars[1].bLenMax, bars[1].fShowValue),
+            (10, 90, 0)
+        );
+
+        let cfvos = records::<BrtCFVO>(&sheet);
+        assert_eq!(
+            cfvos.iter().map(|cfvo| cfvo.iType).collect::<Vec<_>>(),
+            [CFVO_MIN, CFVO_MAX, CFVO_NUM, CFVO_PERCENTILE]
+        );
+        assert_eq!(f64::from(cfvos[2].numParam), 2.0);
+        assert_eq!(f64::from(cfvos[3].numParam), 90.0);
+
+        let colors = records::<BrtColor>(&sheet);
+        assert_eq!(colors.len(), 2);
+        assert_eq!(colors[0], BrtColor::rgb(0x63, 0x8E, 0xC6));
+        assert_eq!(colors[1], BrtColor::rgb(0xFF, 0x00, 0x00));
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        assert_eq!(records::<BrtDXF>(&styles), Vec::new());
+    }
+
+    #[test]
+    fn data_bar_and_formatted_rule_keep_dxf_alignment() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_conditional_format(
+                0,
+                0,
+                4,
+                0,
+                &crate::ConditionalFormatCell::new()
+                    .set_rule(crate::ConditionalFormatCellRule::EqualTo(1))
+                    .set_format(crate::Format::new().set_background_color(crate::Color::Yellow)),
+            )
+            .expect("formatted rule");
+        worksheet
+            .add_conditional_format(0, 0, 4, 0, &crate::ConditionalFormatDataBar::new())
+            .expect("data bar");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].dxfId, 0);
+        assert_eq!(rules[1].dxfId, u32::MAX);
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        assert_eq!(records::<BrtDXF>(&styles).len(), 1);
     }
 
     #[test]
