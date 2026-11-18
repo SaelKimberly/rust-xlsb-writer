@@ -240,6 +240,13 @@ impl ExcelDateTime {
             .unwrap_or_else(|| self.to_excel_from_ymd_hms())
     }
 
+    pub(crate) fn to_rfc3339(&self) -> String {
+        format!(
+            "{}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            self.year, self.month, self.day, self.hour, self.min, self.sec
+        )
+    }
+
     fn validate_ymd(year: u16, month: u8, day: u8) -> Result<()> {
         let mut months = [31_u8, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 

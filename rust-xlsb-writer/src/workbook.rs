@@ -24,6 +24,7 @@ pub struct WorkbookSettings {
     pub read_only_recommended: bool,
     pub tab_ratio: Option<u8>,
     pub zip_compression_level: Option<u8>,
+    pub zip_large_file: bool,
 }
 
 /// A workbook that owns one or more worksheets.
@@ -53,6 +54,7 @@ impl Workbook {
                 read_only_recommended: false,
                 tab_ratio: None,
                 zip_compression_level: None,
+                zip_large_file: false,
             },
             doc_properties: None,
             default_format: None,
@@ -96,6 +98,15 @@ impl Workbook {
             return self;
         }
         self.settings.zip_compression_level = Some(level);
+        self
+    }
+
+    /// Enables ZIP64 extensions for the XLSB package.
+    ///
+    /// ZIP64 is required when the archive or one of its parts can exceed
+    /// 4 GiB. It is off by default.
+    pub const fn use_zip_large_file(&mut self, enable: bool) -> &mut Self {
+        self.settings.zip_large_file = enable;
         self
     }
 

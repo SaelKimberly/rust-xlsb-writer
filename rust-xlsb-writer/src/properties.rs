@@ -118,8 +118,8 @@ impl DocProperties {
 
     /// Sets a custom document property.
     ///
-    /// Values can be text, `i32`, `f64`, `bool`, or a supported chrono date
-    /// type.
+    /// Values can be text, `i32`, `f64`, `bool`, `ExcelDateTime`, or a
+    /// supported chrono or jiff date type.
     #[must_use]
     pub fn set_custom_property(
         mut self,
@@ -250,6 +250,26 @@ impl IntoCustomProperty for &chrono::DateTime<chrono::Utc> {
     }
 }
 
+#[cfg(feature = "jiff")]
+impl IntoCustomProperty for &jiff::civil::DateTime {
+    fn new_custom_property(self, name: impl Into<String>) -> CustomProperty {
+        CustomProperty::date(name, self.utc_datetime())
+    }
+}
+
+#[cfg(feature = "jiff")]
+impl IntoCustomProperty for &jiff::civil::Date {
+    fn new_custom_property(self, name: impl Into<String>) -> CustomProperty {
+        CustomProperty::date(name, self.utc_datetime())
+    }
+}
+
+impl IntoCustomProperty for &crate::ExcelDateTime {
+    fn new_custom_property(self, name: impl Into<String>) -> CustomProperty {
+        CustomProperty::date(name, self.utc_datetime())
+    }
+}
+
 /// Types that convert to an Excel UTC creation timestamp.
 pub trait IntoCustomDateTime {
     /// Returns an ISO 8601 UTC timestamp.
@@ -274,11 +294,32 @@ impl IntoCustomDateTime for &chrono::DateTime<chrono::Utc> {
     }
 }
 
+#[cfg(feature = "jiff")]
+impl IntoCustomDateTime for &jiff::civil::DateTime {
+    fn utc_datetime(self) -> String {
+        self.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+    }
+}
+
+#[cfg(feature = "jiff")]
+impl IntoCustomDateTime for &jiff::civil::Date {
+    fn utc_datetime(self) -> String {
+        self.strftime("%Y-%m-%dT00:00:00Z").to_string()
+    }
+}
+
+impl IntoCustomDateTime for &crate::ExcelDateTime {
+    fn utc_datetime(self) -> String {
+        self.to_rfc3339()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, NaiveDate, Utc};
 
     use super::*;
+    use crate::ExcelDateTime;
 
     #[test]
     fn formats_supported_creation_times() {
@@ -293,6 +334,49 @@ mod tests {
 
         let utc: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive, Utc);
         assert_eq!((&utc).utc_datetime(), "2026-11-18T12:34:56Z");
+    }
+
+    #[test]
+    fn native_datetime_formats_for_properties() {
+        let date = ExcelDateTime::from_ymd(2026, 11, 18).expect("date");
+        assert_eq!((&date).utc_datetime(), "2026-11-18T00:00:00Z");
+
+        let datetime = date.and_hms(12, 34, 56).expect("time");
+        assert_eq!((&datetime).utc_datetime(), "2026-11-18T12:34:56Z");
+
+        let properties = DocProperties::new()
+            .set_creation_datetime(&datetime)
+            .set_custom_property("when", &datetime);
+        assert_eq!(
+            properties.creation_time.as_deref(),
+            Some("2026-11-18T12:34:56Z")
+        );
+        assert_eq!(
+            properties.custom_properties[0].value,
+            CustomPropertyValue::DateTime(String::from("2026-11-18T12:34:56Z"))
+        );
+    }
+
+    #[cfg(feature = "jiff")]
+    #[test]
+    fn jiff_datetimes_format_for_properties() {
+        let date = jiff::civil::date(2026, 11, 18);
+        let datetime = jiff::civil::datetime(2026, 11, 18, 12, 34, 56, 0);
+        assert_eq!((&date).utc_datetime(), "2026-11-18T00:00:00Z");
+        assert_eq!((&datetime).utc_datetime(), "2026-11-18T12:34:56Z");
+
+        let properties = DocProperties::new()
+            .set_creation_datetime(&date)
+            .set_custom_property("date", &date)
+            .set_custom_property("datetime", &datetime);
+        assert_eq!(
+            properties.creation_time.as_deref(),
+            Some("2026-11-18T00:00:00Z")
+        );
+        assert_eq!(
+            properties.custom_properties[1].value,
+            CustomPropertyValue::DateTime(String::from("2026-11-18T12:34:56Z"))
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ value-conversion contract (`ToCellValue`/`CellValue`), the workbook context
 registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
 public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
-widths/formats, approximate autofit, multi-sheet package assembly with optional DEFLATE ZIP compression, workbook calculation mode,
+widths/formats, approximate autofit, multi-sheet package assembly with optional DEFLATE compression and ZIP64 mode, workbook calculation mode,
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range, core/app/custom document properties with explicit creation timestamps,
@@ -256,7 +256,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
 | `rust-xlsb-writer/src/datetime.rs` | Native `ExcelDateTime`, validation, parsing, and serial conversion |
 | `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, autofilter, print records |
-| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE |
+| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
 | `rust-xlsb-writer/examples/showcase.rs` | Public-API showcase with row bands, fills, alignment, borders, temporal formats |
@@ -296,9 +296,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 399 unit tests and 7 doctests in default builds: 193 in core, 206 in writer.
-  `--all-features` adds 3 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 402 total. Most core
+- 405 unit tests and 7 doctests in default builds: 193 in core, 212 in writer.
+  `--all-features` adds 4 writer tests for the optional `jiff` and
+  `rust_decimal` adapters, for 409 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
@@ -317,7 +317,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - Hand-written writer tests cover `Format` mapping/dedup/validation,
   `IntoExcelData`, worksheet bounds and overrides, sheet record layout
   (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
-  package parts, ZIP compression and readback, multi-sheet save,
+  package parts, ZIP compression/ZIP64 and readback, multi-sheet save,
   print/header/page-break serialization,
   print-area/repeat-title defined names, hyperlink records/relationships, workbook
   calculation/read-only/tab-ratio records, range protection/ignored-error

@@ -112,7 +112,11 @@ pub fn build_package(
         parts.push(("xl/sharedStrings.bin".to_owned(), shared_strings));
     }
 
-    zip_store(&parts, settings.zip_compression_level)
+    zip_store(
+        &parts,
+        settings.zip_compression_level,
+        settings.zip_large_file,
+    )
 }
 
 struct WorkbookView {
@@ -639,7 +643,13 @@ fn workbook_rels(sheet_count: usize, has_strings: bool) -> String {
     body
 }
 
-fn zip_store(parts: &[(String, Vec<u8>)], compression_level: Option<u8>) -> Result<Vec<u8>> {
+const ZIP64_LIMIT: u64 = u32::MAX as u64;
+
+fn zip_store(
+    parts: &[(String, Vec<u8>)],
+    compression_level: Option<u8>,
+    large_file: bool,
+) -> Result<Vec<u8>> {
     const DOS_DATE: u16 = 0x0021; // 1980-01-01, the earliest representable date.
 
     let mut body = Vec::new();
@@ -647,83 +657,166 @@ fn zip_store(parts: &[(String, Vec<u8>)], compression_level: Option<u8>) -> Resu
 
     for (name, data) in parts {
         let crc = crc32(data);
-        let size = as_u32(data.len())?;
+        let uncompressed = u64::try_from(data.len())
+            .map_err(|_| Error::ValueNotRepresentable("ZIP part is too large"))?;
         let name = name.as_bytes();
         let name_len = u16::try_from(name.len())
             .map_err(|_| Error::ValueNotRepresentable("ZIP entry name is too long"))?;
-        let offset = as_u32(body.len())?;
+        let offset = u64::try_from(body.len())
+            .map_err(|_| Error::ValueNotRepresentable("ZIP archive is too large"))?;
         let method = if compression_level.is_some() {
             8_u16
         } else {
             0
         };
+        let extra_len = if large_file { 20 } else { 0 };
         let header_offset = body.len();
-        body.resize(header_offset + 30 + name.len(), 0);
+        body.resize(header_offset + 30 + name.len() + extra_len, 0);
 
-        let compressed = if let Some(level) = compression_level {
-            let data_start = body.len();
-            {
-                let mut encoder =
-                    DeflateEncoder::new(&mut body, Compression::new(u32::from(level)));
-                encoder.write_all(data)?;
-                encoder.finish()?;
-            }
-            as_u32(body.len() - data_start)?
+        let data_start = body.len();
+        if let Some(level) = compression_level {
+            let mut encoder = DeflateEncoder::new(&mut body, Compression::new(u32::from(level)));
+            encoder.write_all(data)?;
+            encoder.finish()?;
         } else {
             body.extend_from_slice(data);
-            size
+        }
+        let compressed = u64::try_from(body.len() - data_start)
+            .map_err(|_| Error::ValueNotRepresentable("ZIP part is too large"))?;
+
+        let compressed32 = if large_file {
+            u32::MAX
+        } else {
+            zip_u32(compressed, "ZIP part is too large")?
         };
+        let uncompressed32 = if large_file {
+            u32::MAX
+        } else {
+            zip_u32(uncompressed, "ZIP part is too large")?
+        };
+        let offset32 = if large_file && offset >= ZIP64_LIMIT {
+            u32::MAX
+        } else {
+            zip_u32(offset, "ZIP archive is too large")?
+        };
+        let version = if large_file { 45_u16 } else { 20 };
 
         let header = &mut body[header_offset..header_offset + 30];
         header[0..4].copy_from_slice(&0x0403_4b50_u32.to_le_bytes());
-        header[4..6].copy_from_slice(&20_u16.to_le_bytes());
+        header[4..6].copy_from_slice(&version.to_le_bytes());
         header[6..8].copy_from_slice(&0_u16.to_le_bytes());
         header[8..10].copy_from_slice(&method.to_le_bytes());
         header[10..12].copy_from_slice(&0_u16.to_le_bytes());
         header[12..14].copy_from_slice(&DOS_DATE.to_le_bytes());
         header[14..18].copy_from_slice(&crc.to_le_bytes());
-        header[18..22].copy_from_slice(&compressed.to_le_bytes());
-        header[22..26].copy_from_slice(&size.to_le_bytes());
+        header[18..22].copy_from_slice(&compressed32.to_le_bytes());
+        header[22..26].copy_from_slice(&uncompressed32.to_le_bytes());
         header[26..28].copy_from_slice(&name_len.to_le_bytes());
-        header[28..30].copy_from_slice(&0_u16.to_le_bytes());
-        body[header_offset + 30..header_offset + 30 + name.len()].copy_from_slice(name);
+        header[28..30].copy_from_slice(
+            &u16::try_from(extra_len)
+                .expect("ZIP64 extra is 20 bytes")
+                .to_le_bytes(),
+        );
+        let name_start = header_offset + 30;
+        body[name_start..name_start + name.len()].copy_from_slice(name);
+        if large_file {
+            let extra = name_start + name.len();
+            body[extra..extra + 4].copy_from_slice(&[0x01, 0x00, 0x10, 0x00]);
+            body[extra + 4..extra + 12].copy_from_slice(&uncompressed.to_le_bytes());
+            body[extra + 12..extra + 20].copy_from_slice(&compressed.to_le_bytes());
+        }
 
+        let central_extra_len = if large_file {
+            if offset >= ZIP64_LIMIT { 28 } else { 20 }
+        } else {
+            0
+        };
         put_u32(&mut central, 0x0201_4b50);
-        put_u16(&mut central, 20);
-        put_u16(&mut central, 20);
+        put_u16(&mut central, version);
+        put_u16(&mut central, version);
         put_u16(&mut central, 0);
         put_u16(&mut central, method);
         put_u16(&mut central, 0);
         put_u16(&mut central, DOS_DATE);
         put_u32(&mut central, crc);
-        put_u32(&mut central, compressed);
-        put_u32(&mut central, size);
+        put_u32(&mut central, compressed32);
+        put_u32(&mut central, uncompressed32);
         put_u16(&mut central, name_len);
-        put_u16(&mut central, 0);
+        put_u16(&mut central, central_extra_len);
         put_u16(&mut central, 0);
         put_u16(&mut central, 0);
         put_u16(&mut central, 0);
         put_u32(&mut central, 0);
-        put_u32(&mut central, offset);
+        put_u32(&mut central, offset32);
         central.extend_from_slice(name);
+        if large_file {
+            put_u16(&mut central, 0x0001);
+            put_u16(&mut central, if offset >= ZIP64_LIMIT { 24 } else { 16 });
+            put_u64(&mut central, uncompressed);
+            put_u64(&mut central, compressed);
+            if offset >= ZIP64_LIMIT {
+                put_u64(&mut central, offset);
+            }
+        }
     }
 
-    let count = u16::try_from(parts.len())
+    let count = u64::try_from(parts.len())
         .map_err(|_| Error::ValueNotRepresentable("too many ZIP entries"))?;
-    let central_offset = as_u32(body.len())?;
-    let central_size = as_u32(central.len())?;
-
-    put_u32(&mut central, 0x0605_4b50);
-    put_u16(&mut central, 0);
-    put_u16(&mut central, 0);
-    put_u16(&mut central, count);
-    put_u16(&mut central, count);
-    put_u32(&mut central, central_size);
-    put_u32(&mut central, central_offset);
-    put_u16(&mut central, 0);
-
+    if !large_file && count > u64::from(u16::MAX) {
+        return Err(Error::ValueNotRepresentable("too many ZIP entries"));
+    }
+    let central_offset = u64::try_from(body.len())
+        .map_err(|_| Error::ValueNotRepresentable("ZIP archive is too large"))?;
+    let central_size = u64::try_from(central.len())
+        .map_err(|_| Error::ValueNotRepresentable("ZIP archive is too large"))?;
     body.extend_from_slice(&central);
+    write_zip_end(&mut body, count, central_size, central_offset);
     Ok(body)
+}
+
+fn write_zip_end(out: &mut Vec<u8>, count: u64, central_size: u64, central_offset: u64) {
+    let needs_zip64 = count >= u64::from(u16::MAX)
+        || central_size >= ZIP64_LIMIT
+        || central_offset >= ZIP64_LIMIT;
+    if needs_zip64 {
+        let zip64_offset = out.len();
+        put_u32(out, 0x0606_4b50);
+        put_u64(out, 44);
+        put_u16(out, 45);
+        put_u16(out, 45);
+        put_u32(out, 0);
+        put_u32(out, 0);
+        put_u64(out, count);
+        put_u64(out, count);
+        put_u64(out, central_size);
+        put_u64(out, central_offset);
+
+        put_u32(out, 0x0706_4b50);
+        put_u32(out, 0);
+        put_u64(out, zip64_offset as u64);
+        put_u32(out, 1);
+    }
+
+    put_u32(out, 0x0605_4b50);
+    put_u16(out, 0);
+    put_u16(out, 0);
+    put_u16(
+        out,
+        u16::try_from(count.min(u64::from(u16::MAX))).expect("clamped entry count"),
+    );
+    put_u16(
+        out,
+        u16::try_from(count.min(u64::from(u16::MAX))).expect("clamped entry count"),
+    );
+    put_u32(
+        out,
+        u32::try_from(central_size.min(ZIP64_LIMIT)).expect("clamped central size"),
+    );
+    put_u32(
+        out,
+        u32::try_from(central_offset.min(ZIP64_LIMIT)).expect("clamped central offset"),
+    );
+    put_u16(out, 0);
 }
 
 fn crc32(data: &[u8]) -> u32 {
@@ -749,8 +842,15 @@ fn put_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-fn as_u32(len: usize) -> Result<u32> {
-    u32::try_from(len).map_err(|_| Error::ValueNotRepresentable("ZIP part is too large"))
+fn put_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn zip_u32(value: u64, message: &'static str) -> Result<u32> {
+    if value >= ZIP64_LIMIT {
+        return Err(Error::ValueNotRepresentable(message));
+    }
+    u32::try_from(value).map_err(|_| Error::ValueNotRepresentable(message))
 }
 
 #[cfg(test)]
@@ -820,6 +920,15 @@ fn read_u16(bytes: &[u8], offset: usize) -> Result<u16> {
         .and_then(|slice| <[u8; 2]>::try_from(slice).ok())
         .ok_or(Error::ValueNotRepresentable("truncated ZIP header"))?;
     Ok(u16::from_le_bytes(value))
+}
+
+#[cfg(test)]
+fn read_u64(bytes: &[u8], offset: usize) -> Result<u64> {
+    let value = bytes
+        .get(offset..offset + 8)
+        .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
+        .ok_or(Error::ValueNotRepresentable("truncated ZIP header"))?;
+    Ok(u64::from_le_bytes(value))
 }
 
 #[cfg(test)]
@@ -1643,6 +1752,101 @@ mod tests {
                 .collect::<Vec<_>>(),
             [0, 2]
         );
+    }
+
+    #[test]
+    fn zip_large_file_writes_zip64_headers() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .write(0, 0, "large file")
+            .expect("cell");
+        workbook.use_zip_large_file(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert_eq!(read_u16(&bytes, 4).expect("version"), 45);
+        assert_eq!(read_u16(&bytes, 8).expect("method"), 0);
+        assert_eq!(read_u32(&bytes, 18).expect("compressed"), u32::MAX);
+        assert_eq!(read_u32(&bytes, 22).expect("uncompressed"), u32::MAX);
+        let name_len = usize::from(read_u16(&bytes, 26).expect("name length"));
+        assert_eq!(read_u16(&bytes, 28).expect("extra length"), 20);
+        let extra = 30 + name_len;
+        assert_eq!(read_u16(&bytes, extra).expect("ZIP64 tag"), 1);
+        assert_eq!(read_u16(&bytes, extra + 2).expect("ZIP64 size"), 16);
+        assert_eq!(
+            read_u64(&bytes, extra + 4).expect("uncompressed size"),
+            read_u64(&bytes, extra + 12).expect("compressed size")
+        );
+
+        let central_offset =
+            usize::try_from(read_u32(&bytes, bytes.len() - 6).expect("central offset"))
+                .expect("offset fits");
+        assert_eq!(
+            read_u32(&bytes, central_offset).expect("central"),
+            0x0201_4b50
+        );
+        assert_eq!(read_u16(&bytes, central_offset + 6).expect("version"), 45);
+        assert_eq!(
+            read_u32(&bytes, central_offset + 20).expect("compressed"),
+            u32::MAX
+        );
+        assert_eq!(
+            read_u32(&bytes, central_offset + 24).expect("uncompressed"),
+            u32::MAX
+        );
+        let central_name = usize::from(read_u16(&bytes, central_offset + 28).expect("name"));
+        assert_eq!(read_u16(&bytes, central_offset + 30).expect("extra"), 20);
+        let central_extra = central_offset + 46 + central_name;
+        assert_eq!(read_u16(&bytes, central_extra).expect("tag"), 1);
+        assert_eq!(read_u16(&bytes, central_extra + 2).expect("size"), 16);
+    }
+
+    #[test]
+    fn disabling_zip64_restores_default_output() {
+        let mut expected = crate::Workbook::new();
+        expected.add_worksheet();
+        let expected = expected.save_to_buffer().expect("saves");
+
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.use_zip_large_file(true).use_zip_large_file(false);
+        let bytes = workbook.save_to_buffer().expect("saves");
+
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn zip64_end_records_cover_threshold_values() {
+        let mut bytes = Vec::new();
+        write_zip_end(&mut bytes, u64::from(u16::MAX), ZIP64_LIMIT, ZIP64_LIMIT);
+
+        assert_eq!(read_u32(&bytes, 0).expect("signature"), 0x0606_4b50);
+        assert_eq!(read_u64(&bytes, 40).expect("central size"), ZIP64_LIMIT);
+        assert_eq!(read_u64(&bytes, 48).expect("central offset"), ZIP64_LIMIT);
+        assert_eq!(read_u16(&bytes, 84).expect("entry count"), u16::MAX);
+        assert_eq!(
+            read_u32(&bytes, 88).expect("central size sentinel"),
+            u32::MAX
+        );
+        assert_eq!(
+            read_u32(&bytes, 92).expect("central offset sentinel"),
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn zip64_end_records_cover_oversized_directory() {
+        let mut bytes = Vec::new();
+        write_zip_end(&mut bytes, u64::from(u16::MAX) + 1, 0, 0);
+
+        assert_eq!(read_u32(&bytes, 0).expect("signature"), 0x0606_4b50);
+        assert_eq!(read_u64(&bytes, 4).expect("record size"), 44);
+        assert_eq!(read_u64(&bytes, 24).expect("entry count"), 65_536);
+        assert_eq!(read_u64(&bytes, 32).expect("total count"), 65_536);
+        assert_eq!(read_u32(&bytes, 56).expect("locator"), 0x0706_4b50);
+        assert_eq!(read_u64(&bytes, 64).expect("zip64 offset"), 0);
+        assert_eq!(read_u32(&bytes, 76).expect("eocd"), 0x0605_4b50);
+        assert_eq!(read_u16(&bytes, 84).expect("entry count"), u16::MAX);
     }
 
     #[test]

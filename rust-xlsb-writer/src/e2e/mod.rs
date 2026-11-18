@@ -76,6 +76,24 @@ fn compressed_workbook_roundtrips() {
 }
 
 #[test]
+fn zip64_workbook_roundtrips() {
+    let mut workbook = Workbook::new();
+    workbook
+        .use_zip_large_file(true)
+        .set_zip_compression_level(6);
+    let sheet = workbook.add_worksheet();
+    sheet.write(0, 0, "zip64").expect("string");
+    sheet.write(1, 0, 42_i32).expect("integer");
+    sheet.write(2, 0, 12.5_f64).expect("number");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::String("zip64".to_owned())));
+    assert_eq!(range.get((1, 0)), Some(&Data::Int(42)));
+    assert_eq!(range.get((2, 0)), Some(&Data::Float(12.5)));
+}
+
+#[test]
 fn non_finite_numbers_roundtrip_as_strings() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
