@@ -904,8 +904,9 @@ impl CheckedBiff for RawBiffLiteral {
 }
 
 impl RawBiffLiteral {
-    pub fn with_data(&self, data: Box<[u8]>) -> Self {
-        RawBiffLiteral {
+    #[must_use]
+    pub const fn with_data(&self, data: Box<[u8]>) -> Self {
+        Self {
             id: self.id,
             data: Some(data),
         }
@@ -913,7 +914,9 @@ impl RawBiffLiteral {
 
     #[inline]
     pub fn as_header<S: Deref<Target = [u8]>>(&self, data: S) -> Result<BiffHead> {
-        BiffHead::new(self.id as u16, data.len() as u32)
+        let size = u32::try_from(data.len())
+            .map_err(|_| Error::ValidationError("Record body exceeds u32 range".to_owned()))?;
+        BiffHead::new(self.id as u16, size)
     }
 
     pub fn packed(&self) -> Result<Box<[u8]>> {
@@ -931,11 +934,13 @@ impl RawBiffLiteral {
 }
 
 impl KnownID {
+    #[must_use]
     pub fn as_biff_collection_begin(&self, item_count: u32) -> RawBiffLiteral {
         self.as_raw_literal(&item_count)
     }
 
-    pub fn as_biff_empty(&self) -> RawBiffLiteral {
+    #[must_use]
+    pub const fn as_biff_empty(&self) -> RawBiffLiteral {
         RawBiffLiteral {
             id: *self,
             data: None,
@@ -1023,31 +1028,31 @@ mod tests {
     #[test]
     fn test_known_ids() {
         let a = KnownID::BrtACBegin.as_raw_literal(&12_u32);
-        println!("Literal: {:?}", a);
+        println!("Literal: {a:?}");
 
         let c = KnownID::BrtBeginFonts.as_biff_collection_begin(4);
-        println!("Begin collection: {:?}", c);
+        println!("Begin collection: {c:?}");
 
         let e = KnownID::BrtEndSheet.as_biff_empty();
-        println!("Empty: {:?}", e);
+        println!("Empty: {e:?}");
 
         let x = BiffHead::consume_data(e.packed().unwrap()).expect("Malformed BiffHead");
-        println!("From empty: {:?}", x);
+        println!("From empty: {x:?}");
         let id = x.known_id().expect("Should be ok");
-        println!("{:?}", id);
+        println!("{id:?}");
 
         let (sz, x) = BiffHead::from_data(a.packed().unwrap()).expect("Malformed BiffHead");
-        println!("{:?}", x);
+        println!("{x:?}");
         assert_eq!(sz, 2);
 
         let id = x.known_id().expect("Should be ok");
-        println!("{:?}", id);
+        println!("{id:?}");
 
         let data = compose_biff(vec![
             Box::new(KnownID::BrtACBegin.as_biff_collection_begin(5)),
             Box::new(KnownID::BrtACEnd),
         ])
         .expect("Should be ok");
-        println!("{:?}", data);
+        println!("{data:?}");
     }
 }

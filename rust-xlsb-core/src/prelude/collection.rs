@@ -1,7 +1,7 @@
 macro_rules! declare_simple_collection {
     ($name: ident) => {
         concat_idents::concat_idents!(name = BrtBegin, $name, {
-            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Default)]
+            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {
                 pub count: u32,
             }
@@ -9,7 +9,7 @@ macro_rules! declare_simple_collection {
         });
 
         concat_idents::concat_idents!(name = BrtEnd, $name, {
-            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Default)]
+            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {}
             impl crate::prelude::Unchecked for name {}
         });

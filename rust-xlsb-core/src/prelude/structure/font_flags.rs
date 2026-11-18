@@ -2,7 +2,11 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::prelude::Unchecked;
 
-#[derive(DekuRead, DekuWrite, Default, PartialEq, Debug, Hash)]
+#[derive(DekuRead, DekuWrite, Default, PartialEq, Eq, Debug, Hash)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "bit layout mirrors the MS-XLSB record"
+)]
 pub struct FontFlags {
     #[deku(bits = 1, pad_bits_before = "1")]
     pub fItalic: bool,

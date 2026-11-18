@@ -1,13 +1,13 @@
 macro_rules! declare_scope {
     ($name: ident) => {
         concat_idents::concat_idents!(name = BrtBegin, $name, {
-            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Default)]
+            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {}
             impl crate::prelude::Unchecked for name {}
         });
 
         concat_idents::concat_idents!(name = BrtEnd, $name, {
-            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Default)]
+            #[derive(deku::DekuRead, deku::DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
             pub struct name {}
             impl crate::prelude::Unchecked for name {}
         });

@@ -5,7 +5,11 @@ use crate::Unchecked;
 use crate::assign_id;
 use crate::prelude::CodeName;
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "bit layout mirrors the MS-XLSB record"
+)]
 pub struct BrtWsProp {
     #[deku(bits = 1, pad_bits_after = "2")]
     pub fShowAutoBreaks: bool,

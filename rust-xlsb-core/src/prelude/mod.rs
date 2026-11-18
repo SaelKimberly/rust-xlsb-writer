@@ -77,7 +77,7 @@ mod tests {
         };
 
         assert_eq!(sh, ph);
-        assert_eq!(format!("{:?}", s), format!("{:?}", p));
+        assert_eq!(format!("{s:?}"), format!("{p:?}"));
     }
 
     #[rstest]

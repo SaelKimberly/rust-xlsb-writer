@@ -17,6 +17,9 @@ categories.workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
 # [x] for BIFF record content serialization and deserialization
 deku = { version = "^0.20" }

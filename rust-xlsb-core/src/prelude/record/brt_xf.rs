@@ -3,7 +3,7 @@ use deku::{DekuRead, DekuWrite};
 use crate::Unchecked;
 use crate::assign_id;
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
 #[deku(id_type = "u8", bits = 3)]
 pub enum HAlign {
     #[default]
@@ -25,7 +25,7 @@ pub enum HAlign {
     Distributed,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
 #[deku(id_type = "u8", bits = 3)]
 pub enum VAlign {
     #[default]
@@ -41,7 +41,7 @@ pub enum VAlign {
     Distributed,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
 #[deku(id_type = "u8", bits = 2)]
 pub enum ReadingOrder {
     #[default]
@@ -53,7 +53,11 @@ pub enum ReadingOrder {
     RightToLeft,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "bit layout mirrors the MS-XLSB record"
+)]
 pub struct GrbitAtr {
     #[deku(bits = 1)]
     pub bit_1: bool,
@@ -69,7 +73,11 @@ pub struct GrbitAtr {
     pub bit_6: bool,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, PartialEq, Hash, Default)]
+#[derive(DekuRead, DekuWrite, Debug, PartialEq, Eq, Hash, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "bit layout mirrors the MS-XLSB record"
+)]
 pub struct BrtXF {
     pub ixfeParent: u16,
     pub iFmt: u16,

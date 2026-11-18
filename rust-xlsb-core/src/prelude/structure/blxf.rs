@@ -2,7 +2,7 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::prelude::{BrtColor, Unchecked};
 
-#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq)]
+#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq, Eq)]
 #[deku(id_type = "u8")]
 pub enum BorderType {
     #[default]
@@ -38,7 +38,7 @@ pub enum BorderType {
 
 impl Unchecked for BorderType {}
 
-#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq)]
+#[derive(DekuRead, DekuWrite, Default, Hash, Debug, PartialEq, Eq)]
 pub struct Blxf {
     #[deku(pad_bytes_after = "1")]
     pub border_type: BorderType,

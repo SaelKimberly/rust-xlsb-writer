@@ -2,7 +2,7 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::prelude::Unchecked;
 
-#[derive(Debug, DekuRead, DekuWrite, Hash, PartialEq)]
+#[derive(Debug, DekuRead, DekuWrite, Hash, PartialEq, Eq)]
 /// `2.5.1`
 pub struct ACProductVersion {
     fileVersion: u16,

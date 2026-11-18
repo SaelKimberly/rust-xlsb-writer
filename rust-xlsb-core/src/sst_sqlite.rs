@@ -22,7 +22,7 @@ pub enum SSTHolderError {
     BiffWriteError(rusqlite::Error),
 }
 
-/// # SSTHolder
+/// # `SSTHolder`
 ///
 /// A wrapper around SQLite database to store shared strings
 ///
@@ -114,7 +114,7 @@ impl SSTHolder {
             .map_err(SSTHolderError::FailureOnInit)
     }
 
-    /// Push a string to the SSTHolder
+    /// Push a string to the `SSTHolder`
     /// Returns the hash of the string
     ///
     /// # Errors
@@ -131,6 +131,11 @@ impl SSTHolder {
     ///
     /// assert_eq!(sst, 0);
     /// ```
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "RETURNING ROWID - 1 is a non-negative insertion index below u32::MAX"
+    )]
     pub fn push(&self, data: &str) -> Result<u32, SSTHolderError> {
         let hash: i64 = zerocopy::transmute!(xxh3_64(data.as_bytes()));
 
@@ -140,7 +145,7 @@ impl SSTHolder {
         ).raw_query().map(|row| row.get::<_, i64>(0)).next()?.expect("Cannot be null") as u32)
     }
 
-    /// Push multiple strings to the SSTHolder
+    /// Push multiple strings to the `SSTHolder`
     /// Returns the hashes of the strings
     ///
     /// # Errors
@@ -158,6 +163,11 @@ impl SSTHolder {
     /// assert_eq!(idxs, [0, 1, 1]);
     ///
     /// ```
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "RETURNING ROWID - 1 is a non-negative insertion index below u32::MAX"
+    )]
     pub fn push_batch<S: AsRef<str>>(
         &self,
         data: impl IntoIterator<Item = S>,
@@ -173,8 +183,8 @@ impl SSTHolder {
                 let hash: i64 = zerocopy::transmute!(xxh3_64(s.as_bytes()));
 
                 stmt.raw_bind_parameter(c":hash", hash)
-                    .and(stmt.raw_bind_parameter(c":data", s))
-                    .and(stmt.raw_query().map(|row| row.get::<_, i64>(0)).next())
+                    .and_then(|()| stmt.raw_bind_parameter(c":data", s))
+                    .and_then(|()| stmt.raw_query().map(|row| row.get::<_, i64>(0)).next())
                     .map(|idx| idx.expect("Cannot be null") as u32)
             })
             .collect::<Result<Vec<u32>, _>>()?;
@@ -202,7 +212,7 @@ impl SSTHolder {
         Ok(self)
     }
 
-    /// Write the SSTHolder to a BIFF file
+    /// Write the `SSTHolder` to a BIFF file
     ///
     /// # Errors
     ///
@@ -224,6 +234,11 @@ impl SSTHolder {
     /// holder.write_to_biff_sst(&mut cur).unwrap();
     /// ```
     #[allow(non_snake_case)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "SQLite COUNT/SUM/length are non-negative and bounded by the table size"
+    )]
     pub fn write_to_biff_sst<W: Write>(&self, writer: &mut W) -> Result<(), SSTHolderError> {
         let cstTotal = self
             .conn
@@ -324,11 +339,11 @@ mod tests {
                     .expect("Should be ok");
 
                     assert_eq!(data.len(), 2);
-                    let (cstTotal, cstUnique) = (data[0], data[1]);
+                    let [cstTotal, cstUnique] = data;
                     assert_eq!(cstTotal, 7);
                     assert_eq!(cstUnique, 4);
 
-                    println!("BrtBeginSst: ({} total, {} unique)", cstTotal, cstUnique);
+                    println!("BrtBeginSst: ({cstTotal} total, {cstUnique} unique)");
                 }
                 KnownID::BrtSSTItem => {
                     let (_, str) =

@@ -14,6 +14,9 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 rust-xlsb-core = { path = "../rust-xlsb-core" }
 mimalloc = "0.1.52"

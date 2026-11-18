@@ -2,7 +2,7 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::prelude::Checked;
 
-#[derive(Default, DekuRead, DekuWrite, Debug, Hash, PartialEq)]
+#[derive(Default, DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq)]
 #[deku(id_type = "u8", bits = 7)]
 pub enum ColorType {
     #[default]
@@ -19,7 +19,7 @@ pub enum ColorType {
     ThemeColorIndex = 0x03,
 }
 
-#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq)]
+#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq)]
 pub struct BrtColor {
     #[deku(bits = 1)]
     fValidRGB: bool,
@@ -59,10 +59,10 @@ impl BrtColor {
                 }
             }
             ColorType::RGBA => {
-                if !self.fValidRGB {
-                    Err("Invalid RGB value")
-                } else {
+                if self.fValidRGB {
                     Ok(())
+                } else {
+                    Err("Invalid RGB value")
                 }
             }
             ColorType::ThemeColorIndex => {

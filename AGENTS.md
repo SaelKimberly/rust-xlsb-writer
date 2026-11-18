@@ -100,8 +100,9 @@ Verified state on this branch:
   versions; with the current manifests all dependencies resolve and compile on
   `1.100.0`.
 
-No CI workflow, formatter config, or linter config exists. Default `rustfmt` and
-default `clippy` settings apply.
+No CI workflow or formatter config exists; default `rustfmt` settings apply. The
+workspace manifest does configure clippy (`[workspace.lints.clippy]`), and both
+crates opt in with `[lints] workspace = true`.
 
 ## Code Conventions & Common Patterns
 
@@ -133,7 +134,10 @@ default `clippy` settings apply.
   `prelude/mod.rs`, and an `#[case::<name>(|| checked_test::<TypeName>(SIZE))]`
   entry in the `test_biff_export` rstest table in that file's test module.
 - **Lints are active.** `rust-xlsb-core` sets `#![deny(dead_code)]`; an unused
-  private helper fails the build. Wire it up or delete it.
+  private helper fails the build. Wire it up or delete it. Both crates inherit
+  `[workspace.lints]` (`clippy::pedantic` and `clippy::nursery` at `warn`);
+  intentional violations carry a scoped `#[expect(..., reason = "…")]` instead
+  of a blanket crate-level allow.
 - **Allocator.** `mimalloc` is installed as the global allocator in
   `rust-xlsb-writer` only. A second `#[global_allocator]` in core would make the
   workspace fail to link.

@@ -1,3 +1,8 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "the spec length field is 32-bit; deku expands the cast into a generated impl"
+)]
+
 use std::{
     fmt::{Debug, Display},
     ops::Deref,
@@ -9,11 +14,11 @@ use zerocopy::IntoBytes;
 
 use crate::Error;
 
-#[derive(Clone, PartialEq, DekuRead, DekuWrite, std::hash::Hash)]
+#[derive(Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
 pub struct XlString {
     #[deku(update = "self.str.len() as u32 / 2")]
     len: u32,
-    #[deku(count = "if *len != 0xffff_ffff { len * 2 } else { 0 }")]
+    #[deku(count = "if *len == 0xffff_ffff { 0 } else { len * 2 }")]
     str: Box<[u8]>,
 }
 
@@ -31,16 +36,16 @@ impl FromStr for XlString {
 
 impl XlString {
     pub const fn is_null(&self) -> bool {
-        self.len == 0xffffffff
+        self.len == 0xffff_ffff
     }
 
     pub const fn is_empty(&self) -> bool {
-        matches!(self.len, 0 | 0xffffffff)
+        matches!(self.len, 0 | 0xffff_ffff)
     }
 
     pub fn new_null() -> Self {
         Self {
-            len: 0xffffffff,
+            len: 0xffff_ffff,
             str: Box::new([]),
         }
     }
@@ -56,7 +61,7 @@ impl XlString {
     }
 
     pub fn from_string<T: Deref<Target = str>>(s: T) -> Self {
-        let s = s.deref();
+        let s = &*s;
         let o = s.encode_utf16().collect::<Box<[_]>>();
         Self {
             len: s.len() as u32,
@@ -67,18 +72,14 @@ impl XlString {
     pub fn to_optional_string(&self) -> Option<String> {
         match self.len {
             0xffff_ffff => None,
-            0 => Some("".to_owned()),
+            0 => Some(String::new()),
             _ => Some(String::from_utf16le(&self.str).unwrap()),
         }
     }
 
     pub fn try_to_string(&self) -> Result<String, Error> {
-        match self.to_optional_string() {
-            Some(s) => Ok(s),
-            None => Err(Error::ValidationError(
-                "Null XlWideString is not allowed".to_owned(),
-            )),
-        }
+        self.to_optional_string()
+            .ok_or_else(|| Error::ValidationError("Null XlWideString is not allowed".to_owned()))
     }
 }
 
@@ -98,10 +99,7 @@ pub trait XlStringExt: Deref<Target = XlString> + Sized {
     fn new(xls: XlString) -> Self;
 
     fn construct<T: Deref<Target = str>>(s: Option<T>) -> Self {
-        let new_inner = match s {
-            Some(s) => XlString::from_string(s),
-            None => XlString::new_null(),
-        };
+        let new_inner = s.map_or_else(XlString::new_null, XlString::from_string);
         Self::new(new_inner)
     }
 }
@@ -160,14 +158,14 @@ macro_rules! declare_xl_string {
     };
 }
 
-#[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite, std::hash::Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
 pub struct XlNullableWideString {
     inner: XlString,
 }
 
 declare_xl_string!(XlNullableWideString, true);
 
-#[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite, std::hash::Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
 pub struct XlWideString {
     #[deku(assert = "!inner.is_null()")]
     inner: XlString,
@@ -175,7 +173,7 @@ pub struct XlWideString {
 
 declare_xl_string!(XlWideString);
 
-#[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite, std::hash::Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
 pub struct CodeName {
     #[deku(assert = "matches!(inner.len(), 0..=31)")]
     inner: XlString,
@@ -183,7 +181,7 @@ pub struct CodeName {
 
 declare_xl_string!(CodeName);
 
-#[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite, std::hash::Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
 pub struct SimpleRichStr {
     #[deku(pad_bytes_before = "1")]
     #[deku(assert = "!inner.is_null()")]
@@ -206,10 +204,10 @@ mod tests {
         let xlws = XlWideString::construct(Some("abc"));
         assert_eq!(xlws.len(), 3);
 
-        println!("{:?}", xlws);
+        println!("{xlws:?}");
 
         let data = xlws.to_bytes().expect("Should be ok");
-        println!("Data: {:?}", data);
+        println!("Data: {data:?}");
 
         let (_, parsed) = XlWideString::from_bytes((&data, 0)).expect("Should be ok");
 
@@ -225,7 +223,7 @@ mod tests {
             len: 0xffff_ffff,
             str: Box::new([]),
         });
-        println!("{:?}", x);
+        println!("{x:?}");
 
         assert!(x.is_null());
 

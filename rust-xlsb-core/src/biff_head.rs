@@ -18,14 +18,17 @@ impl BiffHead {
     const MAX_ID: u16 = 0x7F_FF;
     const MAX_SIZE: u32 = 0x0F_FF_FF_FF;
 
+    #[must_use]
     pub const fn id(&self) -> u16 {
         self.id
     }
 
+    #[must_use]
     pub fn known_id(&self) -> Option<KnownID> {
         KnownID::try_from(self.id).ok()
     }
 
+    #[must_use]
     pub const fn size(&self) -> u32 {
         self.size
     }
@@ -43,13 +46,13 @@ impl BiffHead {
         }
     }
 
-    pub fn from_data<T: Deref<Target = [u8]>>(data: T) -> Result<(usize, BiffHead)> {
-        BiffHead::const_from_data(data.deref())
+    pub fn from_data<T: Deref<Target = [u8]>>(data: T) -> Result<(usize, Self)> {
+        Self::const_from_data(&data)
     }
 
-    pub fn consume_data<T: Deref<Target = [u8]>>(data: T) -> Result<BiffHead> {
-        let buf = data.deref();
-        let (consumed, record) = BiffHead::const_from_data(buf)?;
+    pub fn consume_data<T: Deref<Target = [u8]>>(data: T) -> Result<Self> {
+        let buf = &*data;
+        let (consumed, record) = Self::const_from_data(buf)?;
         if consumed < buf.len() {
             Err(Error::ConsumeFailed(buf.len() - consumed))
         } else {
@@ -57,7 +60,11 @@ impl BiffHead {
         }
     }
 
-    pub const fn const_from_data(data: &[u8]) -> Result<(usize, BiffHead)> {
+    #[expect(
+        clippy::ptr_offset_by_literal,
+        reason = "each header byte is reached by stepping one byte past the previous varint field"
+    )]
+    pub const fn const_from_data(data: &[u8]) -> Result<(usize, Self)> {
         let len = data.len();
 
         if len < 2 {
@@ -68,7 +75,7 @@ impl BiffHead {
                     [id @ 0x00..0x80, sz @ 0x00..0x80] => {
                         return Ok((
                             2,
-                            BiffHead {
+                            Self {
                                 id: id as u16,
                                 size: sz as u32,
                             },
@@ -137,20 +144,22 @@ impl BiffHead {
         }
     }
 
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "every casted byte is masked to 7 bits or is an already-in-range low byte"
+    )]
     pub const fn as_raw_data(&self) -> ([u8; 6], usize) {
         let mut out = [0u8; 6];
 
-        let off: usize = match self.id {
-            0x00..0x80 => {
-                out[0] = (self.id & 0x7f) as u8;
-                1
-            }
-            _ => {
-                let buf = self.id.to_le_bytes();
-                out[0] = buf[0];
-                out[1] = buf[1];
-                2
-            }
+        let off: usize = if let 0x00..0x80 = self.id {
+            out[0] = (self.id & 0x7f) as u8;
+            1
+        } else {
+            let buf = self.id.to_le_bytes();
+            out[0] = buf[0];
+            out[1] = buf[1];
+            2
         };
         let end: usize = off
             + match self.size {
@@ -166,7 +175,7 @@ impl BiffHead {
                     out[off + 1] = ((self.size >> 0x07) & 0x0000_007f) as u8;
                     2
                 }
-                0x4000..0x200000 => {
+                0x4000..0x0020_0000 => {
                     cold_path();
                     out[off] = (self.size & 0x0000_007f | 0x0000_0080) as u8;
                     out[off + 1] = ((self.size >> 0x07) & 0x7f | 0x80) as u8;
@@ -204,7 +213,7 @@ impl BiffHead {
         Ok(record)
     }
 
-    #[allow(clippy::uninit_vec)]
+    #[allow(clippy::uninit_vec, clippy::read_zero_byte_vec)]
     pub fn read_from_with_data(
         reader: &mut dyn BufRead,
     ) -> crate::Result<(Self, Option<Box<[u8]>>)> {
