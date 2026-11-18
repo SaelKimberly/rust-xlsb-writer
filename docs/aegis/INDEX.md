@@ -41,6 +41,7 @@
 - [Conditional formatting: 2- and 3-color scales](plans/2026-11-19-conditional-format-color-scales.md)
 - [Conditional formatting: data bars](plans/2026-11-19-conditional-format-data-bars.md)
 - [Conditional formatting: icon sets](plans/2026-11-19-conditional-format-icon-sets.md)
+- [Conditional formatting: text, blank, and error rules](plans/2026-11-19-conditional-format-text-blank-error.md)
 
 ## Analysis
 

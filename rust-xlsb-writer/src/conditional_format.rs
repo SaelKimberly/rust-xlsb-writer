@@ -5,12 +5,15 @@ use std::borrow::Cow;
 use rust_xlsb_core::prelude::{
     BrtBeginCFRule, BrtBeginColorScale, BrtBeginDatabar, BrtBeginIconSet, BrtCFVO, BrtColor,
     BrtEndColorScale, BrtEndDatabar, BrtEndIconSet, CF_TEMPLATE_ABOVE_AVERAGE,
-    CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
-    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
-    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES,
-    CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
-    CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
-    CFVO_PERCENTILE, UncheckedRfX,
+    CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS,
+    CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
+    CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE,
+    CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
+    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_BEGINS_WITH,
+    CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS, CF_TYPE_CELL_IS,
+    CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
+    CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
+    XlNullableWideString, XlStringExt,
 };
 use rust_xlsb_core::push_record;
 
@@ -183,23 +186,12 @@ fn value_formula(value: &ConditionalFormatValue) -> Result<CFParsedFormula> {
             rgce
         }
         ConditionalFormatValue::String(text) => {
-            let length = text.encode_utf16().count();
-            let mut rgce = Vec::with_capacity(3 + length * 2);
-            rgce.push(0x17);
-            rgce.extend_from_slice(&u16::try_from(length).expect("<=255").to_le_bytes());
-            for unit in text.encode_utf16() {
-                rgce.extend_from_slice(&unit.to_le_bytes());
-            }
+            let mut rgce = Vec::with_capacity(3 + text.len() * 2);
+            push_formula_string(&mut rgce, text)?;
             rgce
         }
     };
-    Ok(CFParsedFormula {
-        cce: u32::try_from(rgce.len())
-            .map_err(|_| Error::ValueNotRepresentable("conditional-format formula too long"))?,
-        rgce,
-        cb: 0,
-        rgcb: Vec::new(),
-    })
+    parsed_formula(rgce)
 }
 
 /// A conditional-format rule accepted by
@@ -233,6 +225,428 @@ const fn stop_flag(enabled: bool) -> u16 {
         BrtBeginCFRule::F_STOP_TRUE
     } else {
         0
+    }
+}
+
+const PTG_REF_N: u8 = 0x4C;
+const PTG_STR: u8 = 0x17;
+const PTG_INT: u8 = 0x1E;
+const PTG_FUNC: u8 = 0x41;
+const PTG_FUNC_VAR: u8 = 0x42;
+const PTG_EQ: u8 = 0x0B;
+const PTG_GT: u8 = 0x0D;
+
+const FUNC_ISERROR: u16 = 0x0003;
+const FUNC_LEN: u16 = 0x0020;
+const FUNC_NOT: u16 = 0x0026;
+const FUNC_SEARCH: u16 = 0x0052;
+const FUNC_LEFT: u16 = 0x0073;
+const FUNC_RIGHT: u16 = 0x0074;
+const FUNC_TRIM: u16 = 0x0076;
+
+fn push_relative_ref(out: &mut Vec<u8>) {
+    // PtgRefN to the current cell: zero row offset, relative row and column.
+    out.extend_from_slice(&[PTG_REF_N, 0, 0, 0, 0, 0x00, 0xC0]);
+}
+
+fn push_formula_string(out: &mut Vec<u8>, text: &str) -> Result<()> {
+    let length = text.encode_utf16().count();
+    if length > 255 {
+        return Err(Error::Parameter(
+            "conditional-format text is too long".to_owned(),
+        ));
+    }
+    out.push(PTG_STR);
+    out.extend_from_slice(&u16::try_from(length).expect("<=255").to_le_bytes());
+    for unit in text.encode_utf16() {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    Ok(())
+}
+
+fn push_formula_int(out: &mut Vec<u8>, value: u16) {
+    out.push(PTG_INT);
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_formula_func(out: &mut Vec<u8>, function: u16) {
+    out.push(PTG_FUNC);
+    out.extend_from_slice(&function.to_le_bytes());
+}
+
+fn push_formula_func_var(out: &mut Vec<u8>, params: u8, function: u16) {
+    out.push(PTG_FUNC_VAR);
+    out.push(params);
+    out.extend_from_slice(&function.to_le_bytes());
+}
+
+fn parsed_formula(rgce: Vec<u8>) -> Result<CFParsedFormula> {
+    let cce = u32::try_from(rgce.len())
+        .map_err(|_| Error::Parameter("conditional-format formula is too long".to_owned()))?;
+    Ok(CFParsedFormula {
+        cce,
+        rgce,
+        cb: 0,
+        rgcb: Vec::new(),
+    })
+}
+
+fn text_formula(rule: &ConditionalFormatTextRule) -> Result<CFParsedFormula> {
+    let mut rgce = Vec::with_capacity(48);
+    match rule {
+        ConditionalFormatTextRule::Contains(text) => {
+            push_formula_string(&mut rgce, text)?;
+            push_relative_ref(&mut rgce);
+            push_formula_func_var(&mut rgce, 2, FUNC_SEARCH);
+            push_formula_func(&mut rgce, FUNC_ISERROR);
+            push_formula_func(&mut rgce, FUNC_NOT);
+        }
+        ConditionalFormatTextRule::DoesNotContain(text) => {
+            push_formula_string(&mut rgce, text)?;
+            push_relative_ref(&mut rgce);
+            push_formula_func_var(&mut rgce, 2, FUNC_SEARCH);
+            push_formula_func(&mut rgce, FUNC_ISERROR);
+        }
+        ConditionalFormatTextRule::BeginsWith(text) => {
+            let length = u16::try_from(text.encode_utf16().count())
+                .map_err(|_| Error::Parameter("conditional-format text is too long".to_owned()))?;
+            push_relative_ref(&mut rgce);
+            push_formula_int(&mut rgce, length);
+            push_formula_func_var(&mut rgce, 2, FUNC_LEFT);
+            push_formula_string(&mut rgce, text)?;
+            rgce.push(PTG_EQ);
+        }
+        ConditionalFormatTextRule::EndsWith(text) => {
+            let length = u16::try_from(text.encode_utf16().count())
+                .map_err(|_| Error::Parameter("conditional-format text is too long".to_owned()))?;
+            push_relative_ref(&mut rgce);
+            push_formula_int(&mut rgce, length);
+            push_formula_func_var(&mut rgce, 2, FUNC_RIGHT);
+            push_formula_string(&mut rgce, text)?;
+            rgce.push(PTG_EQ);
+        }
+    }
+    parsed_formula(rgce)
+}
+
+fn blank_formula(inverted: bool) -> Result<CFParsedFormula> {
+    let mut rgce = Vec::with_capacity(20);
+    push_relative_ref(&mut rgce);
+    push_formula_func(&mut rgce, FUNC_TRIM);
+    push_formula_func(&mut rgce, FUNC_LEN);
+    push_formula_int(&mut rgce, 0);
+    rgce.push(if inverted { PTG_GT } else { PTG_EQ });
+    parsed_formula(rgce)
+}
+
+fn error_formula(inverted: bool) -> Result<CFParsedFormula> {
+    let mut rgce = Vec::with_capacity(16);
+    push_relative_ref(&mut rgce);
+    push_formula_func(&mut rgce, FUNC_ISERROR);
+    if inverted {
+        push_formula_func(&mut rgce, FUNC_NOT);
+    }
+    parsed_formula(rgce)
+}
+
+fn formula_rule(
+    template: u32,
+    parameter: u32,
+    dxf_id: u32,
+    priority: i32,
+    stop_if_true: bool,
+    str_param: XlNullableWideString,
+    formula: CFParsedFormula,
+) -> BrtBeginCFRule {
+    let cb_fmla1 = formula.cce;
+    BrtBeginCFRule {
+        iType: CF_TYPE_EXPRESSION,
+        iTemplate: template,
+        dxfId: dxf_id,
+        iPri: priority,
+        iParam: parameter,
+        flags: stop_flag(stop_if_true),
+        cbFmla1: cb_fmla1,
+        strParam: str_param,
+        formula1: Some(formula),
+        ..BrtBeginCFRule::default()
+    }
+}
+
+/// A text conditional-format comparison.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConditionalFormatTextRule {
+    /// Matches cells containing the text.
+    Contains(String),
+    /// Matches cells not containing the text.
+    DoesNotContain(String),
+    /// Matches cells beginning with the text.
+    BeginsWith(String),
+    /// Matches cells ending with the text.
+    EndsWith(String),
+}
+
+impl ConditionalFormatTextRule {
+    const fn parameter(&self) -> u32 {
+        match self {
+            Self::Contains(_) => CF_TEXTOPER_CONTAINS,
+            Self::DoesNotContain(_) => CF_TEXTOPER_NOT_CONTAINS,
+            Self::BeginsWith(_) => CF_TEXTOPER_BEGINS_WITH,
+            Self::EndsWith(_) => CF_TEXTOPER_ENDS_WITH,
+        }
+    }
+
+    fn text(&self) -> &str {
+        match self {
+            Self::Contains(text)
+            | Self::DoesNotContain(text)
+            | Self::BeginsWith(text)
+            | Self::EndsWith(text) => text,
+        }
+    }
+}
+
+/// A text conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatText {
+    rule: Option<ConditionalFormatTextRule>,
+    pub(crate) format: Option<Format>,
+    pub(crate) stop_if_true: bool,
+}
+
+impl ConditionalFormatText {
+    /// Creates an empty text rule.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            rule: None,
+            format: None,
+            stop_if_true: false,
+        }
+    }
+
+    /// Sets the text comparison rule.
+    #[must_use]
+    pub fn set_rule(mut self, rule: ConditionalFormatTextRule) -> Self {
+        self.rule = Some(rule);
+        self
+    }
+
+    /// Sets the differential format applied when the rule matches.
+    #[must_use]
+    pub fn set_format(mut self, format: impl Into<Format>) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
+    /// Stops evaluating lower-priority rules when this rule matches.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormatText {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatText {
+    fn validate(&self) -> Result<()> {
+        let Some(rule) = &self.rule else {
+            return Err(Error::Parameter(
+                "text conditional format requires a rule".to_owned(),
+            ));
+        };
+        let length = rule.text().encode_utf16().count();
+        if !(1..=255).contains(&length) {
+            return Err(Error::Parameter(
+                "text conditional format requires 1..=255 UTF-16 units".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        self.format.as_ref()
+    }
+
+    fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
+        self.validate()?;
+        let rule = self
+            .rule
+            .as_ref()
+            .expect("validated text conditional format has a rule");
+        let formula = text_formula(rule)?;
+        Ok(formula_rule(
+            CF_TEMPLATE_CONTAINS_TEXT,
+            rule.parameter(),
+            dxf_id,
+            priority,
+            self.stop_if_true,
+            XlNullableWideString::construct(Some(rule.text())),
+            formula,
+        ))
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+/// A blank or non-blank conditional format.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatBlank {
+    is_inverted: bool,
+    pub(crate) format: Option<Format>,
+    pub(crate) stop_if_true: bool,
+}
+
+impl ConditionalFormatBlank {
+    /// Creates a blank-cell rule.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            is_inverted: false,
+            format: None,
+            stop_if_true: false,
+        }
+    }
+
+    /// Matches non-blank cells instead of blank cells.
+    #[must_use]
+    pub const fn invert(mut self) -> Self {
+        self.is_inverted = true;
+        self
+    }
+
+    /// Sets the differential format applied when the rule matches.
+    #[must_use]
+    pub fn set_format(mut self, format: impl Into<Format>) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
+    /// Stops evaluating lower-priority rules when this rule matches.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormatBlank {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatBlank {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        self.format.as_ref()
+    }
+
+    fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(formula_rule(
+            if self.is_inverted {
+                CF_TEMPLATE_CONTAINS_NO_BLANKS
+            } else {
+                CF_TEMPLATE_CONTAINS_BLANKS
+            },
+            0,
+            dxf_id,
+            priority,
+            self.stop_if_true,
+            XlNullableWideString::construct(None::<&str>),
+            blank_formula(self.is_inverted)?,
+        ))
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+/// An error or non-error conditional format.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatError {
+    is_inverted: bool,
+    pub(crate) format: Option<Format>,
+    pub(crate) stop_if_true: bool,
+}
+
+impl ConditionalFormatError {
+    /// Creates an error-cell rule.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            is_inverted: false,
+            format: None,
+            stop_if_true: false,
+        }
+    }
+
+    /// Matches non-error cells instead of error cells.
+    #[must_use]
+    pub const fn invert(mut self) -> Self {
+        self.is_inverted = true;
+        self
+    }
+
+    /// Sets the differential format applied when the rule matches.
+    #[must_use]
+    pub fn set_format(mut self, format: impl Into<Format>) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
+    /// Stops evaluating lower-priority rules when this rule matches.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormatError {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatError {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        self.format.as_ref()
+    }
+
+    fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(formula_rule(
+            if self.is_inverted {
+                CF_TEMPLATE_CONTAINS_NO_ERRORS
+            } else {
+                CF_TEMPLATE_CONTAINS_ERRORS
+            },
+            0,
+            dxf_id,
+            priority,
+            self.stop_if_true,
+            XlNullableWideString::construct(None::<&str>),
+            error_formula(self.is_inverted)?,
+        ))
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
     }
 }
 
@@ -1941,6 +2355,177 @@ mod tests {
             ConditionalFormatDataBar::new().set_fill_color(Color::Default),
         ] {
             assert!(bar.validate().is_err(), "{bar:?}");
+        }
+    }
+
+    #[test]
+    fn text_rules_map_operators_strings_and_formulas() {
+        for (rule, parameter, formula) in [
+            (
+                ConditionalFormatTextRule::Contains("foo".to_owned()),
+                CF_TEXTOPER_CONTAINS,
+                &[
+                    0x17, 3, 0, b'f', 0, b'o', 0, b'o', 0, 0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x42, 2,
+                    0x52, 0, 0x41, 3, 0, 0x41, 0x26, 0,
+                ][..],
+            ),
+            (
+                ConditionalFormatTextRule::DoesNotContain("foo".to_owned()),
+                CF_TEXTOPER_NOT_CONTAINS,
+                &[
+                    0x17, 3, 0, b'f', 0, b'o', 0, b'o', 0, 0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x42, 2,
+                    0x52, 0, 0x41, 3, 0,
+                ][..],
+            ),
+            (
+                ConditionalFormatTextRule::BeginsWith("foo".to_owned()),
+                CF_TEXTOPER_BEGINS_WITH,
+                &[
+                    0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x1E, 3, 0, 0x42, 2, 0x73, 0, 0x17, 3, 0, b'f',
+                    0, b'o', 0, b'o', 0, 0x0B,
+                ][..],
+            ),
+            (
+                ConditionalFormatTextRule::EndsWith("foo".to_owned()),
+                CF_TEXTOPER_ENDS_WITH,
+                &[
+                    0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x1E, 3, 0, 0x42, 2, 0x74, 0, 0x17, 3, 0, b'f',
+                    0, b'o', 0, b'o', 0, 0x0B,
+                ][..],
+            ),
+        ] {
+            let text = ConditionalFormatText::new()
+                .set_rule(rule)
+                .set_stop_if_true(true);
+            text.validate().expect("valid text rule");
+            let record = text.begin_rule(4, 7).expect("rule");
+            assert_eq!(record.iType, CF_TYPE_EXPRESSION);
+            assert_eq!(record.iTemplate, CF_TEMPLATE_CONTAINS_TEXT);
+            assert_eq!(record.dxfId, 7);
+            assert_eq!(record.iPri, 4);
+            assert_eq!(record.iParam, parameter);
+            assert!(record.stop_if_true());
+            assert_eq!(record.strParam.to_optional_string().as_deref(), Some("foo"));
+            let parsed = record.formula1.as_ref().expect("formula");
+            assert_eq!(parsed.cce, u32::try_from(formula.len()).expect("length"));
+            assert_eq!(record.cbFmla1, parsed.cce);
+            assert_eq!(parsed.rgce, formula);
+            assert_eq!(parsed.cb, 0);
+            assert_eq!(parsed.rgcb.len(), 0);
+            assert_eq!(record.cbFmla2, 0);
+            assert!(record.formula2.is_none());
+        }
+    }
+
+    #[test]
+    fn text_rule_lengths_are_utf16_units() {
+        let text = ConditionalFormatText::new()
+            .set_rule(ConditionalFormatTextRule::BeginsWith("é".to_owned()));
+        let record = text.begin_rule(1, u32::MAX).expect("rule");
+        let formula = record.formula1.as_ref().expect("formula");
+        assert_eq!(&formula.rgce[7..10], &[0x1E, 1, 0]);
+
+        let text = ConditionalFormatText::new()
+            .set_rule(ConditionalFormatTextRule::EndsWith("😀".to_owned()));
+        let record = text.begin_rule(1, u32::MAX).expect("rule");
+        let formula = record.formula1.as_ref().expect("formula");
+        assert_eq!(&formula.rgce[7..10], &[0x1E, 2, 0]);
+    }
+
+    #[test]
+    fn text_rule_preserves_non_ascii_utf16_bytes_and_unformatted_dxf() {
+        let text = ConditionalFormatText::new()
+            .set_rule(ConditionalFormatTextRule::BeginsWith("😀".to_owned()));
+        let record = text.begin_rule(1, u32::MAX).expect("rule");
+        assert_eq!(record.dxfId, u32::MAX);
+        assert!(text.dxf_format().is_none());
+        assert_eq!(
+            record.formula1.expect("formula").rgce,
+            [
+                0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x1E, 2, 0, 0x42, 2, 0x73, 0, 0x17, 2, 0, 0x3D, 0xD8,
+                0x00, 0xDE, 0x0B,
+            ]
+        );
+    }
+
+    #[test]
+    fn text_rules_validate_utf16_length_bounds() {
+        assert!(ConditionalFormatText::new().validate().is_err());
+        assert!(
+            ConditionalFormatText::new()
+                .set_rule(ConditionalFormatTextRule::Contains(String::new()))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            ConditionalFormatText::new()
+                .set_rule(ConditionalFormatTextRule::Contains("a".repeat(256)))
+                .validate()
+                .is_err()
+        );
+        ConditionalFormatText::new()
+            .set_rule(ConditionalFormatTextRule::Contains("a".repeat(255)))
+            .validate()
+            .expect("255 UTF-16 units");
+        assert!(
+            ConditionalFormatText::new()
+                .set_rule(ConditionalFormatTextRule::Contains(String::new()))
+                .begin_rule(1, u32::MAX)
+                .is_err()
+        );
+    }
+
+    fn assert_formula_rule(rule: &impl ConditionalFormat, template: u32, formula: &[u8]) {
+        rule.validate().expect("valid rule");
+        let record = rule.begin_rule(2, 5).expect("rule");
+        assert_eq!(record.iType, CF_TYPE_EXPRESSION);
+        assert_eq!(record.iTemplate, template);
+        assert_eq!(record.dxfId, 5);
+        assert_eq!(record.iPri, 2);
+        assert_eq!(record.iParam, 0);
+        assert!(record.stop_if_true());
+        assert!(record.strParam.is_null());
+        let parsed = record.formula1.as_ref().expect("formula");
+        assert_eq!(record.cbFmla1, parsed.cce);
+        assert_eq!(parsed.rgce, formula);
+        assert_eq!(record.cbFmla2, 0);
+        assert!(record.formula2.is_none());
+    }
+
+    #[test]
+    fn blank_and_error_rules_map_templates_and_formulas() {
+        for (rule, template, formula) in [
+            (
+                ConditionalFormatBlank::new(),
+                CF_TEMPLATE_CONTAINS_BLANKS,
+                &[
+                    0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 0x76, 0, 0x41, 0x20, 0, 0x1E, 0, 0, 0x0B,
+                ][..],
+            ),
+            (
+                ConditionalFormatBlank::new().invert(),
+                CF_TEMPLATE_CONTAINS_NO_BLANKS,
+                &[
+                    0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 0x76, 0, 0x41, 0x20, 0, 0x1E, 0, 0, 0x0D,
+                ][..],
+            ),
+        ] {
+            assert_formula_rule(&rule.set_stop_if_true(true), template, formula);
+        }
+
+        for (rule, template, formula) in [
+            (
+                ConditionalFormatError::new(),
+                CF_TEMPLATE_CONTAINS_ERRORS,
+                &[0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 3, 0][..],
+            ),
+            (
+                ConditionalFormatError::new().invert(),
+                CF_TEMPLATE_CONTAINS_NO_ERRORS,
+                &[0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 3, 0, 0x41, 0x26, 0][..],
+            ),
+        ] {
+            assert_formula_rule(&rule.set_stop_if_true(true), template, formula);
         }
     }
 

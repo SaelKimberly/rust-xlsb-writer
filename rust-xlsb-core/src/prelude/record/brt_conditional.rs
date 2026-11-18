@@ -71,6 +71,16 @@ pub const CF_TEMPLATE_MULTISTATE: u32 = 4;
 pub const CF_TEMPLATE_FILTER: u32 = 5;
 /// `CF_TEMPLATE_UNIQUEVALUES`.
 pub const CF_TEMPLATE_UNIQUE_VALUES: u32 = 7;
+/// `CF_TEMPLATE_CONTAINSTEXT`.
+pub const CF_TEMPLATE_CONTAINS_TEXT: u32 = 0x08;
+/// `CF_TEMPLATE_CONTAINSBLANKS`.
+pub const CF_TEMPLATE_CONTAINS_BLANKS: u32 = 0x09;
+/// `CF_TEMPLATE_CONTAINSNOBLANKS`.
+pub const CF_TEMPLATE_CONTAINS_NO_BLANKS: u32 = 0x0A;
+/// `CF_TEMPLATE_CONTAINSERRORS`.
+pub const CF_TEMPLATE_CONTAINS_ERRORS: u32 = 0x0B;
+/// `CF_TEMPLATE_CONTAINSNOERRORS`.
+pub const CF_TEMPLATE_CONTAINS_NO_ERRORS: u32 = 0x0C;
 /// `CF_TEMPLATE_ABOVEAVERAGE`.
 pub const CF_TEMPLATE_ABOVE_AVERAGE: u32 = 0x19;
 /// `CF_TEMPLATE_BELOWAVERAGE`.
@@ -81,6 +91,15 @@ pub const CF_TEMPLATE_DUPLICATE_VALUES: u32 = 0x1B;
 pub const CF_TEMPLATE_EQUAL_ABOVE_AVERAGE: u32 = 0x1D;
 /// `CF_TEMPLATE_EQUALBELOWAVERAGE`.
 pub const CF_TEMPLATE_EQUAL_BELOW_AVERAGE: u32 = 0x1E;
+
+/// `CF_TEXTOPER_CONTAINS`.
+pub const CF_TEXTOPER_CONTAINS: u32 = 0;
+/// `CF_TEXTOPER_NOTCONTAINS`.
+pub const CF_TEXTOPER_NOT_CONTAINS: u32 = 1;
+/// `CF_TEXTOPER_BEGINSWITH`.
+pub const CF_TEXTOPER_BEGINS_WITH: u32 = 2;
+/// `CF_TEXTOPER_ENDSWITH`.
+pub const CF_TEXTOPER_ENDS_WITH: u32 = 3;
 
 /// `CFVONUM`.
 pub const CFVO_NUM: u32 = 1;
@@ -188,13 +207,21 @@ impl Checked for BrtBeginCFRule {
             || self.flags & !Self::FLAG_MASK != 0
             || self.cbFmla3 != 0
             || self.formula3.is_some()
-            || !self.strParam.is_null()
+            || (!self.strParam.is_null() && self.iTemplate != CF_TEMPLATE_CONTAINS_TEXT)
         {
             return Err("conditional-format reserved fields must be zero");
         }
 
         match (self.iType, self.iTemplate) {
             (CF_TYPE_CELL_IS, CF_TEMPLATE_EXPR) => self.check_cell_rule(),
+            (CF_TYPE_EXPRESSION, CF_TEMPLATE_CONTAINS_TEXT) => self.check_text_rule(),
+            (
+                CF_TYPE_EXPRESSION,
+                CF_TEMPLATE_CONTAINS_BLANKS
+                | CF_TEMPLATE_CONTAINS_NO_BLANKS
+                | CF_TEMPLATE_CONTAINS_ERRORS
+                | CF_TEMPLATE_CONTAINS_NO_ERRORS,
+            ) => self.check_fixed_formula_rule(),
             (CF_TYPE_FILTER, CF_TEMPLATE_FILTER) => self.check_filter_rule(),
             (
                 CF_TYPE_EXPRESSION,
@@ -248,6 +275,46 @@ impl BrtBeginCFRule {
                 return Err("conditional-format second formula size must be zero");
             }
             (_, None) => {}
+        }
+        Ok(())
+    }
+
+    fn check_text_rule(&self) -> Result<(), &'static str> {
+        if self.iParam > CF_TEXTOPER_ENDS_WITH {
+            return Err("text conditional-format operator is outside 0..=3");
+        }
+        if self.strParam.is_null() {
+            return Err("text conditional formats require a search string");
+        }
+        if !(1..=255).contains(&self.strParam.len()) {
+            return Err("text conditional-format string must contain 1..=255 units");
+        }
+        self.check_single_formula_rule()
+    }
+
+    fn check_fixed_formula_rule(&self) -> Result<(), &'static str> {
+        if self.iParam != 0 {
+            return Err("blank and error conditional formats must have a zero parameter");
+        }
+        if !self.strParam.is_null() {
+            return Err("blank and error conditional formats must not have a string parameter");
+        }
+        self.check_single_formula_rule()
+    }
+
+    fn check_single_formula_rule(&self) -> Result<(), &'static str> {
+        if self.flags & (Self::F_ABOVE | Self::F_BOTTOM | Self::F_PERCENT) != 0 {
+            return Err("this conditional format uses only the stop flag");
+        }
+        let Some(formula1) = &self.formula1 else {
+            return Err("conditional-format first formula is required");
+        };
+        formula1.check()?;
+        if self.cbFmla1 != formula1.cce {
+            return Err("conditional-format first formula size is inconsistent");
+        }
+        if self.cbFmla2 != 0 || self.formula2.is_some() {
+            return Err("this conditional format must not contain a second formula");
         }
         Ok(())
     }
@@ -988,6 +1055,156 @@ mod tests {
             &bytes[12..28],
             &[1, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn text_blank_and_error_rules_validate_template_parameters() {
+        for (template, parameter) in [
+            (CF_TEMPLATE_CONTAINS_TEXT, CF_TEXTOPER_CONTAINS),
+            (CF_TEMPLATE_CONTAINS_TEXT, CF_TEXTOPER_NOT_CONTAINS),
+            (CF_TEMPLATE_CONTAINS_TEXT, CF_TEXTOPER_BEGINS_WITH),
+            (CF_TEMPLATE_CONTAINS_TEXT, CF_TEXTOPER_ENDS_WITH),
+        ] {
+            let rule = BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: template,
+                dxfId: 0,
+                iPri: 1,
+                iParam: parameter,
+                cbFmla1: 9,
+                strParam: XlNullableWideString::construct(Some("rust")),
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            };
+            rule.check().expect("valid text rule");
+        }
+
+        for template in [
+            CF_TEMPLATE_CONTAINS_BLANKS,
+            CF_TEMPLATE_CONTAINS_NO_BLANKS,
+            CF_TEMPLATE_CONTAINS_ERRORS,
+            CF_TEMPLATE_CONTAINS_NO_ERRORS,
+        ] {
+            let rule = BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: template,
+                dxfId: 0,
+                iPri: 1,
+                iParam: 0,
+                cbFmla1: 9,
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            };
+            rule.check().expect("valid blank or error rule");
+        }
+
+        let text = BrtBeginCFRule {
+            iType: CF_TYPE_EXPRESSION,
+            iTemplate: CF_TEMPLATE_CONTAINS_TEXT,
+            dxfId: 0,
+            iPri: 1,
+            iParam: CF_TEXTOPER_CONTAINS,
+            cbFmla1: 9,
+            strParam: XlNullableWideString::construct(Some("a".repeat(255))),
+            formula1: Some(number(1.0)),
+            ..BrtBeginCFRule::default()
+        };
+        text.check().expect("255 UTF-16 units are allowed");
+
+        for invalid in [
+            BrtBeginCFRule {
+                strParam: XlNullableWideString::construct(Some("")),
+                ..text.clone()
+            },
+            BrtBeginCFRule {
+                strParam: XlNullableWideString::construct(Some("a".repeat(256))),
+                ..text.clone()
+            },
+            BrtBeginCFRule {
+                iParam: 4,
+                ..text.clone()
+            },
+            BrtBeginCFRule {
+                cbFmla1: 1,
+                ..text.clone()
+            },
+            BrtBeginCFRule {
+                cbFmla2: 9,
+                formula2: Some(number(2.0)),
+                ..text.clone()
+            },
+            BrtBeginCFRule {
+                flags: BrtBeginCFRule::F_ABOVE,
+                ..text
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: CF_TEMPLATE_CONTAINS_TEXT,
+                iPri: 1,
+                iParam: CF_TEXTOPER_CONTAINS,
+                strParam: XlNullableWideString::construct(Some("rust")),
+                formula1: None,
+                ..BrtBeginCFRule::default()
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: CF_TEMPLATE_CONTAINS_BLANKS,
+                iPri: 1,
+                iParam: 1,
+                cbFmla1: 9,
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: CF_TEMPLATE_CONTAINS_ERRORS,
+                iPri: 1,
+                iParam: 0,
+                cbFmla1: 9,
+                strParam: XlNullableWideString::construct(Some("unexpected")),
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: CF_TEMPLATE_CONTAINS_TEXT,
+                iPri: 1,
+                iParam: CF_TEXTOPER_CONTAINS,
+                cbFmla1: 9,
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_CELL_IS,
+                iTemplate: CF_TEMPLATE_CONTAINS_TEXT,
+                iPri: 1,
+                iParam: CF_TEXTOPER_CONTAINS,
+                cbFmla1: 9,
+                strParam: XlNullableWideString::construct(Some("rust")),
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: CF_TEMPLATE_CONTAINS_BLANKS,
+                iPri: 1,
+                iParam: 0,
+                cbFmla1: 9,
+                flags: BrtBeginCFRule::F_PERCENT,
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            },
+            BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: CF_TEMPLATE_CONTAINS_ERRORS,
+                iPri: 1,
+                iParam: 0,
+                formula1: None,
+                ..BrtBeginCFRule::default()
+            },
+        ] {
+            assert!(invalid.check().is_err());
+        }
     }
 
     #[test]
