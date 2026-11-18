@@ -61,7 +61,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 192 core + 172 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 192 core + 179 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -201,13 +201,13 @@ Status meanings:
 | `set_pattern`, background/foreground color | Supported | — |
 | `set_border`, four sides, four side colors | Supported | — |
 | `set_locked`, `set_hidden`, `unset_hidden` | Supported | — |
-| `merge` | Missing | Merge two formats |
+| `merge` | Supported | `Format::merge` precedence merge |
 | `set_font_scheme`, `set_font_family`, `set_font_charset` | Supported | — |
 | `set_underline`, `set_font_strikethrough`, `set_font_script` | Supported | — |
 | `set_indent`, `set_rotation`, `set_reading_direction`, `set_shrink`, `unset_shrink` | Supported | — |
 | `set_border_diagonal`, diagonal color/type | Supported | — |
 | `set_hyperlink` | Supported | Default blue underline style |
-| `unset_hyperlink_style` | Missing | Reverting hyperlink formatting |
+| `unset_hyperlink_style` | Supported | Restores default font color and underline |
 | `set_unlocked` | Supported | — |
 | `set_quote_prefix`, `unset_quote_prefix` | Supported | — |
 | `set_checkbox`, `unset_checkbox` | Missing | Checkbox format |
@@ -444,7 +444,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 192 core + 172 writer unit tests and 6 doctests; calamine
+- Test evidence: 192 core + 179 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on

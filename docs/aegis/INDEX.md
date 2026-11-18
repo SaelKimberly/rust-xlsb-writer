@@ -25,6 +25,7 @@
 - [Unprotected ranges and ignored worksheet errors](plans/2026-11-18-unprotected-ranges-and-ignored-errors.md)
 - [Autofilter ranges and workbook document properties](plans/2026-11-18-autofilter-and-document-properties.md)
 - [Custom document properties and creation time](plans/2026-11-18-custom-properties-and-creation-time.md)
+- [Format merge and hyperlink-style reset](plans/2026-11-18-format-merge-and-hyperlink-reset.md)
 
 ## Analysis
 

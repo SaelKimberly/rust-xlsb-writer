@@ -312,6 +312,7 @@ pub struct Format {
     border_left_color: Option<Color>,
     border_right_color: Option<Color>,
     border_diagonal_color: Option<Color>,
+    vertical_align_set: bool,
 }
 
 #[expect(
@@ -360,6 +361,7 @@ impl Format {
             border_left_color: None,
             border_right_color: None,
             border_diagonal_color: None,
+            vertical_align_set: false,
         }
     }
 
@@ -390,6 +392,15 @@ impl Format {
         self.font_color = Some(Color::RGB(0x0005_63C1));
         self.font.uls = 0x01;
         self.font.bFontScheme = 0;
+        self
+    }
+
+    /// Removes Excel's hyperlink font style.
+    #[must_use]
+    pub const fn unset_hyperlink_style(mut self) -> Self {
+        self.font_color = None;
+        self.font.uls = 0;
+        self.font.bFontScheme = 2;
         self
     }
 
@@ -428,6 +439,7 @@ impl Format {
             FormatAlign::General => {
                 self.xf.alc = HAlign::General;
                 self.xf.alcv = VAlign::Top;
+                self.vertical_align_set = false;
             }
             FormatAlign::Left => self.xf.alc = HAlign::Left,
             FormatAlign::Center => self.xf.alc = HAlign::Center,
@@ -436,11 +448,26 @@ impl Format {
             FormatAlign::Justify => self.xf.alc = HAlign::Justify,
             FormatAlign::CenterAcross => self.xf.alc = HAlign::CenterAcrossSelection,
             FormatAlign::Distributed => self.xf.alc = HAlign::Distributed,
-            FormatAlign::Top => self.xf.alcv = VAlign::Top,
-            FormatAlign::Bottom => self.xf.alcv = VAlign::Bottom,
-            FormatAlign::VerticalCenter => self.xf.alcv = VAlign::Center,
-            FormatAlign::VerticalJustify => self.xf.alcv = VAlign::Justify,
-            FormatAlign::VerticalDistributed => self.xf.alcv = VAlign::Distributed,
+            FormatAlign::Top => {
+                self.xf.alcv = VAlign::Top;
+                self.vertical_align_set = true;
+            }
+            FormatAlign::Bottom => {
+                self.xf.alcv = VAlign::Bottom;
+                self.vertical_align_set = true;
+            }
+            FormatAlign::VerticalCenter => {
+                self.xf.alcv = VAlign::Center;
+                self.vertical_align_set = true;
+            }
+            FormatAlign::VerticalJustify => {
+                self.xf.alcv = VAlign::Justify;
+                self.vertical_align_set = true;
+            }
+            FormatAlign::VerticalDistributed => {
+                self.xf.alcv = VAlign::Distributed;
+                self.vertical_align_set = true;
+            }
         }
         self
     }
@@ -796,6 +823,132 @@ impl Format {
         self
     }
 
+    /// Merges another format into this one and returns a new format.
+    ///
+    /// Properties already set on `self` take precedence over unset properties
+    /// on `other`. Boolean attributes are unioned, except `locked`, which is
+    /// intersected because it defaults to true.
+    #[must_use]
+    pub fn merge(&self, other: &Self) -> Self {
+        let mut merged = self.clone();
+        merged.merge_with(other);
+        merged
+    }
+
+    fn merge_with(&mut self, other: &Self) {
+        self.xf.fLocked &= other.xf.fLocked;
+        self.xf.fHidden |= other.xf.fHidden;
+        self.xf.fWrap |= other.xf.fWrap;
+        self.xf.fShrinkToFit |= other.xf.fShrinkToFit;
+        self.xf.f123Prefix |= other.xf.f123Prefix;
+
+        if self.number_format_spec.is_none() {
+            self.number_format_spec
+                .clone_from(&other.number_format_spec);
+        }
+
+        if self.font_color.is_none() {
+            self.font_color = other.font_color;
+        }
+        if self.background_color.is_none() {
+            self.background_color = other.background_color;
+        }
+        if self.foreground_color.is_none() {
+            self.foreground_color = other.foreground_color;
+        }
+        if self.border_top_color.is_none() {
+            self.border_top_color = other.border_top_color;
+        }
+        if self.border_bottom_color.is_none() {
+            self.border_bottom_color = other.border_bottom_color;
+        }
+        if self.border_left_color.is_none() {
+            self.border_left_color = other.border_left_color;
+        }
+        if self.border_right_color.is_none() {
+            self.border_right_color = other.border_right_color;
+        }
+        if self.border_diagonal_color.is_none() {
+            self.border_diagonal_color = other.border_diagonal_color;
+        }
+
+        if !self.pattern_set && self.fill.fls == 0 {
+            self.fill.fls = other.fill.fls;
+        }
+        if self.fill.brtColorFore == BrtColor::default() {
+            self.fill.brtColorFore = other.fill.brtColorFore.clone();
+        }
+        if self.fill.brtColorBack == BrtColor::default() {
+            self.fill.brtColorBack = other.fill.brtColorBack.clone();
+        }
+        self.pattern_set |= other.pattern_set;
+
+        merge_border_side(&mut self.border.blxfTop, &other.border.blxfTop);
+        merge_border_side(&mut self.border.blxfBottom, &other.border.blxfBottom);
+        merge_border_side(&mut self.border.blxfLeft, &other.border.blxfLeft);
+        merge_border_side(&mut self.border.blxfRight, &other.border.blxfRight);
+        merge_border_side(&mut self.border.blxfDiag, &other.border.blxfDiag);
+        if !self.border.fBdrDiagUp && !self.border.fBdrDiagDown {
+            self.border.fBdrDiagUp = other.border.fBdrDiagUp;
+            self.border.fBdrDiagDown = other.border.fBdrDiagDown;
+        }
+
+        if self.xf.alc == HAlign::General {
+            self.xf.alc = other.xf.alc.clone();
+        }
+        if !self.vertical_align_set {
+            self.xf.alcv = other.xf.alcv.clone();
+            self.vertical_align_set = other.vertical_align_set;
+        }
+        if self.xf.indent == 0 {
+            self.xf.indent = other.xf.indent;
+        }
+        if self.xf.trot == 0 {
+            self.xf.trot = other.xf.trot;
+        }
+        if self.xf.iReadingOrder == ReadingOrder::ContextDependent {
+            self.xf.iReadingOrder = other.xf.iReadingOrder.clone();
+        }
+
+        self.font.bls = if self.font.bls == Bold::BLSBOLD || other.font.bls == Bold::BLSBOLD {
+            Bold::BLSBOLD
+        } else {
+            Bold::BLSNORMAL
+        };
+        self.font.grbit.fItalic |= other.font.grbit.fItalic;
+        self.font.grbit.fStrikeOut |= other.font.grbit.fStrikeOut;
+        self.font.grbit.fOutline |= other.font.grbit.fOutline;
+        self.font.grbit.fShadow |= other.font.grbit.fShadow;
+        self.font.grbit.fCondense |= other.font.grbit.fCondense;
+        self.font.grbit.fExtend |= other.font.grbit.fExtend;
+
+        let default_font = BrtFont::default();
+        if self.font.dyHeight == default_font.dyHeight {
+            self.font.dyHeight = other.font.dyHeight;
+        }
+        if self.font.name == default_font.name {
+            self.font.name.clone_from(&other.font.name);
+        }
+        if self.font.bFamily == default_font.bFamily {
+            self.font.bFamily = other.font.bFamily;
+        }
+        if self.font.bCharSet == default_font.bCharSet {
+            self.font.bCharSet = other.font.bCharSet;
+        }
+        if self.font.uls == 0 {
+            self.font.uls = other.font.uls;
+        }
+        if self.font.sss == 0 {
+            self.font.sss = other.font.sss;
+        }
+        if self.font.bFontScheme == default_font.bFontScheme {
+            self.font.bFontScheme = other.font.bFontScheme;
+        }
+        if self.font.brtColor == default_font.brtColor {
+            self.font.brtColor = other.font.brtColor.clone();
+        }
+    }
+
     pub(crate) fn to_cell_style(&self, registry: &mut StyleRegistry) -> Result<CellStyle> {
         let mut font = self.font.clone();
         if let Some(color) = self.font_color {
@@ -856,6 +1009,18 @@ impl Format {
             border,
             xf,
         })
+    }
+}
+
+fn merge_border_side(
+    target: &mut rust_xlsb_core::prelude::Blxf,
+    other: &rust_xlsb_core::prelude::Blxf,
+) {
+    if target.border_type == BorderType::None {
+        target.border_type = other.border_type.clone();
+    }
+    if target.color == BrtColor::default() {
+        target.color = other.color.clone();
     }
 }
 
@@ -983,6 +1148,167 @@ mod tests {
             .expect("valid format");
 
         assert_eq!(registry.add(style).expect("adds"), 0);
+    }
+
+    #[test]
+    fn merge_fills_unset_properties() {
+        let base = Format::new().set_bold();
+        let other = Format::new()
+            .set_italic()
+            .set_font_name("Arial")
+            .set_font_size(14)
+            .set_font_color(Color::Blue)
+            .set_num_format("0.00")
+            .set_background_color(Color::Yellow)
+            .set_foreground_color(Color::Red)
+            .set_border(FormatBorder::Thin)
+            .set_border_top(FormatBorder::Double)
+            .set_border_top_color(Color::Green)
+            .set_align(FormatAlign::Center)
+            .set_align(FormatAlign::VerticalCenter)
+            .set_text_wrap()
+            .set_unlocked();
+        let merged = base.merge(&other);
+        let style = cell_style(&merged);
+
+        assert_eq!(style.font.bls, Bold::BLSBOLD);
+        assert!(style.font.grbit.fItalic);
+        assert_eq!(
+            style.font.name.to_optional_string().as_deref(),
+            Some("Arial")
+        );
+        assert_eq!(style.font.dyHeight, 280);
+        assert_eq!(style.font.brtColor, BrtColor::rgb(0x00, 0x00, 0xFF));
+        assert_eq!(style.xf.iFmt, 164);
+        assert_eq!(style.fill.fls, 1);
+        assert_eq!(style.fill.brtColorFore, BrtColor::rgb(0xFF, 0x00, 0x00));
+        assert_eq!(style.fill.brtColorBack, BrtColor::rgb(0xFF, 0xFF, 0x00));
+        assert_eq!(style.border.blxfTop.border_type, BorderType::Double);
+        assert_eq!(style.border.blxfBottom.border_type, BorderType::Thin);
+        assert_eq!(style.border.blxfTop.color, BrtColor::rgb(0x00, 0x80, 0x00));
+        assert_eq!(style.xf.alc, HAlign::Center);
+        assert_eq!(style.xf.alcv, VAlign::Center);
+        assert!(style.xf.fWrap);
+        assert!(!style.xf.fLocked);
+
+        let base_style = cell_style(&base);
+        assert_eq!(base_style.font.bls, Bold::BLSBOLD);
+        assert!(!base_style.font.grbit.fItalic);
+    }
+
+    #[test]
+    fn merge_preserves_explicit_top_alignment() {
+        let merged = Format::new()
+            .set_align(FormatAlign::Top)
+            .merge(&Format::new().set_align(FormatAlign::VerticalCenter));
+        let style = cell_style(&merged);
+
+        assert_eq!(style.xf.alcv, VAlign::Top);
+    }
+
+    #[test]
+    fn merge_preserves_explicit_diagonal_direction() {
+        let merged = Format::new()
+            .set_border_diagonal_type(FormatDiagonalBorder::BorderDown)
+            .merge(&Format::new().set_border_diagonal_type(FormatDiagonalBorder::BorderUp));
+        let style = cell_style(&merged);
+
+        assert!(style.border.fBdrDiagDown);
+        assert!(!style.border.fBdrDiagUp);
+    }
+
+    #[test]
+    fn merge_is_identity_for_each_format() {
+        let complete = Format::new()
+            .set_bold()
+            .set_italic()
+            .set_font_strikethrough()
+            .set_underline(FormatUnderline::Double)
+            .set_font_script(FormatScript::Superscript)
+            .set_font_name("Arial")
+            .set_font_size(12.0)
+            .set_font_scheme(FontScheme::Headings)
+            .set_font_family(3)
+            .set_font_charset(2)
+            .set_font_color(Color::Blue)
+            .set_num_format("0.00")
+            .set_align(FormatAlign::Center)
+            .set_align(FormatAlign::VerticalCenter)
+            .set_text_wrap()
+            .set_shrink()
+            .set_indent(2)
+            .set_rotation(45)
+            .set_reading_direction(2)
+            .set_pattern(FormatPattern::Solid)
+            .set_background_color(Color::Red)
+            .set_foreground_color(Color::Yellow)
+            .set_border(FormatBorder::Thin)
+            .set_border_top(FormatBorder::Double)
+            .set_border_color(Color::Blue)
+            .set_border_top_color(Color::Green)
+            .set_border_diagonal(FormatBorder::Thick)
+            .set_border_diagonal_color(Color::Orange)
+            .set_border_diagonal_type(FormatDiagonalBorder::BorderUp)
+            .set_unlocked()
+            .set_hidden()
+            .set_quote_prefix();
+
+        assert_eq!(Format::new().merge(&complete), complete);
+        assert_eq!(complete.merge(&Format::new()), complete);
+    }
+
+    #[test]
+    fn merge_keeps_explicit_none_pattern() {
+        let merged = Format::new()
+            .set_pattern(FormatPattern::None)
+            .merge(&Format::new().set_background_color(Color::Red));
+        let style = cell_style(&merged);
+
+        assert_eq!(style.fill.fls, 0);
+    }
+
+    #[test]
+    fn merge_keeps_first_format_values_and_unions_flags() {
+        let base = Format::new()
+            .set_italic()
+            .set_font_name("Arial")
+            .set_font_size(10.0)
+            .set_num_format("0")
+            .set_border_top(FormatBorder::Thin)
+            .set_border_top_color(Color::Red)
+            .set_align(FormatAlign::Left)
+            .set_hidden();
+        let other = Format::new()
+            .set_font_name("Calibri")
+            .set_font_size(14.0)
+            .set_num_format("0.00")
+            .set_border_top(FormatBorder::Thick)
+            .set_border_top_color(Color::Blue)
+            .set_align(FormatAlign::Right)
+            .set_text_wrap()
+            .set_quote_prefix();
+        let style = cell_style(&base.merge(&other));
+
+        assert_eq!(
+            style.font.name.to_optional_string().as_deref(),
+            Some("Arial")
+        );
+        assert_eq!(style.font.dyHeight, 200);
+        assert_eq!(style.xf.iFmt, 164);
+        assert_eq!(style.border.blxfTop.border_type, BorderType::Thin);
+        assert_eq!(style.border.blxfTop.color, BrtColor::rgb(0xFF, 0x00, 0x00));
+        assert_eq!(style.xf.alc, HAlign::Left);
+        assert!(style.xf.fHidden);
+        assert!(style.xf.fWrap);
+        assert!(style.xf.f123Prefix);
+    }
+
+    #[test]
+    fn unset_hyperlink_style_restores_default_format() {
+        assert_eq!(
+            Format::new().set_hyperlink().unset_hyperlink_style(),
+            Format::new()
+        );
     }
 
     #[test]
