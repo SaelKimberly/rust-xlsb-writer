@@ -121,6 +121,26 @@ fn headers_footers_and_page_breaks_do_not_disturb_cell_values() {
 }
 
 #[test]
+fn outline_groups_do_not_disturb_cell_values() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    for row in 1..=4 {
+        sheet
+            .write(row, 0, i32::try_from(row).expect("row fits"))
+            .expect("write");
+    }
+    sheet.group_rows_collapsed(1, 3).expect("rows");
+    sheet.group_columns(1, 2).expect("columns");
+    sheet.group_symbols_above(true);
+    sheet.group_symbols_to_left(true);
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::Int(1)));
+    assert_eq!(range.get((2, 0)), Some(&Data::Int(3)));
+}
+
+#[test]
 fn multiple_sheets_keep_their_values() {
     let mut workbook = Workbook::new();
     workbook

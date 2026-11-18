@@ -20,8 +20,8 @@ It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no hyperlinks or rich strings.
-3. **Worksheet layout and view** — no autofit, grouping, print areas/repeat
-   titles, or page-break preview.
+3. **Worksheet layout and view** — no autofit, print areas/repeat titles, or
+   page-break preview.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
    validation, or protection.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
@@ -54,7 +54,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 158 core + 93 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 161 core + 104 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -118,14 +118,14 @@ Status meanings:
 | `set_row_height_pixels` | Supported | — |
 | `set_row_hidden`, `set_row_unhidden` | Supported | — |
 | `set_default_row_height`, `set_default_row_height_pixels` | Supported | — |
-| `group_rows`, `group_rows_collapsed` | Missing | Outline groups |
+| `group_rows`, `group_rows_collapsed` | Supported | Outline groups |
 | `set_column_width`, `set_column_range_width` | Supported | — |
 | `set_column_width_pixels`, `set_column_range_width_pixels` | Supported | — |
 | `set_column_autofit_width` | Missing | Autofit width hint |
 | `set_column_format`, `set_column_range_format` | Supported | — |
 | `set_column_hidden`, `set_column_range_hidden` | Supported | — |
-| `group_columns`, `group_columns_collapsed` | Missing | Column outline groups |
-| `group_symbols_above`, `group_symbols_to_left` | Missing | Outline display |
+| `group_columns`, `group_columns_collapsed` | Supported | Column outline groups |
+| `group_symbols_above`, `group_symbols_to_left` | Supported | Outline display |
 | `hide_unused_rows` | Missing | Row hiding |
 | `autofit`, `autofit_to_max_width` | Missing | Width calculation |
 | `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
@@ -339,7 +339,7 @@ rejected before output.
 | Header/footer images | Open | Reporting | M |
 | Print area, repeat rows/columns | Open | Multi-page reports | M |
 | Manual page breaks | ✅ | Multi-page reports | S |
-| Group rows/columns, outline symbols | Open | Collapsible reports | M |
+| Group rows/columns, outline symbols | ✅ | Collapsible reports | M |
 | Autofit | Open | Readability | M |
 
 **Exit criteria:** PDF/print preview through LibreOffice shows the expected
@@ -417,8 +417,8 @@ spec:
 4. Array and dynamic-array formulas.
 
 The remaining smaller P0 gap is `write_url`. Worksheet state, page setup,
-text headers/footers, and manual page breaks are shipped; print areas, repeat
-titles, grouping, and autofit remain in P2.
+text headers/footers, manual page breaks, and outline groups are shipped;
+print areas, repeat titles, and autofit remain in P2.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -430,7 +430,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 158 core + 93 writer unit tests and 6 doctests; calamine
+- Test evidence: 161 core + 104 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
@@ -439,7 +439,8 @@ parts.
   headers/footers, and manual page breaks; it normalizes paper size and drops
   black-and-white and draft state. A generated 60-row workbook with breaks at
   rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through
-  `Report 3 of 3` in the header. Real Excel fixtures decode through
+  `Report 3 of 3` in the header. Grouped rows preserve outline levels and
+  hidden rows on XLSX round-trip; collapsed rows disappear from the PDF. Real Excel fixtures decode through
   `BrtBeginHeaderFooter`: `Simple.xlsb` has six null strings and flags
   `0x000c`; `testVarious.xlsb` has text and flags `0x000f`.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are

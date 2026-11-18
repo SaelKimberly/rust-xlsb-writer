@@ -48,8 +48,31 @@ impl Checked for BrtColInfo {
         if self.coldx > 65_535 {
             return Err("column width out of range");
         }
+        if self.iOutLevel > 7 {
+            return Err("outline level must not exceed 7");
+        }
         Ok(())
     }
 }
 
 assign_id!(BrtColInfo);
+
+#[cfg(test)]
+mod tests {
+    use deku::DekuContainerWrite;
+
+    use super::*;
+
+    #[test]
+    fn outline_bits_land_in_the_expected_byte() {
+        let column = BrtColInfo {
+            fHidden: true,
+            iOutLevel: 2,
+            fCollapsed: true,
+            ..BrtColInfo::default()
+        };
+
+        let bytes = column.to_bytes().expect("serializes");
+        assert_eq!(&bytes[16..18], &[0x01, 0x12]);
+    }
+}

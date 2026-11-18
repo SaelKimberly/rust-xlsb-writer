@@ -16,6 +16,7 @@ const MAX_ZOOM: u16 = 400;
 const DEFAULT_PRINT_SCALE: u16 = 100;
 const MAX_PAGE_DIMENSION: u16 = 32_767;
 const MAX_MARGIN: f64 = 49.0;
+const MAX_OUTLINE_LEVEL: u8 = 7;
 const DEFAULT_MARGIN_LEFT: f64 = 0.7;
 const DEFAULT_MARGIN_RIGHT: f64 = 0.7;
 const DEFAULT_MARGIN_TOP: f64 = 0.75;
@@ -40,6 +41,8 @@ pub struct RowOptions {
     pub(crate) height: Option<f64>,
     pub(crate) format: Option<u32>,
     pub(crate) hidden: bool,
+    pub(crate) level: u8,
+    pub(crate) collapsed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -47,6 +50,8 @@ pub struct ColumnOptions {
     pub(crate) width: Option<f64>,
     pub(crate) format: Option<u32>,
     pub(crate) hidden: bool,
+    pub(crate) level: u8,
+    pub(crate) collapsed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,6 +226,10 @@ pub enum Visibility {
 }
 
 /// One worksheet with sparse cells, row options, and column options.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "worksheet state mirrors independent BIFF flags"
+)]
 pub struct Worksheet {
     name: String,
     cells: BTreeMap<u32, BTreeMap<u16, Cell>>,
@@ -239,6 +248,10 @@ pub struct Worksheet {
     header_footer: HeaderFooter,
     page_breaks: Vec<u32>,
     vertical_page_breaks: Vec<u32>,
+    outline_row_level: u8,
+    outline_col_level: u8,
+    outline_symbols_above: bool,
+    outline_symbols_to_left: bool,
 }
 
 impl Worksheet {
@@ -261,6 +274,10 @@ impl Worksheet {
             header_footer: HeaderFooter::default(),
             page_breaks: Vec::new(),
             vertical_page_breaks: Vec::new(),
+            outline_row_level: 0,
+            outline_col_level: 0,
+            outline_symbols_above: false,
+            outline_symbols_to_left: false,
         }
     }
 
@@ -842,6 +859,165 @@ impl Worksheet {
             self.columns.entry(col).or_default().hidden = true;
         }
         Ok(self)
+    }
+
+    /// Groups an inclusive row range into an outline.
+    ///
+    /// Repeated calls nest groups. The maximum outline level is seven.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when `first > last`,
+    /// [`Error::RowColumnLimit`] when the range is out of bounds, or
+    /// [`Error::MaxGroupLevelExceeded`] when the group would exceed level 7.
+    pub fn group_rows(&mut self, first: RowNum, last: RowNum) -> Result<&mut Self> {
+        self.set_grouped_rows(first, last, false)
+    }
+
+    /// Groups and collapses an inclusive row range.
+    ///
+    /// Collapsed rows are hidden, and the row after the range receives the
+    /// outline summary marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when `first > last`,
+    /// [`Error::RowColumnLimit`] when the range is out of bounds, or
+    /// [`Error::MaxGroupLevelExceeded`] when the group would exceed level 7.
+    pub fn group_rows_collapsed(&mut self, first: RowNum, last: RowNum) -> Result<&mut Self> {
+        self.set_grouped_rows(first, last, true)
+    }
+
+    /// Groups an inclusive column range into an outline.
+    ///
+    /// Repeated calls nest groups. The maximum outline level is seven.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when `first > last`,
+    /// [`Error::RowColumnLimit`] when the range is out of bounds, or
+    /// [`Error::MaxGroupLevelExceeded`] when the group would exceed level 7.
+    pub fn group_columns(&mut self, first: ColNum, last: ColNum) -> Result<&mut Self> {
+        self.set_grouped_columns(first, last, false)
+    }
+
+    /// Groups and collapses an inclusive column range.
+    ///
+    /// Collapsed columns are hidden, and the column after the range receives
+    /// the outline summary marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when `first > last`,
+    /// [`Error::RowColumnLimit`] when the range is out of bounds, or
+    /// [`Error::MaxGroupLevelExceeded`] when the group would exceed level 7.
+    pub fn group_columns_collapsed(&mut self, first: ColNum, last: ColNum) -> Result<&mut Self> {
+        self.set_grouped_columns(first, last, true)
+    }
+
+    /// Places row outline summary symbols above their groups.
+    ///
+    /// The default is below the group.
+    pub const fn group_symbols_above(&mut self, enable: bool) -> &mut Self {
+        self.outline_symbols_above = enable;
+        self
+    }
+
+    /// Places column outline summary symbols to the left of their groups.
+    ///
+    /// The default is to the right of the group.
+    pub const fn group_symbols_to_left(&mut self, enable: bool) -> &mut Self {
+        self.outline_symbols_to_left = enable;
+        self
+    }
+
+    fn set_grouped_rows(
+        &mut self,
+        first: RowNum,
+        last: RowNum,
+        collapsed: bool,
+    ) -> Result<&mut Self> {
+        if first > last {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_row(first)?;
+        Self::check_row(last)?;
+
+        let mut max_level = 0;
+        for row in first..=last {
+            let next = self.rows.get(&row).map_or(1, |options| options.level + 1);
+            if next > MAX_OUTLINE_LEVEL {
+                return Err(Error::MaxGroupLevelExceeded);
+            }
+            max_level = max_level.max(next);
+        }
+
+        for row in first..=last {
+            let options = self.rows.entry(row).or_default();
+            options.level += 1;
+            if collapsed {
+                options.hidden = true;
+            }
+        }
+        self.outline_row_level = self.outline_row_level.max(max_level);
+
+        if collapsed
+            && let Some(marker) = last.checked_add(1)
+            && marker <= MAX_ROW
+        {
+            self.rows.entry(marker).or_default().collapsed = true;
+        }
+        Ok(self)
+    }
+
+    fn set_grouped_columns(
+        &mut self,
+        first: ColNum,
+        last: ColNum,
+        collapsed: bool,
+    ) -> Result<&mut Self> {
+        if first > last {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_col(first)?;
+        Self::check_col(last)?;
+
+        let mut max_level = 0;
+        for col in first..=last {
+            let next = self
+                .columns
+                .get(&col)
+                .map_or(1, |options| options.level + 1);
+            if next > MAX_OUTLINE_LEVEL {
+                return Err(Error::MaxGroupLevelExceeded);
+            }
+            max_level = max_level.max(next);
+        }
+
+        for col in first..=last {
+            let options = self.columns.entry(col).or_default();
+            options.level += 1;
+            if collapsed {
+                options.hidden = true;
+            }
+        }
+        self.outline_col_level = self.outline_col_level.max(max_level);
+
+        if collapsed
+            && let Some(marker) = last.checked_add(1)
+            && marker <= MAX_COL
+        {
+            self.columns.entry(marker).or_default().collapsed = true;
+        }
+        Ok(self)
+    }
+
+    pub(crate) const fn outline_levels(&self) -> (u8, u8) {
+        (self.outline_row_level, self.outline_col_level)
+    }
+
+    pub(crate) const fn outline_symbols(&self) -> (bool, bool) {
+        (self.outline_symbols_above, self.outline_symbols_to_left)
     }
 
     /// Freezes rows above and columns left of a cell.
@@ -1972,7 +2148,7 @@ mod tests {
         assert_eq!(worksheet.page_breaks(), [20, 40, 60]);
 
         worksheet.set_page_breaks(&[0]).expect("clear");
-        assert_eq!(worksheet.page_breaks(), []);
+        assert_eq!(worksheet.page_breaks().len(), 0);
     }
 
     #[test]

@@ -45,7 +45,7 @@ pub fn write_sheet(
     write_ws_prop(sheet, out)?;
     push(out, &dimension(sheet))?;
     write_sheet_views(sheet, selected, out)?;
-    write_default_row_height(sheet, out)?;
+    write_sheet_format(sheet, out)?;
 
     let columns = column_infos(sheet, style_indexes);
     if !columns.is_empty() {
@@ -90,6 +90,8 @@ pub fn write_sheet(
                 miyRw: row_height,
                 fDyZero: row_options.is_some_and(|options| options.hidden),
                 fGhostDirty: row_options.and_then(|options| options.format).is_some(),
+                iOutLevel: row_options.map_or(0, |options| options.level),
+                fCollapsed: row_options.is_some_and(|options| options.collapsed),
                 ccolspan: u32::try_from(spans.len())
                     .map_err(|_| Error::ValueNotRepresentable("too many column spans"))?,
                 rgBrtColspan: spans,
@@ -151,55 +153,53 @@ pub fn write_sheet(
 
 fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     let fit_to_page = sheet.page_setup().fit_to_pages.is_some();
-    let Some(color) = sheet.tab_color() else {
-        if !fit_to_page {
-            return Ok(());
-        }
-        return push(
-            out,
-            &BrtWsProp {
-                fShowAutoBreaks: true,
-                fPublish: true,
-                fRowSumsBelow: true,
-                fColSumsRight: true,
-                fFitToPage: true,
-                fShowOutlineSymbols: true,
-                fCondFmtCalc: true,
-                rwSync: u32::MAX,
-                colSync: u32::MAX,
-                ..BrtWsProp::default()
-            },
-        );
-    };
+    let (row_level, col_level) = sheet.outline_levels();
+    let (symbols_above, symbols_left) = sheet.outline_symbols();
+    let color = sheet.tab_color();
 
-    push(
-        out,
-        &BrtWsProp {
-            fShowAutoBreaks: true,
-            fPublish: true,
-            fRowSumsBelow: true,
-            fColSumsRight: true,
-            fFitToPage: fit_to_page,
-            fShowOutlineSymbols: true,
-            fCondFmtCalc: true,
-            brtcolorTab: color.to_brt_color()?,
-            rwSync: u32::MAX,
-            colSync: u32::MAX,
-            ..BrtWsProp::default()
-        },
-    )
+    if color.is_none()
+        && !fit_to_page
+        && row_level == 0
+        && col_level == 0
+        && !symbols_above
+        && !symbols_left
+    {
+        return Ok(());
+    }
+
+    let mut prop = BrtWsProp {
+        fShowAutoBreaks: true,
+        fPublish: true,
+        fRowSumsBelow: !symbols_above,
+        fColSumsRight: !symbols_left,
+        fFitToPage: fit_to_page,
+        fShowOutlineSymbols: true,
+        fCondFmtCalc: true,
+        rwSync: u32::MAX,
+        colSync: u32::MAX,
+        ..BrtWsProp::default()
+    };
+    if let Some(color) = color {
+        prop.brtcolorTab = color.to_brt_color()?;
+    }
+    push(out, &prop)
 }
 
-fn write_default_row_height(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
-    let Some(height) = sheet.default_row_height() else {
+fn write_sheet_format(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let height = sheet.default_row_height();
+    let (row_level, col_level) = sheet.outline_levels();
+    if height.is_none() && row_level == 0 && col_level == 0 {
         return Ok(());
-    };
+    }
+
     push(
         out,
         &BrtWsFmtInfo {
             dxGCol: DEFAULT_COL_WIDTH,
-            miyDefRwHeight: height_to_twips(height),
-            fUnsynced: true,
+            miyDefRwHeight: height.map_or(DEFAULT_ROW_HEIGHT, height_to_twips),
+            fUnsynced: height.is_some(),
+            iOutLevelRw: row_level,
+            iOutLevelCol: col_level,
             ..BrtWsFmtInfo::default()
         },
     )
@@ -507,6 +507,8 @@ fn column_infos(sheet: &Worksheet, style_indexes: &[u32]) -> Vec<BrtColInfo> {
                 && next_options.width == first_options.width
                 && next_options.format == first_options.format
                 && next_options.hidden == first_options.hidden
+                && next_options.level == first_options.level
+                && next_options.collapsed == first_options.collapsed
             {
                 last = **next;
                 columns.next();
@@ -533,7 +535,9 @@ fn col_info(first: u16, last: u16, options: &ColumnOptions, style_indexes: &[u32
             .format
             .map_or(0, |index| mapped_style(index, style_indexes)),
         fHidden: options.hidden,
-        fUserSet: true,
+        fUserSet: options.width.is_some() || options.format.is_some() || options.hidden,
+        iOutLevel: options.level,
+        fCollapsed: options.collapsed,
         ..BrtColInfo::default()
     }
 }
@@ -1142,6 +1146,7 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!((columns[0].colFirst, columns[0].colLast), (0, 0));
         assert_eq!(columns[0].coldx, 5_632);
+        assert!(columns[0].fUserSet);
         assert_eq!((columns[1].colFirst, columns[1].colLast), (1, 2));
         assert_eq!(columns[1].coldx, 2_560);
 
@@ -1279,6 +1284,28 @@ mod tests {
     }
 
     #[test]
+    fn hidden_and_formatted_columns_keep_the_user_set_flag() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_column_hidden(0).expect("hide");
+        let format = Format::new().set_bold();
+        sheet.set_column_format(1, &format).expect("format");
+        let mut registry = StyleRegistry::new();
+        let style = format.to_cell_style(&mut registry).expect("style");
+        let index = registry.add(style).expect("adds");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[index], &sst, false, &mut out).expect("sheet");
+
+        let columns = records::<BrtColInfo>(&out);
+        assert_eq!(columns.len(), 2);
+        assert!(columns[0].fUserSet);
+        assert_eq!(columns[0].coldx, 0);
+        assert!(columns[1].fUserSet);
+        assert_eq!(columns[1].coldx, DEFAULT_COL_WIDTH);
+    }
+
+    #[test]
     fn unhidden_row_restores_default_height() {
         let mut sheet = Worksheet::new("Sheet1".to_owned());
         sheet.write(0, 0, 1_i32).expect("writes");
@@ -1292,6 +1319,211 @@ mod tests {
         let rows = records::<BrtRowHdr>(&out);
         assert!(!rows[0].fDyZero);
         assert_eq!(rows[0].miyRw, 300);
+    }
+
+    #[test]
+    fn grouped_rows_set_levels_and_worksheet_maximum() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.write(0, 0, "head").expect("head");
+        sheet.write(1, 0, 1_i32).expect("row 1");
+        sheet.write(2, 0, 2_i32).expect("row 2");
+        sheet.write(3, 0, 3_i32).expect("row 3");
+        sheet.group_rows(1, 3).expect("outer group");
+        sheet.group_rows(2, 2).expect("inner group");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let rows = records::<BrtRowHdr>(&out);
+        let levels: Vec<u8> = rows.iter().map(|row| row.iOutLevel).collect();
+        assert_eq!(levels, [0, 1, 2, 1]);
+
+        let formats = records::<BrtWsFmtInfo>(&out);
+        assert_eq!(formats.len(), 1);
+        assert_eq!(formats[0].iOutLevelRw, 2);
+        assert_eq!(formats[0].iOutLevelCol, 0);
+        assert!(!formats[0].fUnsynced);
+        assert_eq!(formats[0].miyDefRwHeight, 300);
+        let props = records::<BrtWsProp>(&out);
+        assert_eq!(props.len(), 1);
+        assert!(props[0].fRowSumsBelow);
+        assert!(props[0].fColSumsRight);
+    }
+
+    #[test]
+    fn outline_levels_share_sheet_format_with_default_height() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_default_row_height(24.0).expect("height");
+        sheet.group_columns_collapsed(2, 3).expect("group");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let formats = records::<BrtWsFmtInfo>(&out);
+        assert_eq!(formats.len(), 1);
+        assert!(formats[0].fUnsynced);
+        assert_eq!(formats[0].miyDefRwHeight, 480);
+        assert_eq!(formats[0].iOutLevelCol, 1);
+    }
+
+    #[test]
+    fn collapsed_rows_hide_and_mark_the_following_row() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.write(1, 0, 1_i32).expect("row 1");
+        sheet.write(2, 0, 2_i32).expect("row 2");
+        sheet.group_rows_collapsed(1, 2).expect("group");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let rows = records::<BrtRowHdr>(&out);
+        assert_eq!(rows.len(), 3);
+        for row in &rows[..2] {
+            assert_eq!(row.iOutLevel, 1);
+            assert!(row.fDyZero);
+            assert_eq!(row.miyRw, 0);
+            assert!(!row.fCollapsed);
+        }
+        assert_eq!(rows[2].rw, 3);
+        assert_eq!(rows[2].iOutLevel, 0);
+        assert!(rows[2].fCollapsed);
+        assert!(!rows[2].fDyZero);
+    }
+
+    #[test]
+    fn grouped_columns_split_by_level_and_collapse() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.group_columns(0, 2).expect("outer group");
+        sheet.group_columns(1, 1).expect("inner group");
+        sheet
+            .group_columns_collapsed(4, 5)
+            .expect("collapsed group");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let columns = records::<BrtColInfo>(&out);
+        assert_eq!(columns.len(), 5);
+        assert_eq!((columns[0].colFirst, columns[0].colLast), (0, 0));
+        assert_eq!(columns[0].iOutLevel, 1);
+        assert_eq!((columns[1].colFirst, columns[1].colLast), (1, 1));
+        assert_eq!(columns[1].iOutLevel, 2);
+        assert_eq!((columns[2].colFirst, columns[2].colLast), (2, 2));
+        assert_eq!(columns[2].iOutLevel, 1);
+        assert_eq!((columns[3].colFirst, columns[3].colLast), (4, 5));
+        assert_eq!(columns[3].iOutLevel, 1);
+        assert!(columns[3].fUserSet);
+        assert!(columns[3].fHidden);
+        assert_eq!(columns[3].coldx, 0);
+        assert_eq!((columns[4].colFirst, columns[4].colLast), (6, 6));
+        assert!(columns[4].fCollapsed);
+        assert_eq!(columns[4].iOutLevel, 0);
+
+        let formats = records::<BrtWsFmtInfo>(&out);
+        assert_eq!(formats.len(), 1);
+        assert_eq!(formats[0].iOutLevelRw, 0);
+        assert_eq!(formats[0].iOutLevelCol, 2);
+    }
+
+    #[test]
+    fn grouped_columns_at_the_same_level_coalesce() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.group_columns(0, 3).expect("group");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let columns = records::<BrtColInfo>(&out);
+        assert_eq!(columns.len(), 1);
+        assert_eq!((columns[0].colFirst, columns[0].colLast), (0, 3));
+        assert_eq!(columns[0].iOutLevel, 1);
+        assert!(!columns[0].fUserSet);
+    }
+
+    #[test]
+    fn grouping_rejects_depth_order_and_limits_without_partial_state() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.group_rows(0, 1).expect("level 1");
+        for _ in 0..6 {
+            sheet.group_rows(0, 1).expect("nested");
+        }
+        assert!(sheet.group_rows(0, 0).is_err(), "row already at level 7");
+
+        assert!(sheet.group_rows(2, 1).is_err(), "reversed rows");
+        assert!(sheet.group_rows(0, MAX_ROW + 1).is_err(), "row limit");
+        assert!(sheet.group_columns(2, 1).is_err(), "reversed columns");
+        assert!(sheet.group_columns(0, MAX_COL + 1).is_err(), "column limit");
+
+        let rows = records::<BrtRowHdr>(&{
+            let sst = SSTHolder::create_in_memory().expect("sst");
+            let mut out = Vec::new();
+            write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+            out
+        });
+        assert!(rows.iter().all(|row| row.iOutLevel <= 7));
+    }
+
+    #[test]
+    fn collapsed_groups_at_the_sheet_edge_skip_the_marker() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet
+            .group_rows_collapsed(MAX_ROW, MAX_ROW)
+            .expect("last row");
+        sheet
+            .group_columns_collapsed(MAX_COL, MAX_COL)
+            .expect("last column");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let rows = records::<BrtRowHdr>(&out);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].rw, MAX_ROW);
+        assert!(rows[0].fDyZero);
+        assert!(!rows[0].fCollapsed);
+        let columns = records::<BrtColInfo>(&out);
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].colFirst, u32::from(MAX_COL));
+        assert!(columns[0].fHidden);
+        assert!(!columns[0].fCollapsed);
+    }
+
+    #[test]
+    fn outline_symbols_set_ws_prop_summary_flags() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.group_rows(1, 2).expect("rows");
+        sheet.group_columns(1, 2).expect("columns");
+        sheet.group_symbols_above(true);
+        sheet.group_symbols_to_left(true);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let props = records::<BrtWsProp>(&out);
+        assert_eq!(props.len(), 1);
+        assert!(!props[0].fRowSumsBelow);
+        assert!(!props[0].fColSumsRight);
+        assert!(props[0].fShowOutlineSymbols);
+    }
+
+    #[test]
+    fn grouping_keeps_default_workbook_output_unchanged() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.write(0, 0, 1_i32).expect("writes");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        assert_eq!(records::<BrtWsProp>(&out).len(), 0);
+        assert_eq!(records::<BrtWsFmtInfo>(&out).len(), 0);
     }
 
     #[test]

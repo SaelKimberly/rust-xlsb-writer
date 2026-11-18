@@ -15,6 +15,7 @@
 - [Worksheet tabs and default row height](plans/2026-11-18-worksheet-tabs-and-default-height.md)
 - [Worksheet page setup and print options](plans/2026-11-18-worksheet-page-setup.md)
 - [Worksheet headers, footers, and manual page breaks](plans/2026-11-18-worksheet-headers-footers-page-breaks.md)
+- [Worksheet outline groups](plans/2026-11-18-worksheet-outline-groups.md)
 
 ## Analysis
 

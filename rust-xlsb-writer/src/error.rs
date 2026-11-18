@@ -41,6 +41,10 @@ pub enum Error {
     #[error("a worksheet allows at most 1023 page breaks")]
     TooManyPageBreaks,
 
+    /// Grouping would exceed Excel's seven outline levels.
+    #[error("outline level exceeds Excel's seven-level limit")]
+    MaxGroupLevelExceeded,
+
     /// A merge range contains only one cell.
     #[error("a merged range must contain more than one cell")]
     MergeRangeSingleCell,

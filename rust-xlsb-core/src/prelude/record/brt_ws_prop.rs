@@ -67,6 +67,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn summary_flags_land_in_the_first_bit_byte() {
+        let prop = BrtWsProp {
+            fShowAutoBreaks: true,
+            fPublish: true,
+            fRowSumsBelow: false,
+            fColSumsRight: false,
+            ..BrtWsProp::default()
+        };
+
+        let bytes = prop.to_bytes().expect("serializes");
+        assert_eq!(bytes[0], 0x09);
+    }
+
+    #[test]
     fn fit_to_page_is_the_first_bit_of_the_second_byte() {
         let prop = BrtWsProp {
             fFitToPage: true,

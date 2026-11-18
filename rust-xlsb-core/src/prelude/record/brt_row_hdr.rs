@@ -60,6 +60,9 @@ impl Checked for BrtRowHdr {
         if self.ccolspan > 16 {
             return Err("ccolspan must not exceed 16");
         }
+        if self.iOutLevel > 7 {
+            return Err("outline level must not exceed 7");
+        }
         Ok(())
     }
 }
@@ -71,6 +74,19 @@ mod tests {
     use deku::DekuContainerWrite;
 
     use super::*;
+
+    #[test]
+    fn outline_bits_land_in_the_expected_byte() {
+        let row = BrtRowHdr {
+            iOutLevel: 2,
+            fCollapsed: true,
+            fDyZero: true,
+            ..BrtRowHdr::default()
+        };
+
+        let bytes = row.to_bytes().expect("serializes");
+        assert_eq!(bytes[11], 0x1A);
+    }
 
     #[test]
     fn ghost_dirty_lands_in_the_lsb_first_bit() {
