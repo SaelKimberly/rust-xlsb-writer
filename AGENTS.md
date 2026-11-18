@@ -71,11 +71,11 @@ into the SST, and its id is range-checked against the target context at
 conversion time.
 
 The public writer has its own `IntoExcelData` / `IntoExcelDateTime` path.
-`Worksheet` owns sparse cells, row options, column options, and a
-worksheet-local format table; `write` stores context-free `CellData` and
-`write_with_format` interns a `Format` by value. At save, the writer creates an
-`SSTHolder`, turns high-level strings into shared strings (`BrtCellIsst`), and
-converts numbers through `WbContext`.
+`Worksheet` owns sparse cells, row options, column options, merged ranges,
+worksheet view state, and a worksheet-local format table; `write` stores
+context-free `CellData` and `write_with_format` interns a `Format` by value. At
+save, the writer creates an `SSTHolder`, turns high-level strings into shared
+strings (`BrtCellIsst`), and converts numbers through `WbContext`.
 
 Formatting is separate again. Core's `StyleRegistry` (`styles.rs`) is seeded
 with the default `BrtXF` at index 0. `CellStyle` pairs a `BrtFont`, `BrtFill`,
@@ -141,7 +141,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 179 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 194 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -223,8 +223,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/test_context.rs` | Test-only `TestContext` for low-level conversion tests |
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
 | `rust-xlsb-core/src/prelude/record/brt_merge_cell.rs` | `BrtMergeCell` range record |
+| `rust-xlsb-core/src/prelude/record/brt_begin_ws_view.rs` | `WSVIEWS2` view records; `brt_pane.rs`/`brt_sel.rs` carry panes and selection |
 | `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, save entry points |
-| `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, write and layout API |
+| `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, and view API |
 | `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
 | `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
 | `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans |
@@ -266,7 +267,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 179 unit tests and 6 doctests total: 123 in core, 56 in writer. Most core
+- 194 unit tests and 6 doctests total: 132 in core, 62 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

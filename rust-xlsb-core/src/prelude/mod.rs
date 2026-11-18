@@ -9,15 +9,17 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginSst, BrtBeginTableStyles, BrtBorder, BrtBundleSh, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtEndSst,
-    BrtEndTableStyles, BrtFill, BrtFmt, BrtFont, BrtMergeCell, BrtRowHdr, BrtSSTItem, BrtStyle,
-    BrtWsDim, BrtWsProp, BrtXF, GrbitAtr, HAlign, ReadingOrder, VAlign,
+    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBorder, BrtBundleSh, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
+    BrtColor, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtFill, BrtFmt, BrtFont, BrtMergeCell,
+    BrtPane, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtWsDim, BrtWsProp, BrtXF, GrbitAtr, HAlign,
+    ReadingOrder, VAlign,
 };
 pub use scope::*;
 pub use structure::{
     ACProductVersion, BErr, Blxf, Bold, BorderType, BrtColSpan, Cell, CodeName, FontFlags,
-    RkNumber, SimpleRichStr, UncheckedRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    RkNumber, SimpleRichStr, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
+    XlWideString, Xnum,
 };
 
 #[cfg(test)]
@@ -100,6 +102,10 @@ mod tests {
     #[case::brt_begin_sst(|| checked_test::<BrtBeginSst>(8))]
     #[case::brt_end_sst(|| checked_test::<BrtEndSst>(0))]
     #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]
+    #[case::brt_begin_ws_view(|| checked_test::<BrtBeginWsView>(30))]
+    #[case::brt_end_ws_view(|| checked_test::<BrtEndWsView>(0))]
+    #[case::brt_pane(|| checked_test::<BrtPane>(29))]
+    #[case::brt_sel(|| checked_test::<BrtSel>(20))]
     #[case::brt_merge_cell(|| checked_test::<BrtMergeCell>(16))]
     #[case::brt_begin_merge_cells(|| checked_test::<BrtBeginMergeCells>(4))]
     #[case::brt_end_merge_cells(|| checked_test::<BrtEndMergeCells>(0))]
@@ -132,6 +138,8 @@ mod tests {
     #[case::brt_begin_styles(|| checked_test::<BrtBeginStyles>(4))]
     #[case::brt_end_styles(|| checked_test::<BrtEndStyles>(0))]
     #[case::brt_begin_sheet(|| checked_test::<BrtBeginSheet>(0))]
+    #[case::brt_begin_ws_views(|| checked_test::<BrtBeginWsViews>(0))]
+    #[case::brt_end_ws_views(|| checked_test::<BrtEndWsViews>(0))]
     #[case::brt_begin_sheet_data(|| checked_test::<BrtBeginSheetData>(0))]
     #[case::brt_begin_single_cells(|| checked_test::<BrtBeginSingleCells>(0))]
     #[case::brt_begin_slicer_cache_ids(|| checked_test::<BrtBeginSlicerCacheIDs>(0))]

@@ -44,5 +44,6 @@ declare_scopes!(
     Slicers,
     SlicersEx,
     SlicerStyleElements,
-    StyleSheet
+    StyleSheet,
+    WsViews
 );

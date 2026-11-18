@@ -150,6 +150,22 @@ fn styles_deduplicate_and_default_font_is_calibri() {
 }
 
 #[test]
+fn view_state_does_not_disturb_cell_values() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_freeze_panes(1, 0).expect("freeze");
+    sheet.set_selection(2, 1, 3, 2).expect("selection");
+    sheet.set_top_left_cell(1, 1).expect("top left");
+    sheet.write(0, 0, "header").expect("header");
+    sheet.write(1, 0, "row").expect("row");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::String("header".to_owned())));
+    assert_eq!(range.get((1, 0)), Some(&Data::String("row".to_owned())));
+}
+
+#[test]
 fn merged_range_keeps_top_left_value() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();

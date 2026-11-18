@@ -20,8 +20,8 @@ It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no hyperlinks or rich strings.
-3. **Worksheet layout and view** — no freeze panes, autofit, grouping, page
-   setup, print settings, or sheet state.
+3. **Worksheet layout and view** — no autofit, grouping, page setup, print
+   settings, zoom, or sheet state.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
    validation, or protection.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
@@ -32,7 +32,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    `rust_decimal`, serde, or Polars adapters.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 6 `Workbook`, 42
+The current API surface is deliberately narrow: roughly 6 `Workbook`, 45
 `Worksheet`, and 47 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -46,12 +46,13 @@ the breadth gap.
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format, merged ranges |
+| View | freeze panes, selection range, top-left cell |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 123 core + 56 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 132 core + 62 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -130,8 +131,9 @@ Status meanings:
 | `set_cell_format`, `set_range_format` | Supported | — |
 | `set_range_format_with_border` | Missing | Border-aware range edit |
 | `clear_cell`, `clear_cell_format` | Supported | — |
-| `set_selection`, `set_top_left_cell` | Missing | View selection |
-| `set_freeze_panes`, `set_freeze_panes_top_cell` | Missing | Frozen panes |
+| `set_selection`, `set_top_left_cell` | Supported | — |
+| `set_freeze_panes` | Supported | — |
+| `set_freeze_panes_top_cell` | Missing | Frozen-pane top-left override |
 | `set_zoom`, `set_zoom_to_fit` | Missing | View zoom |
 | `set_screen_gridlines`, `set_print_gridlines` | Missing | Gridline display |
 | `set_right_to_left` | Missing | Sheet direction |
@@ -294,7 +296,7 @@ objects.
 | `write_url` + formatted variants | Open | Common in reports and dashboards | M |
 | Row/column hidden | ✅ P0a | Basic worksheet state; low record complexity | S |
 | Default row height, sheet visibility, tab color | Open | Basic worksheet state | S–M |
-| `set_freeze_panes`, `set_selection`, `set_top_left_cell` | Open | Basic view usability | S–M |
+| `set_freeze_panes`, `set_selection`, `set_top_left_cell` | ✅ | Basic view usability | S–M |
 | `set_cell_format`, `set_range_format`, `clear_cell`, `clear_cell_format` | ✅ P0a | Format-only edits without rewriting values | S–M |
 | `write_formula` + `set_formula_result` | Open | Biggest functional gap; enables computed reports | L |
 | `write_array_formula` / dynamic formulas | Open | Common Excel 365 reporting | L |
@@ -302,8 +304,9 @@ objects.
 **P0a status:** shipped `Result<T,E>`, formatted row/column writes, row/column
 matrices, cell/range format edits, clear operations, hidden rows/columns, and
 the format-only parity setters. **Merge status:** `merge_range` and the three
-MS-XLSB merge records are shipped. **P0b** remains the formula engine;
-hyperlinks and worksheet state are the next smaller P0 gaps.
+MS-XLSB merge records are shipped. **View status:** freeze panes, selection,
+top-left cell, and the `WSVIEWS2` records are shipped. **P0b** remains the
+formula engine; hyperlinks and worksheet state are the next smaller P0 gaps.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
 cached results where supported; record-level tests assert formula/merge/link
@@ -411,8 +414,8 @@ spec:
 4. Array and dynamic-array formulas.
 
 The smaller P0 gaps are `write_url`, default row height, sheet visibility/tab
-color, and freeze panes/selection. Ship those as P0c if formula work needs to
-wait.
+color, and freeze-pane top-cell control. Ship those as P0c if formula work needs
+to wait.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -424,8 +427,11 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 123 core + 56 writer unit tests and 6 doctests; calamine
+- Test evidence: 132 core + 62 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
+  LibreOffice opens the view fixtures but does not preserve XLSB panes on
+  conversion, so view records are proven by record-level decode tests, not a
+  rendered freeze.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are
   architectural, not benchmarked.
 - No Microsoft Excel validation was available. LibreOffice is the visual oracle.

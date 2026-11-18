@@ -4,6 +4,7 @@ use std::{hash::Hash, ops::Deref};
 use crate::prelude::Unchecked;
 
 #[derive(DekuRead, DekuWrite, Debug, Default, Clone, Copy)]
+#[deku(ctx = "_: deku::ctx::Order", ctx_default = "deku::ctx::Order::Lsb0")]
 pub struct Xnum(f64);
 
 impl Deref for Xnum {

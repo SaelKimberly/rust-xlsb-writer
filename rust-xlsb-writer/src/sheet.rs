@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginColInfos, BrtBeginMergeCells, BrtBeginSheet, BrtBeginSheetData, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
-    BrtEndColInfos, BrtEndMergeCells, BrtEndSheet, BrtEndSheetData, BrtMergeCell, BrtRowHdr,
-    BrtWsDim, Cell, UncheckedRfX, Xnum,
+    BrtBeginColInfos, BrtBeginMergeCells, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
+    BrtBeginWsViews, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk,
+    BrtColInfo, BrtColSpan, BrtEndColInfos, BrtEndMergeCells, BrtEndSheet, BrtEndSheetData,
+    BrtEndWsView, BrtEndWsViews, BrtMergeCell, BrtPane, BrtRowHdr, BrtSel, BrtWsDim, Cell,
+    UncheckedRfX, UncheckedSqRfX, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -39,6 +40,7 @@ pub fn write_sheet(
 
     push(out, &BrtBeginSheet::default())?;
     push(out, &dimension(sheet))?;
+    write_sheet_views(sheet, out)?;
 
     let columns = column_infos(sheet, style_indexes);
     if !columns.is_empty() {
@@ -136,6 +138,106 @@ pub fn write_sheet(
 
     push(out, &BrtEndSheet::default())?;
     Ok(())
+}
+
+fn write_sheet_views(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let view = sheet.view();
+    if view.is_default() {
+        return Ok(());
+    }
+
+    let active_pane = active_pane(view.freeze, view.selection);
+    let (rw_top, col_left) = view
+        .top_left
+        .map_or((0, 0), |(row, col)| (row, u32::from(col)));
+    push(out, &BrtBeginWsViews::default())?;
+    push(
+        out,
+        &BrtBeginWsView {
+            fDspGrid: true,
+            fDspRwCol: true,
+            fDspZeros: true,
+            fDspGuts: true,
+            fDefaultHdr: true,
+            rwTop: rw_top,
+            colLeft: col_left,
+            icvHdr: 0x40,
+            wScale: 100,
+            wScaleNormal: 100,
+            ..BrtBeginWsView::default()
+        },
+    )?;
+
+    if let Some((row, col)) = view.freeze
+        && (row > 0 || col > 0)
+    {
+        let (top_row, left_col) = if row > 0 && col > 0 {
+            (row, u32::from(col))
+        } else if row > 0 {
+            (row, 0)
+        } else {
+            (0, u32::from(col))
+        };
+        push(
+            out,
+            &BrtPane {
+                xnumXSplit: Xnum::from(f64::from(row)),
+                xnumYSplit: Xnum::from(f64::from(col)),
+                rwTop: top_row,
+                colLeft: left_col,
+                pnnAct: active_pane,
+                fFrozen: false,
+                fFrozenNoSplit: true,
+            },
+        )?;
+    }
+
+    if let Some(range) = view.selection {
+        push(
+            out,
+            &BrtSel {
+                pnn: active_pane,
+                rwAct: range.rwFirst,
+                colAct: range.colFirst,
+                dwRfxAct: 0,
+                sqrfx: UncheckedSqRfX {
+                    crfx: 1,
+                    rgRefx: vec![range],
+                },
+            },
+        )?;
+    }
+
+    push(out, &BrtEndWsView::default())?;
+    push(out, &BrtEndWsViews::default())?;
+    Ok(())
+}
+
+fn active_pane(freeze: Option<(u32, u16)>, selection: Option<UncheckedRfX>) -> u32 {
+    const TOP_LEFT: u32 = 3;
+    const TOP_RIGHT: u32 = 1;
+    const BOTTOM_LEFT: u32 = 2;
+    const BOTTOM_RIGHT: u32 = 0;
+
+    let Some((freeze_row, freeze_col)) = freeze else {
+        return TOP_LEFT;
+    };
+    if freeze_row == 0 && freeze_col == 0 {
+        return TOP_LEFT;
+    }
+    let (row, col) = selection.map_or_else(
+        || (freeze_row, u32::from(freeze_col)),
+        |range| (range.rwFirst, range.colFirst),
+    );
+    let below = freeze_row > 0 && row >= freeze_row;
+    let right = freeze_col > 0 && col >= u32::from(freeze_col);
+
+    match (below, right) {
+        (true, true) => BOTTOM_RIGHT,
+        (true, false) => BOTTOM_LEFT,
+        (false, true) => TOP_RIGHT,
+        (false, false) => TOP_LEFT,
+    }
 }
 
 fn dimension(sheet: &Worksheet) -> BrtWsDim {
@@ -347,7 +449,8 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginMergeCells, BrtCellIsst, BrtCellRk, BrtColInfo, BrtMergeCell, BrtRowHdr,
+        BrtBeginMergeCells, BrtBeginWsView, BrtCellIsst, BrtCellRk, BrtColInfo, BrtMergeCell,
+        BrtPane, BrtRowHdr, BrtSel,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, SSTHolder, StyleRegistry};
 
@@ -371,6 +474,79 @@ mod tests {
             }
         }
         records
+    }
+
+    #[test]
+    fn freeze_and_selection_emit_view_records() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_freeze_panes(2, 3).expect("freeze");
+        sheet.set_selection(3, 1, 5, 4).expect("selection");
+        sheet.set_top_left_cell(4, 5).expect("top left");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        let views = records::<BrtBeginWsView>(&out);
+        assert_eq!(views.len(), 1);
+        assert_eq!((views[0].rwTop, views[0].colLeft), (4, 5));
+        assert!(views[0].fDspGrid);
+
+        let panes = records::<BrtPane>(&out);
+        assert_eq!(panes.len(), 1);
+        assert_eq!(*panes[0].xnumXSplit, 2.0);
+        assert_eq!(*panes[0].xnumYSplit, 3.0);
+        assert_eq!((panes[0].rwTop, panes[0].colLeft), (2, 3));
+        assert_eq!(panes[0].pnnAct, 2);
+        assert!(panes[0].fFrozenNoSplit);
+
+        let selections = records::<BrtSel>(&out);
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].pnn, 2);
+        assert_eq!((selections[0].rwAct, selections[0].colAct), (3, 1));
+        assert_eq!(selections[0].sqrfx.crfx, 1);
+        assert_eq!(
+            selections[0].sqrfx.rgRefx[0],
+            UncheckedRfX {
+                rwFirst: 3,
+                rwLast: 5,
+                colFirst: 1,
+                colLast: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn active_pane_follows_freeze_and_selection() {
+        let range = |row, col| UncheckedRfX {
+            rwFirst: row,
+            rwLast: row,
+            colFirst: col,
+            colLast: col,
+        };
+
+        assert_eq!(active_pane(None, None), 3);
+        assert_eq!(active_pane(Some((2, 3)), Some(range(0, 0))), 3);
+        assert_eq!(active_pane(Some((2, 3)), Some(range(3, 1))), 2);
+        assert_eq!(active_pane(Some((2, 3)), Some(range(1, 4))), 1);
+        assert_eq!(active_pane(Some((2, 3)), Some(range(3, 4))), 0);
+        assert_eq!(active_pane(Some((2, 0)), Some(range(1, 0))), 3);
+        assert_eq!(active_pane(Some((2, 0)), Some(range(2, 0))), 2);
+        assert_eq!(active_pane(Some((0, 3)), Some(range(0, 2))), 3);
+        assert_eq!(active_pane(Some((0, 3)), Some(range(0, 4))), 1);
+    }
+
+    #[test]
+    fn default_sheet_view_emits_no_view_records() {
+        let sheet = Worksheet::new("Sheet1".to_owned());
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        assert_eq!(records::<BrtBeginWsView>(&out).len(), 0);
+        assert_eq!(records::<BrtPane>(&out).len(), 0);
+        assert_eq!(records::<BrtSel>(&out).len(), 0);
     }
 
     #[test]

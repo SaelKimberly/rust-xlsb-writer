@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use rust_xlsb_core::prelude::UncheckedRfX;
+
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
 use crate::{Error, Format, Result};
 
@@ -43,6 +45,19 @@ pub struct MergeRange {
     pub(crate) last_col: u16,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SheetView {
+    pub(crate) freeze: Option<(RowNum, ColNum)>,
+    pub(crate) selection: Option<UncheckedRfX>,
+    pub(crate) top_left: Option<(RowNum, ColNum)>,
+}
+
+impl SheetView {
+    pub(crate) const fn is_default(&self) -> bool {
+        self.freeze.is_none() && self.selection.is_none() && self.top_left.is_none()
+    }
+}
+
 /// One worksheet with sparse cells, row options, and column options.
 pub struct Worksheet {
     name: String,
@@ -52,6 +67,7 @@ pub struct Worksheet {
     formats: Vec<Format>,
     format_ids: HashMap<Format, u32>,
     merged_ranges: Vec<MergeRange>,
+    view: SheetView,
 }
 
 impl Worksheet {
@@ -64,6 +80,7 @@ impl Worksheet {
             formats: Vec::new(),
             format_ids: HashMap::new(),
             merged_ranges: Vec::new(),
+            view: SheetView::default(),
         }
     }
 
@@ -596,6 +613,64 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Freezes rows above and columns left of a cell.
+    ///
+    /// A zero row or column freezes only the other axis. Calling again
+    /// replaces the previous freeze.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row or column is out of range.
+    pub fn set_freeze_panes(&mut self, row: RowNum, col: ColNum) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        self.view.freeze = Some((row, col));
+        Ok(self)
+    }
+
+    /// Sets the selected cell range.
+    ///
+    /// Calling again replaces the previous selection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when the range is reversed, or
+    /// [`Error::RowColumnLimit`] when it is out of bounds.
+    pub fn set_selection(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+    ) -> Result<&mut Self> {
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+        self.view.selection = Some(UncheckedRfX {
+            rwFirst: first_row,
+            rwLast: last_row,
+            colFirst: u32::from(first_col),
+            colLast: u32::from(last_col),
+        });
+        Ok(self)
+    }
+
+    /// Sets the first cell displayed in the top-left corner of the sheet view.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row or column is out of range.
+    pub fn set_top_left_cell(&mut self, row: RowNum, col: ColNum) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        self.view.top_left = Some((row, col));
+        Ok(self)
+    }
+
     /// Applies a format to one cell without changing its value.
     ///
     /// A missing cell becomes a formatted blank cell.
@@ -807,6 +882,10 @@ impl Worksheet {
         &self.merged_ranges
     }
 
+    pub(crate) const fn view(&self) -> &SheetView {
+        &self.view
+    }
+
     fn intern_format(&mut self, format: &Format) -> u32 {
         if let Some(&index) = self.format_ids.get(format) {
             return index;
@@ -974,6 +1053,54 @@ mod tests {
                 .and_then(|options| options.format),
             Some(0)
         );
+    }
+
+    #[test]
+    fn stores_and_replaces_sheet_view_state() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_freeze_panes(2, 3).expect("freeze");
+        worksheet.set_selection(1, 1, 2, 4).expect("selection");
+        worksheet.set_top_left_cell(4, 5).expect("top left");
+
+        assert_eq!(worksheet.view().freeze, Some((2, 3)));
+        assert_eq!(worksheet.view().top_left, Some((4, 5)));
+        assert_eq!(
+            worksheet.view().selection,
+            Some(UncheckedRfX {
+                rwFirst: 1,
+                rwLast: 2,
+                colFirst: 1,
+                colLast: 4,
+            })
+        );
+
+        worksheet.set_freeze_panes(1, 0).expect("replace");
+        worksheet.set_selection(0, 0, 0, 1).expect("replace");
+        worksheet.set_top_left_cell(0, 1).expect("replace");
+        assert_eq!(worksheet.view().freeze, Some((1, 0)));
+        assert_eq!(worksheet.view().top_left, Some((0, 1)));
+    }
+
+    #[test]
+    fn rejects_invalid_view_state_without_mutation() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.set_freeze_panes(MAX_ROW + 1, 0),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.set_top_left_cell(0, MAX_COL + 1),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.set_selection(2, 0, 1, 0),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.set_selection(0, 0, MAX_ROW + 1, 0),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(worksheet.view().is_default());
     }
 
     #[test]
