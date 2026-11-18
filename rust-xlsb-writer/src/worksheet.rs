@@ -293,8 +293,24 @@ pub struct Worksheet {
     hyperlinks: BTreeMap<(RowNum, ColNum), Url>,
 }
 
+impl Default for Worksheet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Worksheet {
-    pub(crate) fn new(name: String) -> Self {
+    /// Creates an empty worksheet with no name.
+    ///
+    /// The worksheet is not attached to a workbook. Write to it freely, then
+    /// add it with [`Workbook::push_worksheet`](crate::Workbook::push_worksheet),
+    /// which assigns a default `SheetN` name if none was set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::new_named(String::new())
+    }
+
+    pub(crate) fn new_named(name: String) -> Self {
         Self {
             name,
             cells: BTreeMap::new(),
@@ -2387,7 +2403,7 @@ mod tests {
 
     #[test]
     fn writes_cells_and_styles() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .write_with_format(0, 0, "hello", &Format::new().set_bold())
             .expect("writes");
@@ -2405,7 +2421,7 @@ mod tests {
 
     #[test]
     fn rejects_bounds_and_long_strings() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.write(MAX_ROW + 1, 0, 1_i32),
             Err(Error::RowColumnLimit)
@@ -2422,7 +2438,7 @@ mod tests {
 
     #[test]
     fn later_column_width_overrides_earlier_width() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_column_width(1, 10.0).expect("width");
         worksheet.set_column_width(1, 20.0).expect("width");
 
@@ -2437,7 +2453,7 @@ mod tests {
 
     #[test]
     fn sets_row_and_column_formats() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let format = Format::new().set_bold();
         worksheet.set_row_format(0, &format).expect("row");
         worksheet.set_column_format(0, &format).expect("column");
@@ -2461,7 +2477,7 @@ mod tests {
 
     #[test]
     fn stores_and_replaces_sheet_view_state() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_freeze_panes(2, 3).expect("freeze");
         worksheet.set_selection(1, 1, 2, 4).expect("selection");
         worksheet.set_top_left_cell(4, 5).expect("top left");
@@ -2487,7 +2503,7 @@ mod tests {
 
     #[test]
     fn stores_view_display_options_and_freeze_top_cell() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .set_zoom(150)
             .set_screen_gridlines(false)
@@ -2508,7 +2524,7 @@ mod tests {
 
     #[test]
     fn pixel_dimensions_convert_and_zero_hides() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_row_height_pixels(3, 40).expect("row pixels");
         worksheet
             .set_column_width_pixels(4, 64)
@@ -2585,7 +2601,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_freeze_top_cell_without_mutation() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.set_freeze_panes_top_cell(MAX_ROW + 1, 0),
             Err(Error::RowColumnLimit)
@@ -2599,7 +2615,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_view_state_without_mutation() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.set_freeze_panes(MAX_ROW + 1, 0),
             Err(Error::RowColumnLimit)
@@ -2621,7 +2637,7 @@ mod tests {
 
     #[test]
     fn header_footer_aliases_and_flags_are_stored() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .set_header("&L&[Tab]&C&[Page] of &[Pages]")
             .set_footer("&R&[File] &[Date] &[Time] &[Path] &[Picture]")
@@ -2643,7 +2659,7 @@ mod tests {
 
     #[test]
     fn header_footer_length_is_checked_after_expansion() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let maximum = "x".repeat(255);
         worksheet.set_header(maximum.clone());
         assert_eq!(
@@ -2663,7 +2679,7 @@ mod tests {
 
     #[test]
     fn page_breaks_sort_deduplicate_and_clear() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .set_page_breaks(&[40, 20, 20, 0, 60])
             .expect("horizontal");
@@ -2683,7 +2699,7 @@ mod tests {
 
     #[test]
     fn page_break_limits_do_not_mutate_state() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_page_breaks(&[20]).expect("horizontal");
 
         assert!(matches!(
@@ -2709,7 +2725,7 @@ mod tests {
 
     #[test]
     fn validates_sheet_names() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(worksheet.set_name("Data").is_ok());
         assert!(matches!(
             worksheet.set_name(""),
@@ -2727,7 +2743,7 @@ mod tests {
 
     #[test]
     fn formatted_row_and_column_writes_apply_one_format() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let format = Format::new().set_bold();
         worksheet
             .write_row_with_format(0, 0, [1_i32, 2_i32], &format)
@@ -2749,7 +2765,7 @@ mod tests {
 
     #[test]
     fn writes_row_and_column_matrices() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .write_row_matrix(0, 0, [[1_i32, 2_i32], [3_i32, 4_i32]])
             .expect("row matrix");
@@ -2778,7 +2794,7 @@ mod tests {
 
     #[test]
     fn cell_and_range_format_edits_preserve_or_clear_data() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let bold = Format::new().set_bold();
         let italic = Format::new().set_italic();
         worksheet.write(0, 0, 42_i32).expect("writes");
@@ -2828,7 +2844,7 @@ mod tests {
 
     #[test]
     fn hidden_row_and_column_options_are_reversible() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_row_hidden(0).expect("hide row");
         worksheet.set_column_hidden(1).expect("hide col");
         worksheet.set_column_range_hidden(2, 3).expect("hide cols");
@@ -2846,7 +2862,7 @@ mod tests {
 
     #[test]
     fn merge_range_writes_string_and_formatted_blanks() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let format = Format::new().set_bold();
         worksheet
             .merge_range(0, 0, 1, 2, "Merged", &format)
@@ -2876,7 +2892,7 @@ mod tests {
 
     #[test]
     fn merge_range_rejects_single_cell_and_overlap() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.merge_range(0, 0, 0, 0, "one", &Format::new()),
             Err(Error::MergeRangeSingleCell)
@@ -2892,7 +2908,7 @@ mod tests {
 
     #[test]
     fn rejects_reversed_range_format() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.set_range_format(2, 0, 1, 0, &Format::new()),
             Err(Error::RowColumnOrder)
@@ -2901,7 +2917,7 @@ mod tests {
 
     #[test]
     fn write_row_keeps_the_cells_before_the_failure() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.write_row(0, MAX_COL, [1_i32, 2_i32]),
             Err(Error::RowColumnLimit)
@@ -2918,7 +2934,7 @@ mod tests {
 
     #[test]
     fn rejects_reversed_column_range() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             worksheet.set_column_range_width(2, 1, 10.0),
             Err(Error::RowColumnOrder)
@@ -2927,7 +2943,7 @@ mod tests {
 
     #[test]
     fn tab_state_follows_visibility_rules() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_active(true);
         assert!(worksheet.is_active());
         assert!(worksheet.view().selected);
@@ -2954,7 +2970,7 @@ mod tests {
 
     #[test]
     fn tab_color_ignores_invalid_values_and_clears_defaults() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_tab_color(Color::Red);
         assert_eq!(worksheet.tab_color(), Some(Color::Red));
 
@@ -2970,7 +2986,7 @@ mod tests {
 
     #[test]
     fn non_finite_numbers_become_display_strings() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.write(0, 0, f64::NAN).expect("nan");
         worksheet.write(1, 0, f64::INFINITY).expect("infinity");
         worksheet
@@ -3005,7 +3021,7 @@ mod tests {
 
     #[test]
     fn custom_non_finite_strings_preserve_formats() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_nan_value("NaN");
         worksheet.set_infinity_value("Infinity");
         worksheet.set_neg_infinity_value("NegInfinity");
@@ -3045,7 +3061,7 @@ mod tests {
 
     #[test]
     fn non_finite_display_strings_obey_the_string_limit() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_nan_value("x".repeat(MAX_STRING_UTF16 + 1));
 
         assert!(matches!(
@@ -3056,7 +3072,7 @@ mod tests {
 
     #[test]
     fn range_border_positions_follow_the_rectangle() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let cell_format = Format::new()
             .set_bold()
             .set_background_color(Color::Yellow)
@@ -3117,7 +3133,7 @@ mod tests {
         let medium = || BorderType::Thin;
         let none = || BorderType::None;
 
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .set_range_format_with_border(1, 1, 1, 1, &Format::new(), &border)
             .expect("cell");
@@ -3140,7 +3156,7 @@ mod tests {
 
     #[test]
     fn range_border_rejects_invalid_ranges_before_mutating() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let format = Format::new();
         let border = Format::new().set_border(FormatBorder::Thin);
 
@@ -3157,7 +3173,7 @@ mod tests {
 
     #[test]
     fn print_area_validates_and_clears_the_full_sheet() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_print_area(1, 2, 3, 4).expect("area");
         assert_eq!(worksheet.print_area(), Some((1, 2, 3, 4)));
 
@@ -3179,7 +3195,7 @@ mod tests {
 
     #[test]
     fn repeat_rows_and_columns_are_independent() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_repeat_rows(0, 1).expect("rows");
         worksheet.set_repeat_columns(1, 2).expect("columns");
         assert_eq!(worksheet.repeat_rows(), Some((0, 1)));
@@ -3203,7 +3219,7 @@ mod tests {
 
     #[test]
     fn hyperlinks_validate_before_storing() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
 
         assert!(matches!(
             worksheet.write_url(0, 0, "not a url"),
@@ -3222,7 +3238,7 @@ mod tests {
 
     #[test]
     fn hyperlink_variants_store_text_tooltip_and_format() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet
             .write_url_with_options(0, 0, "https://example.com", "Example", "Open example", None)
             .expect("url");
@@ -3273,7 +3289,7 @@ mod tests {
 
     #[test]
     fn default_row_height_validates_and_converts_pixels() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         worksheet.set_default_row_height(20.0).expect("height");
         assert_eq!(worksheet.default_row_height(), Some(20.0));
 

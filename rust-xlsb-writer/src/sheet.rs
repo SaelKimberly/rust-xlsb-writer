@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn freeze_and_selection_emit_view_records() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_freeze_panes(2, 3).expect("freeze");
         sheet.set_selection(3, 1, 5, 4).expect("selection");
         sheet.set_top_left_cell(4, 5).expect("top left");
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn view_options_and_freeze_top_cell_serialize() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_freeze_panes(1, 2).expect("freeze");
         sheet.set_freeze_panes_top_cell(3, 4).expect("top cell");
         sheet.set_zoom(175);
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn hidden_zeroes_disable_the_zero_display_flag() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_hidden_zeroes(true);
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -835,7 +835,7 @@ mod tests {
     #[test]
     fn view_modes_emit_xlview_and_ruler() {
         let sst = SSTHolder::create_in_memory().expect("sst");
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
 
         sheet.set_view_page_layout();
         let mut out = Vec::new();
@@ -862,7 +862,7 @@ mod tests {
     #[test]
     fn hide_unused_rows_sets_zero_height() {
         let sst = SSTHolder::create_in_memory().expect("sst");
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.hide_unused_rows(true);
         let mut out = Vec::new();
         write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
@@ -880,7 +880,7 @@ mod tests {
         assert!(formats[0].fUnsynced);
         assert_eq!(formats[0].miyDefRwHeight, 600);
 
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.hide_unused_rows(true);
         sheet.hide_unused_rows(false);
         let mut out = Vec::new();
@@ -891,7 +891,7 @@ mod tests {
     #[test]
     fn autofit_width_sets_best_fit_and_splits_spans() {
         let sst = SSTHolder::create_in_memory().expect("sst");
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_column_autofit_width(0, 100).expect("autofit");
         sheet.set_column_autofit_width(1, 100).expect("autofit");
         sheet
@@ -915,7 +915,7 @@ mod tests {
         let columns = records::<BrtColInfo>(&out);
         assert!(!columns[0].fBestFit);
 
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_column_autofit_width(0, 0).expect("zero hides");
         let mut out = Vec::new();
         write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
@@ -947,7 +947,7 @@ mod tests {
 
     #[test]
     fn tab_color_and_default_height_emit_sheet_properties() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_tab_color(crate::Color::Red);
         sheet.set_default_row_height(30.0).expect("height");
         sheet.set_selected(true);
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn default_sheet_view_emits_no_view_records() {
-        let sheet = Worksheet::new("Sheet1".to_owned());
+        let sheet = Worksheet::new_named("Sheet1".to_owned());
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
@@ -996,7 +996,7 @@ mod tests {
 
     #[test]
     fn header_footer_serializes_text_and_flags() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_landscape();
         sheet.set_header("&L&[Page]");
         sheet.set_footer("&R&[File]");
@@ -1026,7 +1026,7 @@ mod tests {
 
     #[test]
     fn header_footer_preserves_non_ascii_text() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_header("&CПривет 😀");
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -1043,7 +1043,7 @@ mod tests {
 
     #[test]
     fn page_breaks_serialize_with_full_span() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_header("report");
         sheet.set_page_breaks(&[40, 20, 20]).expect("horizontal");
         sheet.set_vertical_page_breaks(&[5, 3]).expect("vertical");
@@ -1096,7 +1096,7 @@ mod tests {
 
     #[test]
     fn page_setup_and_print_options_serialize_in_order() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_landscape();
         sheet.set_paper_size(9);
         sheet.set_page_order(false);
@@ -1154,7 +1154,7 @@ mod tests {
 
     #[test]
     fn print_scale_and_fit_are_mutually_exclusive() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_print_scale(50);
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -1186,7 +1186,7 @@ mod tests {
 
     #[test]
     fn invalid_print_values_are_ignored() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_print_scale(9);
         sheet.set_print_fit_to_pages(32_768, 2);
         sheet.set_print_first_page_number(32_768);
@@ -1208,7 +1208,7 @@ mod tests {
 
     #[test]
     fn print_black_white_and_draft_emit_page_setup() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_print_black_and_white(true);
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -1231,7 +1231,7 @@ mod tests {
 
     #[test]
     fn fit_to_pages_sets_wsp_prop_flag() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_print_fit_to_pages(1, 2);
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -1250,7 +1250,7 @@ mod tests {
 
     #[test]
     fn restoring_defaults_removes_print_records() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_landscape();
         sheet.set_portrait();
         sheet.set_margins(0.7, 0.7, 0.75, 0.75, 0.3, 0.3);
@@ -1268,7 +1268,7 @@ mod tests {
 
     #[test]
     fn emits_column_widths_row_heights_and_cell_records() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_column_width(0, 22.0).expect("width");
         sheet.set_column_range_width(1, 2, 10.0).expect("width");
         sheet.set_row_height(0, 30.0).expect("height");
@@ -1300,7 +1300,7 @@ mod tests {
 
     #[test]
     fn coalesces_columns_and_splits_on_override() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_column_range_width(0, 3, 10.0).expect("width");
         sheet.set_column_width(1, 20.0).expect("override");
         let sst = SSTHolder::create_in_memory().expect("sst");
@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn row_format_sets_ghost_dirty_and_style() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         let format = Format::new().set_bold();
         sheet.set_row_format(0, &format).expect("row");
         let mut registry = StyleRegistry::new();
@@ -1335,7 +1335,7 @@ mod tests {
 
     #[test]
     fn effective_style_prefers_cell_then_row_then_column() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         let column_format = Format::new().set_text_wrap();
         let row_format = Format::new().set_italic();
         let cell_format = Format::new().set_bold();
@@ -1366,7 +1366,7 @@ mod tests {
 
     #[test]
     fn full_width_row_stays_within_span_limit() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.write(0, 0, 1_i32).expect("writes");
         sheet.write(0, MAX_COL, 2_i32).expect("writes");
         for block in 0_u16..16 {
@@ -1398,7 +1398,7 @@ mod tests {
 
     #[test]
     fn hidden_rows_and_columns_emit_flags() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.write(0, 0, 1_i32).expect("writes");
         sheet.write(0, 1, 2_i32).expect("writes");
         sheet.set_row_hidden(0).expect("hide row");
@@ -1422,7 +1422,7 @@ mod tests {
 
     #[test]
     fn hidden_and_formatted_columns_keep_the_user_set_flag() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_column_hidden(0).expect("hide");
         let format = Format::new().set_bold();
         sheet.set_column_format(1, &format).expect("format");
@@ -1444,7 +1444,7 @@ mod tests {
 
     #[test]
     fn unhidden_row_restores_default_height() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.write(0, 0, 1_i32).expect("writes");
         sheet.set_row_hidden(0).expect("hide row");
         sheet.set_row_unhidden(0).expect("unhide row");
@@ -1460,7 +1460,7 @@ mod tests {
 
     #[test]
     fn grouped_rows_set_levels_and_worksheet_maximum() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.write(0, 0, "head").expect("head");
         sheet.write(1, 0, 1_i32).expect("row 1");
         sheet.write(2, 0, 2_i32).expect("row 2");
@@ -1490,7 +1490,7 @@ mod tests {
 
     #[test]
     fn outline_levels_share_sheet_format_with_default_height() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.set_default_row_height(24.0).expect("height");
         sheet.group_columns_collapsed(2, 3).expect("group");
         let sst = SSTHolder::create_in_memory().expect("sst");
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn collapsed_rows_hide_and_mark_the_following_row() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.write(1, 0, 1_i32).expect("row 1");
         sheet.write(2, 0, 2_i32).expect("row 2");
         sheet.group_rows_collapsed(1, 2).expect("group");
@@ -1532,7 +1532,7 @@ mod tests {
 
     #[test]
     fn grouped_columns_split_by_level_and_collapse() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.group_columns(0, 2).expect("outer group");
         sheet.group_columns(1, 1).expect("inner group");
         sheet
@@ -1568,7 +1568,7 @@ mod tests {
 
     #[test]
     fn grouped_columns_at_the_same_level_coalesce() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.group_columns(0, 3).expect("group");
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -1584,7 +1584,7 @@ mod tests {
 
     #[test]
     fn grouping_rejects_depth_order_and_limits_without_partial_state() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.group_rows(0, 1).expect("level 1");
         for _ in 0..6 {
             sheet.group_rows(0, 1).expect("nested");
@@ -1607,7 +1607,7 @@ mod tests {
 
     #[test]
     fn collapsed_groups_at_the_sheet_edge_skip_the_marker() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet
             .group_rows_collapsed(MAX_ROW, MAX_ROW)
             .expect("last row");
@@ -1633,7 +1633,7 @@ mod tests {
 
     #[test]
     fn outline_symbols_set_ws_prop_summary_flags() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.group_rows(1, 2).expect("rows");
         sheet.group_columns(1, 2).expect("columns");
         sheet.group_symbols_above(true);
@@ -1652,7 +1652,7 @@ mod tests {
 
     #[test]
     fn grouping_keeps_default_workbook_output_unchanged() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet.write(0, 0, 1_i32).expect("writes");
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
@@ -1665,7 +1665,7 @@ mod tests {
 
     #[test]
     fn merge_range_emits_merge_records() {
-        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
         sheet
             .merge_range(0, 0, 1, 2, "Merged", &Format::new())
             .expect("merge");

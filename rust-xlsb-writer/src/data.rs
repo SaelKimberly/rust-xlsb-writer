@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn writes_integer_and_number_cells() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         42_i32.write(&mut worksheet, 0, 0).expect("writes");
         12.5_f64.write(&mut worksheet, 0, 1).expect("writes");
 
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn writes_strings_booleans_and_blank_options() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         "hello".write(&mut worksheet, 0, 0).expect("writes");
         true.write(&mut worksheet, 0, 1).expect("writes");
         Option::<i32>::None
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn writes_result_ok_and_err_values() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         Ok::<i32, &str>(7)
             .write(&mut worksheet, 0, 0)
             .expect("writes");
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn writes_owned_and_borrowed_dates() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let date = NaiveDate::from_ymd_opt(2026, 11, 18).expect("date");
         date.write(&mut worksheet, 0, 0).expect("writes");
         (&date).write(&mut worksheet, 0, 1).expect("writes");
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn rejects_u64_above_i64() {
-        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         assert!(matches!(
             u64::MAX.write(&mut worksheet, 0, 0),
             Err(Error::ValueNotRepresentable(_))

@@ -41,7 +41,7 @@ the breadth gap.
 
 | Area | Current capability |
 |---|---|
-| Workbook | `new`, `add_worksheet`, `worksheet_from_index`, `save`, `save_to_buffer`, `save_to_writer` |
+| Workbook | `new`, `add_worksheet`, standalone `Worksheet::new` with `push_worksheet`, lookup by index or exact name, collection access, `save`, `save_to_buffer`, `save_to_writer` |
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>`, non-finite display strings |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
@@ -54,8 +54,8 @@ the breadth gap.
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
-| Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 173 core + 129 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
+| Verification | 173 core + 132 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -71,9 +71,9 @@ Status meanings:
 
 | `rust_xlsxwriter` capability | Current | Gap |
 |---|---|---|
-| `new`, `add_worksheet`, `worksheet_from_index`, `save*` | Supported | — |
-| `worksheet_from_name` | Missing | Name lookup |
-| `worksheets`, `worksheets_mut`, `push_worksheet` | Missing | Worksheet collection access |
+| `new`, `add_worksheet`, `worksheet_from_index`, `worksheet_from_name`, `save*` | Supported | — |
+| `Worksheet::new`, `push_worksheet` | Supported | Standalone worksheets attach later |
+| `worksheets`, `worksheets_mut` | Supported | Worksheet collection access |
 | `add_worksheet_with_constant_memory` | Missing | Streaming writer |
 | `add_worksheet_with_low_memory` | Missing | Low-memory writer |
 | `new_worksheet_with_constant_memory`, `new_worksheet_with_low_memory` | Missing | Detached worksheet constructors |
@@ -433,7 +433,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 173 core + 129 writer unit tests and 6 doctests; calamine
+- Test evidence: 173 core + 132 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on

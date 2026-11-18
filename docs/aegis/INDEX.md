@@ -20,6 +20,7 @@
 - [Cell display strings and range border formatting](plans/2026-11-18-cell-display-and-range-border-formatting.md)
 - [Print areas and print titles](plans/2026-11-18-print-areas-and-print-titles.md)
 - [Hyperlinks](plans/2026-11-18-hyperlinks.md)
+- [Worksheet collection access](plans/2026-11-18-worksheet-collection-access.md)
 
 ## Analysis
 

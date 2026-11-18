@@ -37,6 +37,10 @@ pub enum Error {
     #[error("worksheet index out of range: {0}")]
     WorksheetIndex(usize),
 
+    /// A worksheet name does not exist in the workbook.
+    #[error("unknown worksheet name: {0}")]
+    UnknownWorksheetNameOrIndex(String),
+
     /// A worksheet has more than 1023 horizontal or vertical page breaks.
     #[error("a worksheet allows at most 1023 page breaks")]
     TooManyPageBreaks,
