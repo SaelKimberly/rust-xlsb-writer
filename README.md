@@ -37,7 +37,7 @@ Date, when stored in XLSB format, occupy exactly four bytes, while maintaining d
 The development of this project has several key milestones:
 
 - Full support for basic low-level read and write
-- Basic support for cell styling, support for merging cells
+- ✅ Basic support for cell styling and merging cells
 - Support for recording in batches in Apache Arrow format
 - Support for multi-threading when recording in batches
 - Full support for cell styling

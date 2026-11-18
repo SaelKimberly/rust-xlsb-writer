@@ -148,3 +148,16 @@ fn styles_deduplicate_and_default_font_is_calibri() {
     );
     assert_eq!(font_records[0].dyHeight, 220);
 }
+
+#[test]
+fn merged_range_keeps_top_left_value() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .merge_range(0, 0, 1, 2, "Merged", &Format::new().set_bold())
+        .expect("merge");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::String("Merged".to_owned())));
+}

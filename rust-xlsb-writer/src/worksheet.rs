@@ -35,6 +35,14 @@ pub struct ColumnOptions {
     pub(crate) hidden: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeRange {
+    pub(crate) first_row: u32,
+    pub(crate) first_col: u16,
+    pub(crate) last_row: u32,
+    pub(crate) last_col: u16,
+}
+
 /// One worksheet with sparse cells, row options, and column options.
 pub struct Worksheet {
     name: String,
@@ -43,6 +51,7 @@ pub struct Worksheet {
     columns: BTreeMap<u16, ColumnOptions>,
     formats: Vec<Format>,
     format_ids: HashMap<Format, u32>,
+    merged_ranges: Vec<MergeRange>,
 }
 
 impl Worksheet {
@@ -54,6 +63,7 @@ impl Worksheet {
             columns: BTreeMap::new(),
             formats: Vec::new(),
             format_ids: HashMap::new(),
+            merged_ranges: Vec::new(),
         }
     }
 
@@ -695,6 +705,71 @@ impl Worksheet {
         self
     }
 
+    /// Merges a rectangular range and writes a string into its top-left cell.
+    ///
+    /// The rest of the range becomes formatted blanks. Overlapping ranges and
+    /// single-cell ranges are rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] for a reversed range,
+    /// [`Error::RowColumnLimit`] for out-of-bounds coordinates,
+    /// [`Error::MergeRangeSingleCell`] for a one-cell range, or
+    /// [`Error::MergeRangeOverlaps`] when the range intersects an existing
+    /// merge.
+    pub fn merge_range(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        string: &str,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+        if first_row == last_row && first_col == last_col {
+            return Err(Error::MergeRangeSingleCell);
+        }
+
+        let range = MergeRange {
+            first_row,
+            first_col,
+            last_row,
+            last_col,
+        };
+        if self
+            .merged_ranges
+            .iter()
+            .any(|existing| ranges_overlap(*existing, range))
+        {
+            return Err(Error::MergeRangeOverlaps);
+        }
+
+        let format = self.intern_format(format);
+        self.store_with_index(
+            first_row,
+            first_col,
+            CellData::String(string.to_owned()),
+            Some(format),
+        )?;
+        for col in first_col + 1..=last_col {
+            self.store_with_index(first_row, col, CellData::Blank, Some(format))?;
+        }
+        for row in first_row + 1..=last_row {
+            for col in first_col..=last_col {
+                self.store_with_index(row, col, CellData::Blank, Some(format))?;
+            }
+        }
+        self.merged_ranges.push(range);
+        Ok(self)
+    }
+
     pub(crate) fn store(
         &mut self,
         row: RowNum,
@@ -702,6 +777,18 @@ impl Worksheet {
         data: CellData,
         format: Option<&Format>,
     ) -> Result<&mut Self> {
+        let format = format.map(|format| self.intern_format(format));
+        self.store_with_index(row, col, data, format)?;
+        Ok(self)
+    }
+
+    fn store_with_index(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        data: CellData,
+        format: Option<u32>,
+    ) -> Result<()> {
         Self::check_row(row)?;
         Self::check_col(col)?;
         if let CellData::String(text) = &data
@@ -709,12 +796,15 @@ impl Worksheet {
         {
             return Err(Error::StringTooLong);
         }
-        let format = format.map(|format| self.intern_format(format));
         self.cells
             .entry(row)
             .or_default()
             .insert(col, Cell { data, format });
-        Ok(self)
+        Ok(())
+    }
+
+    pub(crate) fn merged_ranges(&self) -> &[MergeRange] {
+        &self.merged_ranges
     }
 
     fn intern_format(&mut self, format: &Format) -> u32 {
@@ -778,6 +868,13 @@ pub fn validate_sheet_name(name: &str) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+const fn ranges_overlap(left: MergeRange, right: MergeRange) -> bool {
+    left.first_row <= right.last_row
+        && right.first_row <= left.last_row
+        && left.first_col <= right.last_col
+        && right.first_col <= left.last_col
 }
 
 fn validate_column_width(width: f64) -> Result<()> {
@@ -1014,6 +1111,52 @@ mod tests {
 
         worksheet.set_row_unhidden(5).expect("unhide absent row");
         assert!(worksheet.row_options().get(&5).is_none());
+    }
+
+    #[test]
+    fn merge_range_writes_string_and_formatted_blanks() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let format = Format::new().set_bold();
+        worksheet
+            .merge_range(0, 0, 1, 2, "Merged", &format)
+            .expect("merge");
+
+        assert_eq!(worksheet.formats().len(), 1);
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&0))
+                .map(|cell| (&cell.data, cell.format)),
+            Some((&CellData::String("Merged".to_owned()), Some(0)))
+        );
+        for (row, col) in [(0, 1), (0, 2), (1, 0), (1, 1), (1, 2)] {
+            assert_eq!(
+                worksheet
+                    .cells()
+                    .get(&row)
+                    .and_then(|row| row.get(&col))
+                    .map(|cell| (&cell.data, cell.format)),
+                Some((&CellData::Blank, Some(0)))
+            );
+        }
+        assert_eq!(worksheet.merged_ranges().len(), 1);
+    }
+
+    #[test]
+    fn merge_range_rejects_single_cell_and_overlap() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.merge_range(0, 0, 0, 0, "one", &Format::new()),
+            Err(Error::MergeRangeSingleCell)
+        ));
+        worksheet
+            .merge_range(0, 0, 1, 1, "first", &Format::new())
+            .expect("first merge");
+        assert!(matches!(
+            worksheet.merge_range(1, 1, 2, 2, "overlap", &Format::new()),
+            Err(Error::MergeRangeOverlaps)
+        ));
     }
 
     #[test]

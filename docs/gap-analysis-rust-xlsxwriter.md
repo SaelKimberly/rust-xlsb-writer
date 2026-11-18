@@ -19,8 +19,7 @@ and the three save entry points.
 It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
-2. **Cell-level structural features** — no merged ranges, hyperlinks, or rich
-   strings.
+2. **Cell-level structural features** — no hyperlinks or rich strings.
 3. **Worksheet layout and view** — no freeze panes, autofit, grouping, page
    setup, print settings, or sheet state.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
@@ -33,7 +32,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    `rust_decimal`, serde, or Polars adapters.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 6 `Workbook`, 41
+The current API surface is deliberately narrow: roughly 6 `Workbook`, 42
 `Worksheet`, and 47 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -46,13 +45,13 @@ the breadth gap.
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
-| Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format |
+| Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format, merged ranges |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 119 core + 52 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 123 core + 56 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -167,7 +166,7 @@ Status meanings:
 
 | Capability | Current | Gap |
 |---|---|---|
-| `merge_range` | Missing | Merged-cell records |
+| `merge_range` | Supported | — |
 | `insert_image`, `embed_image`, image offsets/fit-to-cell | Missing | Drawing/image parts |
 | `insert_background_image` | Missing | Worksheet background |
 | `insert_chart`, `insert_chart_with_offset` | Missing | Chart parts |
@@ -261,7 +260,6 @@ records or package parts that do not exist yet.
 | Feature area | Missing implementation |
 |---|---|
 | Formulas | Formula token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError`-class records, cached results, shared/array formula state |
-| Merged cells | Merge-cell records and range bookkeeping |
 | Hyperlinks | Hyperlink records, URL/relationship plumbing, tooltip/display options |
 | Rich strings | Rich-string cell records and run formatting |
 | Tables | Table parts, table styles, column metadata, autofilter integration |
@@ -292,7 +290,7 @@ objects.
 | Item | Status | Why | Size |
 |---|---|---|---|
 | `IntoExcelData for Result<T, E>` | ✅ P0a | Common fallible-data pattern; cheap parity win | S |
-| `merge_range` | Open | Very common layout feature; also unblocks styled reports | M |
+| `merge_range` | ✅ | Very common layout feature; also unblocks styled reports | M |
 | `write_url` + formatted variants | Open | Common in reports and dashboards | M |
 | Row/column hidden | ✅ P0a | Basic worksheet state; low record complexity | S |
 | Default row height, sheet visibility, tab color | Open | Basic worksheet state | S–M |
@@ -303,8 +301,9 @@ objects.
 
 **P0a status:** shipped `Result<T,E>`, formatted row/column writes, row/column
 matrices, cell/range format edits, clear operations, hidden rows/columns, and
-the format-only parity setters. **P0b** remains the formula engine; `merge_range`
-and hyperlinks are the next smaller P0 gaps.
+the format-only parity setters. **Merge status:** `merge_range` and the three
+MS-XLSB merge records are shipped. **P0b** remains the formula engine;
+hyperlinks and worksheet state are the next smaller P0 gaps.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
 cached results where supported; record-level tests assert formula/merge/link
@@ -411,9 +410,9 @@ spec:
 3. Cached `set_formula_result` values.
 4. Array and dynamic-array formulas.
 
-The smaller P0 gaps are `merge_range`, `write_url`, default row height, sheet
-visibility/tab color, and freeze panes/selection. Ship those as P0c if formula
-work needs to wait.
+The smaller P0 gaps are `write_url`, default row height, sheet visibility/tab
+color, and freeze panes/selection. Ship those as P0c if formula work needs to
+wait.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -425,7 +424,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 119 core + 52 writer unit tests and 6 doctests; calamine
+- Test evidence: 123 core + 56 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are
   architectural, not benchmarked.

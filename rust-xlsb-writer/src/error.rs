@@ -29,13 +29,21 @@ pub enum Error {
     #[error("row or column index is out of range")]
     RowColumnLimit,
 
-    /// A column range has its first column after its last column.
-    #[error("first column is greater than last column")]
+    /// A row/column range has its first index after its last index.
+    #[error("range start is after range end")]
     RowColumnOrder,
 
     /// A worksheet index is outside the workbook.
     #[error("worksheet index out of range: {0}")]
     WorksheetIndex(usize),
+
+    /// A merge range contains only one cell.
+    #[error("a merged range must contain more than one cell")]
+    MergeRangeSingleCell,
+
+    /// A merge range intersects an existing merged range.
+    #[error("merged ranges overlap")]
+    MergeRangeOverlaps,
 
     /// A cell string exceeds Excel's 32,767 UTF-16 code-unit limit.
     #[error("string exceeds 32,767 UTF-16 code units")]

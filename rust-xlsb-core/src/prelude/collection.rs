@@ -41,5 +41,6 @@ declare_simple_collections!(
     Fills,
     Fmts,
     Fonts,
+    MergeCells,
     Styles
 );

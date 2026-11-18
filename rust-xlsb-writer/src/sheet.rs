@@ -3,9 +3,10 @@
 use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginColInfos, BrtBeginSheet, BrtBeginSheetData, BrtCellBlank, BrtCellBool, BrtCellError,
-    BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtEndColInfos, BrtEndSheet,
-    BrtEndSheetData, BrtRowHdr, BrtWsDim, Cell, UncheckedRfX, Xnum,
+    BrtBeginColInfos, BrtBeginMergeCells, BrtBeginSheet, BrtBeginSheetData, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
+    BrtEndColInfos, BrtEndMergeCells, BrtEndSheet, BrtEndSheetData, BrtMergeCell, BrtRowHdr,
+    BrtWsDim, Cell, UncheckedRfX, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -107,6 +108,32 @@ pub fn write_sheet(
     }
 
     push(out, &BrtEndSheetData::default())?;
+
+    let merged = sheet.merged_ranges();
+    if !merged.is_empty() {
+        push(
+            out,
+            &BrtBeginMergeCells {
+                count: u32::try_from(merged.len())
+                    .map_err(|_| Error::ValueNotRepresentable("too many merged ranges"))?,
+            },
+        )?;
+        for range in merged {
+            push(
+                out,
+                &BrtMergeCell {
+                    rfx: UncheckedRfX {
+                        rwFirst: range.first_row,
+                        rwLast: range.last_row,
+                        colFirst: u32::from(range.first_col),
+                        colLast: u32::from(range.last_col),
+                    },
+                },
+            )?;
+        }
+        push(out, &BrtEndMergeCells::default())?;
+    }
+
     push(out, &BrtEndSheet::default())?;
     Ok(())
 }
@@ -319,7 +346,9 @@ mod tests {
     use std::io::BufReader;
 
     use deku::DekuContainerRead;
-    use rust_xlsb_core::prelude::{BrtCellIsst, BrtCellRk, BrtColInfo, BrtRowHdr};
+    use rust_xlsb_core::prelude::{
+        BrtBeginMergeCells, BrtCellIsst, BrtCellRk, BrtColInfo, BrtMergeCell, BrtRowHdr,
+    };
     use rust_xlsb_core::{BiffHead, CheckedBiff, SSTHolder, StyleRegistry};
 
     use super::*;
@@ -511,5 +540,27 @@ mod tests {
         let rows = records::<BrtRowHdr>(&out);
         assert!(!rows[0].fDyZero);
         assert_eq!(rows[0].miyRw, 300);
+    }
+
+    #[test]
+    fn merge_range_emits_merge_records() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet
+            .merge_range(0, 0, 1, 2, "Merged", &Format::new())
+            .expect("merge");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        let begins = records::<BrtBeginMergeCells>(&out);
+        assert_eq!(begins.len(), 1);
+        assert_eq!(begins[0].count, 1);
+        let cells = records::<BrtMergeCell>(&out);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].rfx.rwFirst, 0);
+        assert_eq!(cells[0].rfx.rwLast, 1);
+        assert_eq!(cells[0].rfx.colFirst, 0);
+        assert_eq!(cells[0].rfx.colLast, 2);
     }
 }
