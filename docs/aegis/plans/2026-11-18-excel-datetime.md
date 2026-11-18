@@ -30,9 +30,10 @@ type must also represent:
 - the 1899-12-31 serial zero.
 
 The serial math therefore mirrors the reference exactly, while the writer keeps
-one cell conversion path: `IntoExcelDateTime` returns `CellData::Number`, and
-`sheet.rs` encodes integral serials as Rk integers and fractions as reals
-through the existing `NumberPolicy`.
+one cell conversion path: `IntoExcelDateTime` returns
+`CellData::ExcelDateTime`, and `sheet.rs` encodes its serial as Rk integers or
+reals through the existing `NumberPolicy`. The variant also keeps autofit on
+the same 68-pixel temporal width as chrono dates.
 
 `parse_from_str` splits with an iterator and fixed scalars rather than
 collecting tokens into a `Vec`. Construction, serial conversion, and writing
@@ -150,7 +151,10 @@ Result: default builds pass 193 core + 201 writer unit tests and 7 doctests.
 fmt, and diff checks pass. Reviewer `ExcelDateTimeReview` found no blocking
 defects; it differentially checked serials across 1900-1903, 1999-2100, 2400,
 4000, and 9998-9999 with zero mismatches, and confirmed the parser allocates no
-token storage and date-only serials remain Rk integers.
+token storage and date-only serials remain Rk integers. A post-review advisory
+noted that mapping to `CellData::Number` gave autofit a numeric width; the final
+implementation keeps `CellData::ExcelDateTime`, so autofit uses the temporal
+width while serialization remains unchanged.
 
 ## Risks
 

@@ -732,6 +732,11 @@ fn push_cell(
         CellData::Date(value) => push_number(out, cell, &value.to_cell_value(ctx)?),
         CellData::Time(value) => push_number(out, cell, &value.to_cell_value(ctx)?),
         CellData::DateTime(value) => push_number(out, cell, &value.to_cell_value(ctx)?),
+        CellData::ExcelDateTime(value) => push_number(
+            out,
+            cell,
+            &CellValue::Number(ctx.store_f64(value.to_excel())),
+        ),
         CellData::Duration(value) => push_number(out, cell, &value.to_cell_value(ctx)?),
     }
 }

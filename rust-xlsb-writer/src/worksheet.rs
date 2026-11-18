@@ -2802,7 +2802,11 @@ fn autofit_cell_width(data: &CellData) -> u32 {
         CellData::Number(value) => 7 * display_len(*value),
         CellData::Bool(true) => 31,
         CellData::Bool(false) => 36,
-        CellData::Date(_) | CellData::Time(_) | CellData::DateTime(_) | CellData::Duration(_) => 68,
+        CellData::Date(_)
+        | CellData::Time(_)
+        | CellData::DateTime(_)
+        | CellData::ExcelDateTime(_)
+        | CellData::Duration(_) => 68,
         CellData::Blank | CellData::Error(_) => 0,
     }
 }
@@ -3978,10 +3982,14 @@ mod tests {
         worksheet
             .write(0, 2, chrono::NaiveDate::from_ymd_opt(2026, 11, 18).unwrap())
             .expect("date");
+        worksheet
+            .write(0, 3, crate::ExcelDateTime::from_ymd(2026, 11, 18).unwrap())
+            .expect("native date");
         worksheet.autofit();
         assert_eq!(worksheet.column_options()[&0].width, Some(76.0 / 7.0));
         assert_eq!(worksheet.column_options()[&1].width, Some(38.0 / 7.0));
         assert_eq!(worksheet.column_options()[&2].width, Some(10.0));
+        assert_eq!(worksheet.column_options()[&3].width, Some(10.0));
 
         let mut worksheet = Worksheet::new();
         worksheet.write(0, 0, "A").expect("header");

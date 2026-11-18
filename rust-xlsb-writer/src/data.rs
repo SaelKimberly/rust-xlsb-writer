@@ -21,6 +21,7 @@ pub enum CellData {
     Date(NaiveDate),
     Time(NaiveTime),
     DateTime(NaiveDateTime),
+    ExcelDateTime(ExcelDateTime),
     Duration(TimeDelta),
 }
 
@@ -368,13 +369,13 @@ impl IntoExcelDateTime for &DateTime<Utc> {
 
 impl IntoExcelDateTime for ExcelDateTime {
     fn into_cell_data(self) -> Result<CellData> {
-        Ok(CellData::Number(self.to_excel()))
+        Ok(CellData::ExcelDateTime(self))
     }
 }
 
 impl IntoExcelDateTime for &ExcelDateTime {
     fn into_cell_data(self) -> Result<CellData> {
-        Ok(CellData::Number(self.to_excel()))
+        Ok(CellData::ExcelDateTime(self.clone()))
     }
 }
 
@@ -658,16 +659,17 @@ mod tests {
 
         (&datetime).write(&mut worksheet, 0, 0).expect("writes");
         datetime
+            .clone()
             .write_with_format(&mut worksheet, 0, 1, &format)
             .expect("writes");
 
         assert_eq!(
             cell_data(&worksheet, 0, 0),
-            &CellData::Number(46_344.520_833_333_336)
+            &CellData::ExcelDateTime(datetime.clone())
         );
         assert_eq!(
             cell_data(&worksheet, 0, 1),
-            &CellData::Number(46_344.520_833_333_336)
+            &CellData::ExcelDateTime(datetime)
         );
         assert_eq!(worksheet.formats(), &[format]);
     }
