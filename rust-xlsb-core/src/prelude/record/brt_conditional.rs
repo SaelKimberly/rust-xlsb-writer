@@ -46,6 +46,30 @@ impl Checked for CFParsedFormula {
     }
 }
 
+/// `CF_TYPE_CELLIS`.
+pub const CF_TYPE_CELL_IS: u32 = 1;
+/// `CF_TYPE_EXPRIS`.
+pub const CF_TYPE_EXPRESSION: u32 = 2;
+/// `CF_TYPE_FILTER`.
+pub const CF_TYPE_FILTER: u32 = 5;
+
+/// `CF_TEMPLATE_EXPR`.
+pub const CF_TEMPLATE_EXPR: u32 = 0;
+/// `CF_TEMPLATE_FILTER`.
+pub const CF_TEMPLATE_FILTER: u32 = 5;
+/// `CF_TEMPLATE_UNIQUEVALUES`.
+pub const CF_TEMPLATE_UNIQUE_VALUES: u32 = 7;
+/// `CF_TEMPLATE_ABOVEAVERAGE`.
+pub const CF_TEMPLATE_ABOVE_AVERAGE: u32 = 0x19;
+/// `CF_TEMPLATE_BELOWAVERAGE`.
+pub const CF_TEMPLATE_BELOW_AVERAGE: u32 = 0x1A;
+/// `CF_TEMPLATE_DUPLICATEVALUES`.
+pub const CF_TEMPLATE_DUPLICATE_VALUES: u32 = 0x1B;
+/// `CF_TEMPLATE_EQUALABOVEAVERAGE`.
+pub const CF_TEMPLATE_EQUAL_ABOVE_AVERAGE: u32 = 0x1D;
+/// `CF_TEMPLATE_EQUALBELOWAVERAGE`.
+pub const CF_TEMPLATE_EQUAL_BELOW_AVERAGE: u32 = 0x1E;
+
 /// `2.4.23`
 #[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BrtBeginCFRule {
@@ -56,7 +80,8 @@ pub struct BrtBeginCFRule {
     pub iParam: u32,
     pub reserved1: u32,
     pub reserved2: u32,
-    /// Packed flags: bit 1 is `fStopTrue`; all other bits are reserved.
+    /// Packed flags: bit 1 is `fStopTrue`, bit 2 `fAbove`, bit 3 `fBottom`,
+    /// bit 4 `fPercent`; all other bits are reserved.
     pub flags: u16,
     pub cbFmla1: u32,
     pub cbFmla2: u32,
@@ -73,6 +98,13 @@ pub struct BrtBeginCFRule {
 impl BrtBeginCFRule {
     /// `fStopTrue` flag.
     pub const F_STOP_TRUE: u16 = 1 << 1;
+    /// `fAbove` flag.
+    pub const F_ABOVE: u16 = 1 << 2;
+    /// `fBottom` flag.
+    pub const F_BOTTOM: u16 = 1 << 3;
+    /// `fPercent` flag.
+    pub const F_PERCENT: u16 = 1 << 4;
+    const FLAG_MASK: u16 = Self::F_STOP_TRUE | Self::F_ABOVE | Self::F_BOTTOM | Self::F_PERCENT;
 
     #[must_use]
     pub const fn stop_if_true(&self) -> bool {
@@ -85,6 +117,19 @@ impl BrtBeginCFRule {
         } else {
             self.flags &= !Self::F_STOP_TRUE;
         }
+    }
+
+    const fn check_no_formulas(&self) -> Result<(), &'static str> {
+        if self.cbFmla1 != 0
+            || self.cbFmla2 != 0
+            || self.cbFmla3 != 0
+            || self.formula1.is_some()
+            || self.formula2.is_some()
+            || self.formula3.is_some()
+        {
+            return Err("this conditional-format rule must not contain formulas");
+        }
+        Ok(())
     }
 }
 
@@ -112,23 +157,50 @@ impl Default for BrtBeginCFRule {
 
 impl Checked for BrtBeginCFRule {
     fn check(&self) -> Result<(), &'static str> {
-        if self.iType != 1 || self.iTemplate != 0 {
-            return Err("only cellIs expression conditional formats are supported");
-        }
         if self.iPri <= 0 {
             return Err("conditional-format priority must be positive");
         }
+        if self.reserved1 != 0
+            || self.reserved2 != 0
+            || self.flags & !Self::FLAG_MASK != 0
+            || self.cbFmla3 != 0
+            || self.formula3.is_some()
+            || !self.strParam.is_null()
+        {
+            return Err("conditional-format reserved fields must be zero");
+        }
+
+        match (self.iType, self.iTemplate) {
+            (CF_TYPE_CELL_IS, CF_TEMPLATE_EXPR) => self.check_cell_rule(),
+            (CF_TYPE_FILTER, CF_TEMPLATE_FILTER) => self.check_filter_rule(),
+            (
+                CF_TYPE_EXPRESSION,
+                CF_TEMPLATE_ABOVE_AVERAGE
+                | CF_TEMPLATE_BELOW_AVERAGE
+                | CF_TEMPLATE_EQUAL_ABOVE_AVERAGE
+                | CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+            ) => self.check_average_rule(),
+            (CF_TYPE_EXPRESSION, CF_TEMPLATE_UNIQUE_VALUES | CF_TEMPLATE_DUPLICATE_VALUES) => {
+                if self.iParam != 0 {
+                    return Err("duplicate conditional formats must have a zero parameter");
+                }
+                if self.flags & (Self::F_ABOVE | Self::F_BOTTOM | Self::F_PERCENT) != 0 {
+                    return Err("duplicate conditional formats use only the stop flag");
+                }
+                self.check_no_formulas()
+            }
+            _ => Err("unsupported conditional-format type and template"),
+        }
+    }
+}
+
+impl BrtBeginCFRule {
+    fn check_cell_rule(&self) -> Result<(), &'static str> {
+        if self.flags & (Self::F_ABOVE | Self::F_BOTTOM | Self::F_PERCENT) != 0 {
+            return Err("cell-value conditional formats use only the stop flag");
+        }
         if !(1..=8).contains(&self.iParam) {
             return Err("conditional-format operator is outside 1..=8");
-        }
-        if self.reserved1 != 0 || self.reserved2 != 0 || self.flags & !Self::F_STOP_TRUE != 0 {
-            return Err("conditional-format reserved bits must be zero");
-        }
-        if self.cbFmla3 != 0 || self.formula3.is_some() {
-            return Err("conditional-format third formula must be omitted");
-        }
-        if !self.strParam.is_null() {
-            return Err("conditional-format string parameter must be null");
         }
         let Some(formula1) = &self.formula1 else {
             return Err("conditional-format first formula is required");
@@ -152,6 +224,45 @@ impl Checked for BrtBeginCFRule {
             (_, None) => {}
         }
         Ok(())
+    }
+
+    fn check_filter_rule(&self) -> Result<(), &'static str> {
+        if self.flags & Self::F_ABOVE != 0 {
+            return Err("top/bottom conditional formats must not set fAbove");
+        }
+        let maximum = if self.flags & Self::F_PERCENT != 0 {
+            100
+        } else {
+            1000
+        };
+        if !(1..=maximum).contains(&self.iParam) {
+            return Err("top/bottom rank is outside its allowed range");
+        }
+        self.check_no_formulas()
+    }
+
+    const fn check_average_rule(&self) -> Result<(), &'static str> {
+        if self.flags & (Self::F_BOTTOM | Self::F_PERCENT) != 0 {
+            return Err("average conditional formats must not set fBottom or fPercent");
+        }
+        let above = matches!(
+            self.iTemplate,
+            CF_TEMPLATE_ABOVE_AVERAGE | CF_TEMPLATE_EQUAL_ABOVE_AVERAGE
+        );
+        if (self.flags & Self::F_ABOVE != 0) != above {
+            return Err("average conditional-format fAbove does not match its template");
+        }
+        if self.iParam > 3 {
+            return Err("average standard deviation is outside 0..=3");
+        }
+        if matches!(
+            self.iTemplate,
+            CF_TEMPLATE_EQUAL_ABOVE_AVERAGE | CF_TEMPLATE_EQUAL_BELOW_AVERAGE
+        ) && self.iParam != 0
+        {
+            return Err("equal-average conditional formats must use a zero parameter");
+        }
+        self.check_no_formulas()
     }
 }
 
@@ -284,6 +395,94 @@ mod tests {
         rule.check().expect("valid rule");
         let bytes = rule.to_bytes().expect("serializes");
         assert_eq!(&bytes[28..30], &[2, 0]);
+    }
+
+    #[test]
+    fn filter_rule_uses_bottom_and_percent_flags() {
+        let rule = BrtBeginCFRule {
+            iType: CF_TYPE_FILTER,
+            iTemplate: CF_TEMPLATE_FILTER,
+            iParam: 20,
+            flags: BrtBeginCFRule::F_STOP_TRUE
+                | BrtBeginCFRule::F_BOTTOM
+                | BrtBeginCFRule::F_PERCENT,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        rule.check().expect("valid filter rule");
+        let bytes = rule.to_bytes().expect("serializes");
+
+        assert_eq!(bytes.len(), 46);
+        assert_eq!(&bytes[0..4], &CF_TYPE_FILTER.to_le_bytes());
+        assert_eq!(&bytes[4..8], &CF_TEMPLATE_FILTER.to_le_bytes());
+        assert_eq!(&bytes[16..20], &20_u32.to_le_bytes());
+        assert_eq!(&bytes[28..30], &26_u16.to_le_bytes());
+        assert_eq!(&bytes[30..34], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[42..46], &u32::MAX.to_le_bytes());
+    }
+
+    #[test]
+    fn average_and_duplicate_rules_omit_formulas() {
+        for (template, flag, parameter) in [
+            (CF_TEMPLATE_ABOVE_AVERAGE, BrtBeginCFRule::F_ABOVE, 0),
+            (CF_TEMPLATE_BELOW_AVERAGE, 0, 3),
+            (CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, BrtBeginCFRule::F_ABOVE, 0),
+            (CF_TEMPLATE_EQUAL_BELOW_AVERAGE, 0, 0),
+            (CF_TEMPLATE_UNIQUE_VALUES, 0, 0),
+            (CF_TEMPLATE_DUPLICATE_VALUES, 0, 0),
+        ] {
+            let rule = BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: template,
+                iParam: parameter,
+                flags: flag,
+                cbFmla1: 0,
+                formula1: None,
+                ..BrtBeginCFRule::default()
+            };
+            rule.check().expect("valid expression rule");
+            let bytes = rule.to_bytes().expect("serializes");
+            assert_eq!(bytes.len(), 46);
+            assert_eq!(&bytes[16..20], &parameter.to_le_bytes());
+            assert_eq!(&bytes[28..30], &flag.to_le_bytes());
+        }
+    }
+
+    #[test]
+    fn rejects_filter_and_average_flag_mismatches() {
+        let filter = BrtBeginCFRule {
+            iType: CF_TYPE_FILTER,
+            iTemplate: CF_TEMPLATE_FILTER,
+            iParam: 101,
+            flags: BrtBeginCFRule::F_PERCENT,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        assert!(filter.check().is_err());
+
+        let average = BrtBeginCFRule {
+            iType: CF_TYPE_EXPRESSION,
+            iTemplate: CF_TEMPLATE_ABOVE_AVERAGE,
+            iParam: 0,
+            flags: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        assert!(average.check().is_err());
+
+        let duplicate = BrtBeginCFRule {
+            iType: CF_TYPE_EXPRESSION,
+            iTemplate: CF_TEMPLATE_DUPLICATE_VALUES,
+            iParam: 1,
+            flags: 0,
+            cbFmla1: 0,
+            formula1: None,
+            ..BrtBeginCFRule::default()
+        };
+        assert!(duplicate.check().is_err());
     }
 
     #[test]

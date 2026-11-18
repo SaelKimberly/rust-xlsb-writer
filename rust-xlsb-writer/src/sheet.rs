@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::{
-    BrtBeginAFilter, BrtBeginCFRule, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
+    BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
     BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet,
     BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
@@ -220,28 +220,11 @@ fn write_conditional_formats(
 
     for (index, conditional_format) in formats.iter().enumerate() {
         push(out, &conditional_format_block(conditional_format.range))?;
-        let (formula1, formula2) = conditional_format.formulas()?;
-        let dxf = dxf_ids[index].unwrap_or(u32::MAX);
+        let priority = i32::try_from(index + 1)
+            .map_err(|_| Error::ValueNotRepresentable("too many conditional formats"))?;
         push(
             out,
-            &BrtBeginCFRule {
-                iType: 1,
-                iTemplate: 0,
-                dxfId: dxf,
-                iPri: i32::try_from(index + 1)
-                    .map_err(|_| Error::ValueNotRepresentable("too many conditional formats"))?,
-                iParam: conditional_format.operator()?,
-                flags: if conditional_format.stop_if_true() {
-                    BrtBeginCFRule::F_STOP_TRUE
-                } else {
-                    0
-                },
-                cbFmla1: formula1.cce,
-                cbFmla2: formula2.as_ref().map_or(0, |formula| formula.cce),
-                formula1: Some(formula1),
-                formula2,
-                ..BrtBeginCFRule::default()
-            },
+            &conditional_format.begin_rule(priority, dxf_ids[index].unwrap_or(u32::MAX))?,
         )?;
         push(out, &BrtEndCFRule::default())?;
         push(out, &BrtEndConditionalFormatting::default())?;

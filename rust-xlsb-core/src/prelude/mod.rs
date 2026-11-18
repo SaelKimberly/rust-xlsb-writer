@@ -22,8 +22,11 @@ pub use record::{
     BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtName,
     BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
     BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo,
-    BrtWsProp, BrtXF, CFParsedFormula, DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula,
-    ReadingOrder, VAlign, XFProp, XFProps, Xti, conditional_format_block,
+    BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
+    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS,
+    CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CFParsedFormula, DValStrings, DVals, GrbitAtr, HAlign,
+    NameParsedFormula, ReadingOrder, VAlign, XFProp, XFProps, Xti, conditional_format_block,
 };
 pub use scope::*;
 pub use structure::{

@@ -37,6 +37,7 @@
 - [Autofilter conditions](plans/2026-11-19-autofilter-conditions.md)
 - [Data validation](plans/2026-11-19-data-validation.md)
 - [Basic tables](plans/2026-11-19-basic-tables.md)
+- [Conditional formatting: top/bottom, average, and duplicate rules](plans/2026-11-19-conditional-format-rule-families.md)
 
 ## Analysis
 

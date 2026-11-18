@@ -68,7 +68,10 @@ pub use brt_col_info::BrtColInfo;
 pub use brt_color::BrtColor;
 pub use brt_conditional::{
     BrtBeginCFRule, BrtBeginConditionalFormatting, BrtEndCFRule, BrtEndConditionalFormatting,
-    CFParsedFormula, conditional_format_block,
+    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_DUPLICATE_VALUES,
+    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
+    CF_TEMPLATE_FILTER, CF_TEMPLATE_UNIQUE_VALUES, CF_TYPE_CELL_IS, CF_TYPE_EXPRESSION,
+    CF_TYPE_FILTER, CFParsedFormula, conditional_format_block,
 };
 pub use brt_dval::{BrtBeginDVals, BrtDVal, BrtEndDVals, DValStrings, DVals};
 pub use brt_dxf::{BrtDXF, XFProp, XFProps};

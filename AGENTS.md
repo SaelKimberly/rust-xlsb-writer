@@ -85,12 +85,13 @@ resulting `BrtFont` index map to the sheet serializer, which emits
 properties only; there are no rich fills, borders, or phonetic-generation
 paths.
 
-Conditional formats are stored on the worksheet as a range, rule, and optional
-differential format. `build_package` registers each DXF in the style registry
-before writing the styles part and passes the resolved ids to the sheet
-serializer, which emits one `BrtBeginConditionalFormatting` block per rule.
-DXFs are a separate table; workbooks without conditional formats keep the
-zero-DXF styles table.
+Conditional formats are stored on the worksheet as a range, a boxed
+`ConditionalFormat` rule, and an optional differential format. Cell-value,
+top/bottom, average, and duplicate/unique rules share that storage;
+`build_package` registers each DXF in the style registry before writing the
+styles part and passes the resolved ids to the sheet serializer, which emits
+one `BrtBeginConditionalFormatting` block per rule. DXFs are a separate table;
+workbooks without conditional formats keep the zero-DXF styles table.
 
 The public writer has its own `IntoExcelData` / `IntoExcelDateTime` path.
 `Worksheet` owns sparse cells, row/column options with outline levels and
@@ -179,9 +180,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 527 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 536 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 531 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 540 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -284,7 +285,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/filter.rs` | Autofilter condition model and row matching |
 | `rust-xlsb-writer/src/data_validation.rs` | Data-validation rules, prompt/error options, and `BrtDVal` encoding |
 | `rust-xlsb-writer/src/table.rs` | `Table`/`TableColumn`/`TableStyle`, table validation, and Table part serialization |
-| `rust-xlsb-writer/src/conditional_format.rs` | Cell conditional-format rules, values, and range storage |
+| `rust-xlsb-writer/src/conditional_format.rs` | Conditional-format trait, cell/top-bottom/average/duplicate rules, values, and range storage |
 | `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, rich cells, autofilter, conditional-format/filter/validation/list-part records, print records |
 | `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
@@ -326,9 +327,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 527 unit tests and 7 doctests in default builds: 250 in core, 277 in writer.
+- 536 unit tests and 7 doctests in default builds: 253 in core, 283 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 531 total. Most core
+  `rust_decimal` adapters, for 540 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

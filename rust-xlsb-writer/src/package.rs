@@ -69,7 +69,7 @@ pub fn build_package(
     for sheet in sheets {
         let mut ids = Vec::with_capacity(sheet.conditional_formats().len());
         for conditional_format in sheet.conditional_formats() {
-            if let Some(format) = conditional_format.format() {
+            if let Some(format) = conditional_format.dxf_format() {
                 let dxf = format.to_dxf()?;
                 ids.push(Some(registry.register_dxf(dxf)?));
             } else {
@@ -1050,7 +1050,9 @@ mod tests {
         BrtBeginListCol, BrtBeginListParts, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp,
         BrtCellRString, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing,
         BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr, BrtSheetProtection,
-        BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
+        BrtTableStyleClient, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_DUPLICATE_VALUES,
+        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_UNIQUE_VALUES,
+        CF_TYPE_EXPRESSION, CF_TYPE_FILTER,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1191,6 +1193,114 @@ mod tests {
         assert_eq!(dxfs[0].xfprops.cprops, 2);
         assert_eq!(dxfs[0].xfprops.props[0].xfPropType, 0x0002);
         assert_eq!(dxfs[0].xfprops.props[1].xfPropType, 0x0005);
+    }
+
+    #[test]
+    fn conditional_format_rule_families_emit_expected_records() {
+        let mut workbook = crate::Workbook::new();
+        let red = crate::Format::new().set_background_color(crate::Color::Red);
+        let green = crate::Format::new().set_background_color(crate::Color::Green);
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_conditional_format(
+                1,
+                0,
+                20,
+                0,
+                &crate::ConditionalFormatTop::new()
+                    .set_rule(crate::ConditionalFormatTopRule::BottomPercent(20))
+                    .set_format(red.clone())
+                    .set_stop_if_true(true),
+            )
+            .expect("top rule");
+        worksheet
+            .add_conditional_format(
+                1,
+                0,
+                20,
+                0,
+                &crate::ConditionalFormatAverage::new()
+                    .set_rule(crate::ConditionalFormatAverageRule::EqualOrBelowAverage)
+                    .set_format(&red),
+            )
+            .expect("average rule");
+        worksheet
+            .add_conditional_format(
+                1,
+                0,
+                20,
+                0,
+                &crate::ConditionalFormatDuplicate::new().set_format(green),
+            )
+            .expect("duplicate rule");
+        worksheet
+            .add_conditional_format(
+                1,
+                0,
+                20,
+                0,
+                &crate::ConditionalFormatDuplicate::new().invert(),
+            )
+            .expect("unique rule");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 4);
+        assert_eq!(rules[0].iType, CF_TYPE_FILTER);
+        assert_eq!(rules[0].iTemplate, CF_TEMPLATE_FILTER);
+        assert_eq!(rules[0].iParam, 20);
+        assert!(rules[0].flags & BrtBeginCFRule::F_BOTTOM != 0);
+        assert!(rules[0].flags & BrtBeginCFRule::F_PERCENT != 0);
+        assert_eq!(rules[0].flags & BrtBeginCFRule::F_ABOVE, 0);
+        assert!(rules[0].stop_if_true());
+        assert_eq!(rules[1].iType, CF_TYPE_EXPRESSION);
+        assert_eq!(rules[1].iTemplate, CF_TEMPLATE_EQUAL_BELOW_AVERAGE);
+        assert_eq!(rules[1].iParam, 0);
+        assert_eq!(rules[1].flags & BrtBeginCFRule::F_ABOVE, 0);
+        assert_eq!(rules[2].iTemplate, CF_TEMPLATE_DUPLICATE_VALUES);
+        assert_eq!(rules[3].iTemplate, CF_TEMPLATE_UNIQUE_VALUES);
+        for (index, rule) in rules.iter().enumerate() {
+            assert_eq!(rule.iPri, i32::try_from(index + 1).expect("priority"));
+            assert_eq!(rule.cbFmla1, 0);
+            assert_eq!(rule.cbFmla2, 0);
+            assert!(rule.formula1.is_none());
+            assert!(rule.formula2.is_none());
+            assert!(rule.strParam.is_null());
+        }
+        assert_eq!(rules[0].dxfId, 0);
+        assert_eq!(rules[1].dxfId, 0);
+        assert_eq!(rules[2].dxfId, 1);
+        assert_eq!(rules[3].dxfId, u32::MAX);
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        assert_eq!(records::<BrtDXF>(&styles).len(), 2);
+    }
+
+    #[test]
+    fn conditional_format_priorities_restart_on_each_sheet() {
+        let mut workbook = crate::Workbook::new();
+        for _ in 0..2 {
+            let worksheet = workbook.add_worksheet();
+            worksheet
+                .add_conditional_format(
+                    0,
+                    0,
+                    9,
+                    0,
+                    &crate::ConditionalFormatAverage::new()
+                        .set_rule(crate::ConditionalFormatAverageRule::AboveAverage),
+                )
+                .expect("conditional format");
+        }
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        for part in ["xl/worksheets/sheet1.bin", "xl/worksheets/sheet2.bin"] {
+            let sheet = part_bytes(&bytes, part).expect("sheet");
+            let rules = records::<BrtBeginCFRule>(&sheet);
+            assert_eq!(rules.len(), 1);
+            assert_eq!(rules[0].iPri, 1);
+        }
     }
 
     #[test]

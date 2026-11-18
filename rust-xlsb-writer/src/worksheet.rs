@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::UncheckedRfX;
 
-use crate::conditional_format::{ConditionalFormatCell, ConditionalFormatRange};
+use crate::conditional_format::{ConditionalFormat, ConditionalFormatRange};
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime, RichRun, RichString};
 use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
@@ -2616,35 +2616,38 @@ impl Worksheet {
         Ok(self)
     }
 
-    /// Adds a cell-value conditional format over a cell range.
+    /// Adds a conditional format over a cell range.
     ///
-    /// The rule is evaluated against each cell's value. A differential format
-    /// is applied when the comparison matches.
+    /// The rule is evaluated against the range; a differential format is
+    /// applied when it matches.
     ///
     /// # Errors
     ///
     /// Returns [`Error::RowColumnLimit`] or [`Error::RowColumnOrder`] for an
     /// invalid range, or [`Error::Parameter`] when the rule is missing or its
     /// value is invalid.
-    pub fn add_conditional_format(
+    pub fn add_conditional_format<T>(
         &mut self,
         first_row: RowNum,
         first_col: ColNum,
         last_row: RowNum,
         last_col: ColNum,
-        conditional_format: &ConditionalFormatCell,
-    ) -> Result<&mut Self> {
+        conditional_format: &T,
+    ) -> Result<&mut Self>
+    where
+        T: ConditionalFormat + Send + Sync + ?Sized,
+    {
         Self::check_range(first_row, first_col, last_row, last_col)?;
         conditional_format.validate()?;
-        self.conditional_formats.push(ConditionalFormatRange {
-            range: UncheckedRfX {
+        self.conditional_formats.push(ConditionalFormatRange::new(
+            UncheckedRfX {
                 rwFirst: first_row,
                 rwLast: last_row,
                 colFirst: u32::from(first_col),
                 colLast: u32::from(last_col),
             },
-            conditional_format: conditional_format.clone(),
-        });
+            conditional_format.box_clone(),
+        ));
         Ok(self)
     }
 
@@ -4805,7 +4808,7 @@ mod tests {
         assert_eq!(stored.range.rwLast, 4);
         assert_eq!(stored.range.colFirst, 2);
         assert_eq!(stored.range.colLast, 3);
-        assert_eq!(stored.operator().expect("operator"), 7);
+        assert_eq!(stored.begin_rule(1, u32::MAX).expect("rule").iParam, 7);
 
         assert!(matches!(
             worksheet.add_conditional_format(0, 0, 1, 0, &crate::ConditionalFormatCell::new()),
