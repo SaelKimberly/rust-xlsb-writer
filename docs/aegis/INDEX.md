@@ -12,6 +12,7 @@
 - [merge_range: MS-XLSB merged cells](plans/2026-11-18-merge-range.md)
 - [Worksheet views: freeze panes, selection, top-left cell](plans/2026-11-18-worksheet-views.md)
 - [Worksheet view options and pixel units](plans/2026-11-18-view-options-and-pixel-units.md)
+- [Worksheet tabs and default row height](plans/2026-11-18-worksheet-tabs-and-default-height.md)
 
 ## Analysis
 

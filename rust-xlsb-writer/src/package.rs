@@ -3,12 +3,12 @@
 use std::fmt::Write as _;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginBook, BrtBeginBundleShs, BrtBundleSh, BrtEndBook, BrtEndBundleShs,
-    XlNullableWideString, XlStringExt, XlWideString,
+    BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBookView, BrtBundleSh, BrtEndBook,
+    BrtEndBookViews, BrtEndBundleShs, XlNullableWideString, XlStringExt, XlWideString,
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
-use crate::worksheet::Worksheet;
+use crate::worksheet::{Visibility, Worksheet};
 use crate::{Error, Result};
 
 pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
@@ -26,9 +26,11 @@ pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
     }
 
     let mut sheet_parts = Vec::with_capacity(sheets.len());
+    let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
         let mut bytes = Vec::new();
-        crate::sheet::write_sheet(sheet, &style_indexes[index], &sst, &mut bytes)?;
+        let selected = index == view.active && (view.explicit_active || view.active != 0);
+        crate::sheet::write_sheet(sheet, &style_indexes[index], &sst, selected, &mut bytes)?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
     }
 
@@ -60,9 +62,74 @@ pub fn build_package(sheets: &[Worksheet]) -> Result<Vec<u8>> {
     zip_store(&parts)
 }
 
+struct WorkbookView {
+    active: usize,
+    first: usize,
+    explicit_active: bool,
+}
+
+fn workbook_view(sheets: &[Worksheet]) -> WorkbookView {
+    let explicit_active = sheets.iter().rposition(Worksheet::is_active);
+    let active = explicit_active
+        .or_else(|| {
+            sheets
+                .iter()
+                .position(|sheet| sheet.visibility() == Visibility::Visible)
+        })
+        .unwrap_or(0);
+    let requested = sheets
+        .iter()
+        .rposition(Worksheet::is_first_tab)
+        .unwrap_or(0);
+    let first = (requested..sheets.len())
+        .chain(0..requested)
+        .find(|&index| index == active || sheets[index].visibility() == Visibility::Visible)
+        .unwrap_or(active);
+    WorkbookView {
+        active,
+        first,
+        explicit_active: explicit_active.is_some(),
+    }
+}
+
+const fn visible_state(sheet: &Worksheet, index: usize, active: usize) -> u32 {
+    if index == active {
+        return 0;
+    }
+    match sheet.visibility() {
+        Visibility::Visible => 0,
+        Visibility::Hidden => 1,
+        Visibility::VeryHidden => 2,
+    }
+}
+
 fn workbook_part(sheets: &[Worksheet]) -> Result<Vec<u8>> {
+    let view = workbook_view(sheets);
     let mut out = Vec::new();
     push_record(&mut out, &BrtBeginBook::default())?;
+    if view.first != 0 || view.active != 0 {
+        push_record(&mut out, &BrtBeginBookViews::default())?;
+        push_record(
+            &mut out,
+            &BrtBookView {
+                xWn: 120,
+                yWn: 30,
+                dxWn: 23_760,
+                dyWn: 14_640,
+                iTabRatio: 600,
+                itabFirst: u32::try_from(view.first)
+                    .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?,
+                itabCur: u32::try_from(view.active)
+                    .map_err(|_| Error::ValueNotRepresentable("too many worksheets"))?,
+                fDspHScroll: true,
+                fDspVScroll: true,
+                fBotAdornment: true,
+                fAFDateGroup: true,
+                ..BrtBookView::default()
+            },
+        )?;
+        push_record(&mut out, &BrtEndBookViews::default())?;
+    }
     push_record(&mut out, &BrtBeginBundleShs::default())?;
     for (index, sheet) in sheets.iter().enumerate() {
         let tab_id = u32::try_from(index + 1)
@@ -71,7 +138,7 @@ fn workbook_part(sheets: &[Worksheet]) -> Result<Vec<u8>> {
         push_record(
             &mut out,
             &BrtBundleSh {
-                hsState: 0,
+                hsState: visible_state(sheet, index, view.active),
                 iTabID: tab_id,
                 strRelID: XlNullableWideString::construct(Some(rel_id.as_str())),
                 strName: XlWideString::construct(Some(sheet.name_ref())),
@@ -312,7 +379,31 @@ fn read_u32(bytes: &[u8], offset: usize) -> Result<u32> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::BufReader;
+
+    use deku::DekuContainerRead;
+    use rust_xlsb_core::prelude::{BrtBeginWsView, BrtBookView, BrtBundleSh};
+    use rust_xlsb_core::{BiffHead, CheckedBiff};
+
     use super::*;
+
+    fn records<T>(part: &[u8]) -> Vec<T>
+    where
+        T: for<'a> DekuContainerRead<'a> + Default + CheckedBiff,
+    {
+        let target = T::default().id();
+        let mut reader = BufReader::new(part);
+        let mut records = Vec::new();
+        while let Ok((head, body)) = BiffHead::read_from_with_data(&mut reader) {
+            if head.known_id() == Some(target)
+                && let Some(body) = body
+            {
+                let (_, record) = T::from_bytes((&body, 0)).expect("record decodes");
+                records.push(record);
+            }
+        }
+        records
+    }
 
     #[test]
     fn package_has_expected_parts() {
@@ -344,5 +435,109 @@ mod tests {
         let names = part_names(&bytes).expect("parts");
 
         assert!(!names.contains(&"xl/sharedStrings.bin".to_owned()));
+    }
+
+    #[test]
+    fn default_package_omits_book_views() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        assert_eq!(records::<BrtBookView>(&part).len(), 0);
+    }
+
+    #[test]
+    fn tab_state_sets_sheet_visibility_and_book_view() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().set_hidden(true);
+        workbook.add_worksheet().set_active(true);
+        workbook.add_worksheet().set_first_tab(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        let sheets = records::<BrtBundleSh>(&part);
+        assert_eq!(
+            sheets.iter().map(|sheet| sheet.hsState).collect::<Vec<_>>(),
+            [1, 0, 0]
+        );
+
+        let views = records::<BrtBookView>(&part);
+        assert_eq!(views.len(), 1);
+        assert_eq!((views[0].itabFirst, views[0].itabCur), (2, 1));
+        assert!(views[0].fDspHScroll);
+        assert!(views[0].fBotAdornment);
+
+        let active = part_bytes(&bytes, "xl/worksheets/sheet2.bin").expect("sheet part");
+        assert!(records::<BrtBeginWsView>(&active)[0].fSelected);
+    }
+
+    #[test]
+    fn selected_sheet_emits_view_without_book_view() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.add_worksheet().set_selected(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        assert_eq!(records::<BrtBookView>(&part).len(), 0);
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet2.bin").expect("sheet part");
+        assert!(records::<BrtBeginWsView>(&sheet)[0].fSelected);
+    }
+
+    #[test]
+    fn hidden_first_sheet_makes_next_visible_sheet_active() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().set_hidden(true);
+        workbook.add_worksheet();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        let views = records::<BrtBookView>(&part);
+        assert_eq!(views.len(), 1);
+        assert_eq!((views[0].itabFirst, views[0].itabCur), (1, 1));
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet2.bin").expect("sheet part");
+        assert!(records::<BrtBeginWsView>(&sheet)[0].fSelected);
+    }
+
+    #[test]
+    fn all_hidden_sheets_keep_one_visible() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().set_hidden(true);
+        workbook.add_worksheet().set_very_hidden(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        assert_eq!(
+            records::<BrtBundleSh>(&part)
+                .iter()
+                .map(|sheet| sheet.hsState)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+    }
+
+    #[test]
+    fn very_hidden_sheet_serializes_state_two() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.add_worksheet().set_very_hidden(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+
+        assert_eq!(
+            records::<BrtBundleSh>(&part)
+                .iter()
+                .map(|sheet| sheet.hsState)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
     }
 }

@@ -77,7 +77,15 @@ impl Color {
         }
     }
 
-    fn to_brt_color(self) -> Result<BrtColor> {
+    pub(crate) const fn is_valid(self) -> bool {
+        match self {
+            Self::RGB(value) => value <= 0x00FF_FFFF,
+            Self::Theme(color, shade) => color <= 9 && shade <= 5,
+            _ => true,
+        }
+    }
+
+    pub(crate) fn to_brt_color(self) -> Result<BrtColor> {
         let value = match self {
             Self::Default | Self::Automatic => return Ok(BrtColor::default()),
             Self::RGB(value) => value,

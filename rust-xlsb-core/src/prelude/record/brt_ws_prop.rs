@@ -43,12 +43,12 @@ pub struct BrtWsProp {
     #[deku(bits = 1, pad_bits_after = "6")]
     pub fCondFmtCalc: bool,
 
-    brtcolorTab: BrtColor,
+    pub brtcolorTab: BrtColor,
 
-    rwSync: u32, // TODO: RwNullable
-    colSync: u32,
+    pub rwSync: u32, // TODO: RwNullable
+    pub colSync: u32,
 
-    strName: CodeName,
+    pub strName: CodeName,
 }
 
 impl Unchecked for BrtWsProp {}

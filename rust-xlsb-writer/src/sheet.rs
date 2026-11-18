@@ -6,8 +6,8 @@ use rust_xlsb_core::prelude::{
     BrtBeginColInfos, BrtBeginMergeCells, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
     BrtBeginWsViews, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk,
     BrtColInfo, BrtColSpan, BrtEndColInfos, BrtEndMergeCells, BrtEndSheet, BrtEndSheetData,
-    BrtEndWsView, BrtEndWsViews, BrtMergeCell, BrtPane, BrtRowHdr, BrtSel, BrtWsDim, Cell,
-    UncheckedRfX, UncheckedSqRfX, Xnum,
+    BrtEndWsView, BrtEndWsViews, BrtMergeCell, BrtPane, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo,
+    BrtWsProp, Cell, UncheckedRfX, UncheckedSqRfX, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -34,13 +34,16 @@ pub fn write_sheet(
     sheet: &Worksheet,
     style_indexes: &[u32],
     sst: &SSTHolder,
+    selected: bool,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let ctx = SaveContext { sst };
 
     push(out, &BrtBeginSheet::default())?;
+    write_ws_prop(sheet, out)?;
     push(out, &dimension(sheet))?;
-    write_sheet_views(sheet, out)?;
+    write_sheet_views(sheet, selected, out)?;
+    write_default_row_height(sheet, out)?;
 
     let columns = column_infos(sheet, style_indexes);
     if !columns.is_empty() {
@@ -140,9 +143,45 @@ pub fn write_sheet(
     Ok(())
 }
 
-fn write_sheet_views(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let Some(color) = sheet.tab_color() else {
+        return Ok(());
+    };
+    push(
+        out,
+        &BrtWsProp {
+            fShowAutoBreaks: true,
+            fPublish: true,
+            fRowSumsBelow: true,
+            fColSumsRight: true,
+            fShowOutlineSymbols: true,
+            fCondFmtCalc: true,
+            brtcolorTab: color.to_brt_color()?,
+            rwSync: u32::MAX,
+            colSync: u32::MAX,
+            ..BrtWsProp::default()
+        },
+    )
+}
+
+fn write_default_row_height(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let Some(height) = sheet.default_row_height() else {
+        return Ok(());
+    };
+    push(
+        out,
+        &BrtWsFmtInfo {
+            dxGCol: DEFAULT_COL_WIDTH,
+            miyDefRwHeight: height_to_twips(height),
+            fUnsynced: true,
+            ..BrtWsFmtInfo::default()
+        },
+    )
+}
+
+fn write_sheet_views(sheet: &Worksheet, selected: bool, out: &mut Vec<u8>) -> Result<()> {
     let view = sheet.view();
-    if view.is_default() {
+    if view.is_default() && !selected {
         return Ok(());
     }
 
@@ -158,6 +197,7 @@ fn write_sheet_views(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
             fDspRwCol: true,
             fDspZeros: view.show_zeros,
             fRightToLeft: view.right_to_left,
+            fSelected: view.selected || selected,
             fDspGuts: true,
             fDefaultHdr: true,
             rwTop: rw_top,
@@ -444,8 +484,8 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginMergeCells, BrtBeginWsView, BrtCellIsst, BrtCellRk, BrtColInfo, BrtMergeCell,
-        BrtPane, BrtRowHdr, BrtSel,
+        BrtBeginMergeCells, BrtBeginWsView, BrtCellIsst, BrtCellRk, BrtColInfo, BrtColor,
+        BrtMergeCell, BrtPane, BrtRowHdr, BrtSel, BrtWsFmtInfo, BrtWsProp,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, SSTHolder, StyleRegistry};
 
@@ -480,7 +520,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let views = records::<BrtBeginWsView>(&out);
         assert_eq!(views.len(), 1);
@@ -523,7 +563,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let views = records::<BrtBeginWsView>(&out);
         assert_eq!(views.len(), 1);
@@ -546,7 +586,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let views = records::<BrtBeginWsView>(&out);
         assert_eq!(views.len(), 1);
@@ -575,16 +615,45 @@ mod tests {
     }
 
     #[test]
+    fn tab_color_and_default_height_emit_sheet_properties() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_tab_color(crate::Color::Red);
+        sheet.set_default_row_height(30.0).expect("height");
+        sheet.set_selected(true);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let props = records::<BrtWsProp>(&out);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].brtcolorTab, BrtColor::rgb(0xFF, 0x00, 0x00));
+        assert_eq!((props[0].rwSync, props[0].colSync), (u32::MAX, u32::MAX));
+
+        let formats = records::<BrtWsFmtInfo>(&out);
+        assert_eq!(formats.len(), 1);
+        assert_eq!(formats[0].miyDefRwHeight, 600);
+        assert_eq!(formats[0].dxGCol, DEFAULT_COL_WIDTH);
+        assert!(formats[0].fUnsynced);
+
+        let views = records::<BrtBeginWsView>(&out);
+        assert_eq!(views.len(), 1);
+        assert!(views[0].fSelected);
+    }
+
+    #[test]
     fn default_sheet_view_emits_no_view_records() {
         let sheet = Worksheet::new("Sheet1".to_owned());
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         assert_eq!(records::<BrtBeginWsView>(&out).len(), 0);
         assert_eq!(records::<BrtPane>(&out).len(), 0);
         assert_eq!(records::<BrtSel>(&out).len(), 0);
+        assert_eq!(records::<BrtWsProp>(&out).len(), 0);
+        assert_eq!(records::<BrtWsFmtInfo>(&out).len(), 0);
     }
 
     #[test]
@@ -598,7 +667,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let columns = records::<BrtColInfo>(&out);
         assert_eq!(columns.len(), 2);
@@ -626,7 +695,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let columns = records::<BrtColInfo>(&out);
         assert_eq!(columns.len(), 3);
@@ -646,7 +715,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[index], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[index], &sst, false, &mut out).expect("sheet");
 
         let rows = records::<BrtRowHdr>(&out);
         assert_eq!(rows[0].ixfe, index);
@@ -676,7 +745,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &indexes, &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &indexes, &sst, false, &mut out).expect("sheet");
 
         let cells = records::<BrtCellRk>(&out);
         assert_eq!(cells[0].cell.iStyleRef, indexes[2]);
@@ -695,7 +764,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let rows = records::<BrtRowHdr>(&out);
         assert_eq!(rows[0].ccolspan, 2);
@@ -728,7 +797,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let rows = records::<BrtRowHdr>(&out);
         assert!(rows[0].fDyZero);
@@ -749,7 +818,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let rows = records::<BrtRowHdr>(&out);
         assert!(!rows[0].fDyZero);
@@ -765,7 +834,7 @@ mod tests {
         let sst = SSTHolder::create_in_memory().expect("sst");
         let mut out = Vec::new();
 
-        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
 
         let begins = records::<BrtBeginMergeCells>(&out);
         assert_eq!(begins.len(), 1);

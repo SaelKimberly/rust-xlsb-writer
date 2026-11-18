@@ -9,11 +9,11 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBorder, BrtBundleSh, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
-    BrtColor, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtFill, BrtFmt, BrtFont, BrtMergeCell,
-    BrtPane, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtWsDim, BrtWsProp, BrtXF, GrbitAtr, HAlign,
-    ReadingOrder, VAlign,
+    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBundleSh,
+    BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt,
+    BrtColInfo, BrtColor, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtFill, BrtFmt, BrtFont,
+    BrtMergeCell, BrtPane, BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtWsDim, BrtWsFmtInfo,
+    BrtWsProp, BrtXF, GrbitAtr, HAlign, ReadingOrder, VAlign,
 };
 pub use scope::*;
 pub use structure::{
@@ -85,6 +85,7 @@ mod tests {
     #[case::brt_color(|| checked_test::<BrtColor>(8))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
     #[case::brt_ws_prop(|| checked_test::<BrtWsProp>(23))]
+    #[case::brt_ws_fmt_info(|| checked_test::<BrtWsFmtInfo>(12))]
     #[case::brt_ws_dim(|| checked_test::<BrtWsDim>(16))]
     #[case::brt_row_hdr(|| checked_test::<BrtRowHdr>(17))]
     #[case::brt_col_info(|| checked_test::<BrtColInfo>(18))]
@@ -102,6 +103,7 @@ mod tests {
     #[case::brt_begin_sst(|| checked_test::<BrtBeginSst>(8))]
     #[case::brt_end_sst(|| checked_test::<BrtEndSst>(0))]
     #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]
+    #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]
     #[case::brt_begin_ws_view(|| checked_test::<BrtBeginWsView>(30))]
     #[case::brt_end_ws_view(|| checked_test::<BrtEndWsView>(0))]
     #[case::brt_pane(|| checked_test::<BrtPane>(29))]

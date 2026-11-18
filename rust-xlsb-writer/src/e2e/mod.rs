@@ -179,6 +179,26 @@ fn view_state_does_not_disturb_cell_values() {
 }
 
 #[test]
+fn tab_options_do_not_disturb_cell_values() {
+    let mut workbook = Workbook::new();
+    workbook.add_worksheet().set_hidden(true);
+    let sheet = workbook.add_worksheet();
+    sheet.set_active(true);
+    sheet.set_tab_color(crate::Color::Blue);
+    sheet.set_default_row_height(24.0).expect("height");
+    sheet.write(0, 0, "visible").expect("visible");
+    workbook.add_worksheet().set_first_tab(true);
+
+    let bytes = workbook.save_to_buffer().expect("saves");
+    let mut opened = open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).expect("opens");
+
+    assert_eq!(
+        opened.worksheet_range("Sheet2").expect("reads").get((0, 0)),
+        Some(&Data::String("visible".to_owned()))
+    );
+}
+
+#[test]
 fn merged_range_keeps_top_left_value() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();

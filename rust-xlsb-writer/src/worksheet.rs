@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
-use crate::{Error, Format, Result};
+use crate::{Color, Error, Format, Result};
 
 pub const MAX_ROW: u32 = 1_048_575;
 pub const MAX_COL: u16 = 16_383;
@@ -49,6 +49,10 @@ pub struct MergeRange {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "worksheet view state maps directly to independent BIFF flags"
+)]
 pub struct SheetView {
     pub(crate) freeze: Option<(RowNum, ColNum)>,
     pub(crate) selection: Option<UncheckedRfX>,
@@ -58,6 +62,7 @@ pub struct SheetView {
     pub(crate) show_gridlines: bool,
     pub(crate) show_zeros: bool,
     pub(crate) right_to_left: bool,
+    pub(crate) selected: bool,
 }
 
 impl Default for SheetView {
@@ -71,6 +76,7 @@ impl Default for SheetView {
             show_gridlines: true,
             show_zeros: true,
             right_to_left: false,
+            selected: false,
         }
     }
 }
@@ -85,7 +91,16 @@ impl SheetView {
             && self.show_gridlines
             && self.show_zeros
             && !self.right_to_left
+            && !self.selected
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    #[default]
+    Visible,
+    Hidden,
+    VeryHidden,
 }
 
 /// One worksheet with sparse cells, row options, and column options.
@@ -98,6 +113,11 @@ pub struct Worksheet {
     format_ids: HashMap<Format, u32>,
     merged_ranges: Vec<MergeRange>,
     view: SheetView,
+    visibility: Visibility,
+    active: bool,
+    first_tab: bool,
+    tab_color: Option<Color>,
+    default_row_height: Option<f64>,
 }
 
 impl Worksheet {
@@ -111,6 +131,11 @@ impl Worksheet {
             format_ids: HashMap::new(),
             merged_ranges: Vec::new(),
             view: SheetView::default(),
+            visibility: Visibility::Visible,
+            active: false,
+            first_tab: false,
+            tab_color: None,
+            default_row_height: None,
         }
     }
 
@@ -794,6 +819,105 @@ impl Worksheet {
         self
     }
 
+    /// Hides the worksheet when `enable` is true.
+    ///
+    /// Hiding clears the active and selected state.
+    pub const fn set_hidden(&mut self, enable: bool) -> &mut Self {
+        self.visibility = if enable {
+            Visibility::Hidden
+        } else {
+            Visibility::Visible
+        };
+        if enable {
+            self.active = false;
+            self.view.selected = false;
+        }
+        self
+    }
+
+    /// Hides the worksheet without a user-interface unhide option.
+    ///
+    /// Hiding clears the active and selected state.
+    pub const fn set_very_hidden(&mut self, enable: bool) -> &mut Self {
+        self.visibility = if enable {
+            Visibility::VeryHidden
+        } else {
+            Visibility::Visible
+        };
+        if enable {
+            self.active = false;
+            self.view.selected = false;
+        }
+        self
+    }
+
+    /// Marks the worksheet as active when `enable` is true.
+    ///
+    /// An active worksheet is also selected and visible.
+    pub const fn set_active(&mut self, enable: bool) -> &mut Self {
+        self.active = enable;
+        if enable {
+            self.view.selected = true;
+            self.visibility = Visibility::Visible;
+        }
+        self
+    }
+
+    /// Marks the worksheet tab as selected when `enable` is true.
+    pub const fn set_selected(&mut self, enable: bool) -> &mut Self {
+        self.view.selected = enable;
+        if enable {
+            self.visibility = Visibility::Visible;
+        }
+        self
+    }
+
+    /// Makes this worksheet the first visible tab when `enable` is true.
+    pub const fn set_first_tab(&mut self, enable: bool) -> &mut Self {
+        self.first_tab = enable;
+        if enable {
+            self.visibility = Visibility::Visible;
+        }
+        self
+    }
+
+    /// Sets the worksheet tab color.
+    ///
+    /// Default and automatic colors clear the tab color. Invalid RGB or theme
+    /// values are ignored.
+    pub fn set_tab_color(&mut self, color: impl Into<Color>) -> &mut Self {
+        let color = color.into();
+        if matches!(color, Color::Default | Color::Automatic) {
+            self.tab_color = None;
+        } else if color.is_valid() {
+            self.tab_color = Some(color);
+        }
+        self
+    }
+
+    /// Sets the default row height in points.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ValueNotRepresentable`] when the height is outside
+    /// `0..=409.5`.
+    pub fn set_default_row_height(&mut self, height: impl Into<f64>) -> Result<&mut Self> {
+        let height = height.into();
+        validate_row_height(height)?;
+        self.default_row_height = Some(height);
+        Ok(self)
+    }
+
+    /// Sets the default row height in pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ValueNotRepresentable`] when the height exceeds the
+    /// Excel limit.
+    pub fn set_default_row_height_pixels(&mut self, height: u32) -> Result<&mut Self> {
+        self.set_default_row_height(f64::from(height) * 0.75)
+    }
+
     /// Applies a format to one cell without changing its value.
     ///
     /// A missing cell becomes a formatted blank cell.
@@ -1038,6 +1162,27 @@ impl Worksheet {
     #[must_use]
     pub const fn cells(&self) -> &BTreeMap<u32, BTreeMap<u16, Cell>> {
         &self.cells
+    }
+
+    #[must_use]
+    pub(crate) const fn visibility(&self) -> Visibility {
+        self.visibility
+    }
+
+    pub(crate) const fn is_active(&self) -> bool {
+        self.active
+    }
+
+    pub(crate) const fn is_first_tab(&self) -> bool {
+        self.first_tab
+    }
+
+    pub(crate) const fn tab_color(&self) -> Option<Color> {
+        self.tab_color
+    }
+
+    pub(crate) const fn default_row_height(&self) -> Option<f64> {
+        self.default_row_height
     }
 
     #[must_use]
@@ -1562,6 +1707,64 @@ mod tests {
         assert!(matches!(
             worksheet.set_column_range_width(2, 1, 10.0),
             Err(Error::RowColumnOrder)
+        ));
+    }
+
+    #[test]
+    fn tab_state_follows_visibility_rules() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_active(true);
+        assert!(worksheet.is_active());
+        assert!(worksheet.view().selected);
+        assert_eq!(worksheet.visibility(), Visibility::Visible);
+
+        worksheet.set_hidden(true);
+        assert_eq!(worksheet.visibility(), Visibility::Hidden);
+        assert!(!worksheet.is_active());
+        assert!(!worksheet.view().selected);
+
+        worksheet.set_active(true);
+        assert_eq!(worksheet.visibility(), Visibility::Visible);
+
+        worksheet.set_very_hidden(true);
+        assert_eq!(worksheet.visibility(), Visibility::VeryHidden);
+        assert!(!worksheet.is_active());
+        assert!(!worksheet.view().selected);
+
+        worksheet.set_selected(true);
+        assert_eq!(worksheet.visibility(), Visibility::Visible);
+        worksheet.set_first_tab(true);
+        assert!(worksheet.is_first_tab());
+    }
+
+    #[test]
+    fn tab_color_ignores_invalid_values_and_clears_defaults() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_tab_color(Color::Red);
+        assert_eq!(worksheet.tab_color(), Some(Color::Red));
+
+        worksheet.set_tab_color(Color::RGB(0x0100_0000));
+        assert_eq!(worksheet.tab_color(), Some(Color::Red));
+
+        worksheet.set_tab_color(Color::Theme(10, 0));
+        assert_eq!(worksheet.tab_color(), Some(Color::Red));
+
+        worksheet.set_tab_color(Color::Default);
+        assert_eq!(worksheet.tab_color(), None);
+    }
+
+    #[test]
+    fn default_row_height_validates_and_converts_pixels() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_default_row_height(20.0).expect("height");
+        assert_eq!(worksheet.default_row_height(), Some(20.0));
+
+        worksheet.set_default_row_height_pixels(32).expect("pixels");
+        assert_eq!(worksheet.default_row_height(), Some(24.0));
+
+        assert!(matches!(
+            worksheet.set_default_row_height(409.6),
+            Err(Error::ValueNotRepresentable(_))
         ));
     }
 }
