@@ -20,6 +20,7 @@ mod e2e;
 mod error;
 mod format;
 mod package;
+mod protection;
 mod sheet;
 mod url;
 mod workbook;
@@ -33,6 +34,7 @@ pub use format::{
     Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,
     FormatScript, FormatUnderline,
 };
+pub use protection::ProtectionOptions;
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};
 pub use worksheet::{ColNum, RowNum, Worksheet};

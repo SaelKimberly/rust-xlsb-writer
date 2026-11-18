@@ -118,6 +118,9 @@ pub fn write_sheet(
     }
 
     push(out, &BrtEndSheetData::default())?;
+    if let Some(protection) = sheet.protection() {
+        push(out, &protection.record())?;
+    }
 
     let merged = sheet.merged_ranges();
     if !merged.is_empty() {
@@ -713,13 +716,14 @@ mod tests {
     use rust_xlsb_core::prelude::{
         BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginWsView,
         BrtBrk, BrtCellIsst, BrtCellRk, BrtColInfo, BrtColor, BrtEndSheet, BrtMargins,
-        BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsFmtInfo,
-        BrtWsProp,
+        BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel,
+        BrtSheetProtection, BrtWsFmtInfo, BrtWsProp,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID, SSTHolder, StyleRegistry};
 
     use super::*;
     use crate::Format;
+    use crate::ProtectionOptions;
     use crate::worksheet::{MAX_COL, pixels_to_width};
 
     fn records<T>(part: &[u8]) -> Vec<T>
@@ -973,6 +977,79 @@ mod tests {
     }
 
     #[test]
+    fn protection_options_map_to_permission_flags() {
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
+        let options = ProtectionOptions {
+            select_locked_cells: false,
+            select_unlocked_cells: false,
+            format_cells: true,
+            format_columns: true,
+            format_rows: true,
+            insert_columns: true,
+            insert_rows: true,
+            insert_links: true,
+            delete_columns: true,
+            delete_rows: true,
+            sort: true,
+            use_autofilter: true,
+            use_pivot_tables: true,
+            edit_scenarios: true,
+            edit_objects: true,
+            contents: false,
+        };
+        sheet.protect_with_password("password");
+        sheet.protect_with_options(&options);
+        sheet.protect();
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let protections = records::<BrtSheetProtection>(&out);
+        assert_eq!(protections.len(), 1);
+        let record = &protections[0];
+        assert_eq!(record.protpwd, 0x83AF);
+        assert_eq!(record.fLocked, 1);
+        assert_eq!(record.fObjects, 1);
+        assert_eq!(record.fScenarios, 1);
+        assert_eq!(record.fFormatCells, 1);
+        assert_eq!(record.fFormatColumns, 1);
+        assert_eq!(record.fFormatRows, 1);
+        assert_eq!(record.fInsertColumns, 1);
+        assert_eq!(record.fInsertRows, 1);
+        assert_eq!(record.fInsertHyperlinks, 1);
+        assert_eq!(record.fDeleteColumns, 1);
+        assert_eq!(record.fDeleteRows, 1);
+        assert_eq!(record.fSelLockedCells, 0);
+        assert_eq!(record.fSort, 1);
+        assert_eq!(record.fAutoFilter, 1);
+        assert_eq!(record.fPivotTables, 1);
+        assert_eq!(record.fSelUnlockedCells, 0);
+    }
+
+    #[test]
+    fn protection_follows_sheet_data_and_precedes_merged_cells() {
+        let mut sheet = Worksheet::new_named("Sheet1".to_owned());
+        sheet.write(0, 0, "x").expect("writes");
+        sheet.protect();
+        sheet
+            .merge_range(1, 0, 1, 1, "merged", &Format::new())
+            .expect("merge");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let ids = record_ids(&out);
+        let position = |id| ids.iter().position(|candidate| *candidate == id);
+        let data = position(KnownID::BrtEndSheetData).expect("sheet data");
+        let protection = position(KnownID::BrtSheetProtection).expect("protection");
+        let merged = position(KnownID::BrtBeginMergeCells).expect("merged cells");
+        assert!(data < protection);
+        assert!(protection < merged);
+    }
+
+    #[test]
     fn default_sheet_view_emits_no_view_records() {
         let sheet = Worksheet::new_named("Sheet1".to_owned());
         let sst = SSTHolder::create_in_memory().expect("sst");
@@ -992,6 +1069,7 @@ mod tests {
         assert_eq!(records::<BrtBeginRwBrk>(&out).len(), 0);
         assert_eq!(records::<BrtBeginColBrk>(&out).len(), 0);
         assert_eq!(records::<BrtBrk>(&out).len(), 0);
+        assert_eq!(records::<BrtSheetProtection>(&out).len(), 0);
     }
 
     #[test]

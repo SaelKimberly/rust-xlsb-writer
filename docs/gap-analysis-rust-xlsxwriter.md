@@ -22,8 +22,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
 2. **Cell-level structural features** — no rich strings.
 3. **Worksheet layout and view** — no full autofit or arbitrary defined
    names.
-4. **Analysis features** — no autofilters, tables, conditional formatting, data
-   validation, or protection.
+4. **Analysis features** — no autofilters, tables, conditional formatting, or
+   data validation; sheet protection covers the basic options but not
+   unprotected ranges.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 6. **Workbook metadata and packaging** — no user-defined names, document
@@ -32,8 +33,8 @@ It is not a feature-equivalent replacement. The largest gaps are:
    `rust_decimal`, serde, or Polars adapters.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 13 `Workbook`, 60
-`Worksheet`, and 47 `Format` public methods, versus 31, 165, and 52 methods in
+The current API surface is deliberately narrow: roughly 13 `Workbook`, 106
+`Worksheet`, and 48 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
 
@@ -49,13 +50,14 @@ the breadth gap.
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
 | Hyperlinks | `write_url` and text/format/tooltip variants, internal and external targets, default hyperlink style, worksheet relationships |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks, print areas, repeat rows/columns |
+| Protection | sheet protection with optional legacy password verifier and selectable permissions |
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, and value-representation errors |
-| Verification | 177 core + 139 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 179 core + 145 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -165,8 +167,8 @@ Status meanings:
 | `add_conditional_format` | Missing | DXF and conditional-format records |
 | `add_data_validation` | Missing | Validation records |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
-| `protect`, `protect_with_password`, `protect_with_options` | Missing | Sheet protection |
-| `unprotect_range`, `unprotect_range_with_options` | Missing | Unprotected ranges |
+| `protect`, `protect_with_password`, `protect_with_options` | Supported | `BrtSheetProtection`; legacy verifier, no encryption |
+| `unprotect_range`, `unprotect_range_with_options` | Missing | `BrtRangeProtection` records |
 | `ignore_error`, `ignore_error_range` | Missing | Error-ignore records |
 | `set_serialize_headers`, serde serialization/deserialization | Missing | Serde integration |
 
@@ -284,6 +286,7 @@ records or package parts that do not exist yet.
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
 | Deflate | Compression strategy and ZIP writer options |
 | Workbook behavior | Shipped: `BrtCalcProp`, `BrtFileSharing`, and `BrtBookView.iTabRatio` |
+| Worksheet protection | Shipped: `BrtSheetProtection`, legacy password verifier, permission options |
 
 ## 6. Roadmap
 
@@ -328,7 +331,7 @@ records; LibreOffice renders merged ranges and links; no stubs.
 | `add_table` | Structured tables and table styles | L |
 | `add_conditional_format` | Reporting and highlighting | L |
 | `add_data_validation` | Input constraints | M |
-| `protect` / `unprotect_range` | Shared-workbook safety | M |
+| `unprotect_range` | Shared-workbook safety; basic `protect*` is shipped | M |
 | `set_formula_result` variants | Finishing touches for computed sheets | S–M |
 
 **Exit criteria:** filters/tables/validation survive calamine where readable;
@@ -434,7 +437,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 177 core + 139 writer unit tests and 6 doctests; calamine
+- Test evidence: 179 core + 145 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on

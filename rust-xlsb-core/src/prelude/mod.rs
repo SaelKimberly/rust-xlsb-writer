@@ -15,8 +15,8 @@ pub use record::{
     BrtColor, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
     BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt, BrtFont, BrtHLink, BrtMargins,
     BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem, BrtSel,
-    BrtStyle, BrtSupSelf, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign,
-    NameParsedFormula, ReadingOrder, VAlign, Xti,
+    BrtSheetProtection, BrtStyle, BrtSupSelf, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr,
+    HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
 };
 pub use scope::*;
 pub use structure::{
@@ -120,6 +120,7 @@ mod tests {
     #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]
     #[case::brt_calc_prop(|| checked_test::<BrtCalcProp>(26))]
     #[case::brt_file_sharing(|| checked_test::<BrtFileSharing>(8))]
+    #[case::brt_sheet_protection(|| checked_test::<BrtSheetProtection>(66))]
     #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]
     #[case::brt_begin_ws_view(|| checked_test::<BrtBeginWsView>(30))]
     #[case::brt_end_ws_view(|| checked_test::<BrtEndWsView>(0))]

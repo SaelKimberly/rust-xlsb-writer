@@ -24,7 +24,7 @@ const MAX_CELL_XFS: usize = 65_430;
 ///
 /// [`StyleRegistry::add`] replaces `xf.iFont`, `xf.iFill`, `xf.ixBorder` and
 /// `xf.ixfeParent` with the indexes it assigns.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CellStyle {
     /// Font properties.
     pub font: BrtFont,
@@ -36,11 +36,25 @@ pub struct CellStyle {
     pub xf: BrtXF,
 }
 
+impl Default for CellStyle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CellStyle {
-    /// Creates the default style: default font, fill, border and XF.
+    /// Creates the default style: default font, fill, border and a locked XF.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            font: BrtFont::default(),
+            fill: BrtFill::default(),
+            border: BrtBorder::default(),
+            xf: BrtXF {
+                fLocked: true,
+                ..BrtXF::default()
+            },
+        }
     }
 }
 
@@ -98,7 +112,7 @@ impl StyleRegistry {
 
         let xf = BrtXF {
             xfGrbitAtr: explicit_grbit(),
-            ..BrtXF::default()
+            ..CellStyle::default().xf
         };
         registry.xf_ids.insert(xf.clone(), 0);
         registry.xfs.push(xf);
@@ -293,7 +307,7 @@ impl StyleRegistry {
             out,
             &BrtXF {
                 ixfeParent: 0xFFFF,
-                ..BrtXF::default()
+                ..CellStyle::default().xf
             },
         )?;
         push_record(out, &BrtEndCellStyleXFs::default())?;
@@ -354,6 +368,8 @@ mod tests {
         let registry = StyleRegistry::new();
         assert_eq!(registry.len(), 1);
         assert!(!registry.is_empty());
+        assert!(registry.xfs[0].fLocked);
+        assert!(CellStyle::default().xf.fLocked);
     }
 
     #[test]

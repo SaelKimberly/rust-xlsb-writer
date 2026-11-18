@@ -573,7 +573,7 @@ mod tests {
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
         BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtExternSheet, BrtFileSharing,
-        BrtHLink, BrtName,
+        BrtHLink, BrtName, BrtSheetProtection, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff};
 
@@ -761,6 +761,28 @@ mod tests {
         assert!(!names.iter().any(|name| name.contains("_rels/sheet")));
         let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
         assert_eq!(records::<BrtHLink>(&sheet).len(), 0);
+    }
+
+    #[test]
+    fn worksheet_protection_is_written_to_the_sheet_part() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write(0, 0, "locked").expect("writes");
+        worksheet.protect_with_password("abc123");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let protections = records::<BrtSheetProtection>(&sheet);
+        assert_eq!(protections.len(), 1);
+        assert_eq!(protections[0].protpwd, 0xC58F);
+        assert_eq!(protections[0].fLocked, 1);
+        assert_eq!(protections[0].fSelLockedCells, 1);
+        assert_eq!(protections[0].fSelUnlockedCells, 1);
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        let xfs = records::<BrtXF>(&styles);
+        assert!(xfs.len() >= 2);
+        assert!(xfs[..2].iter().all(|xf| xf.fLocked));
     }
 
     #[test]

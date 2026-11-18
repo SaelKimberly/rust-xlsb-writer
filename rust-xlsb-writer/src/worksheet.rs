@@ -6,6 +6,7 @@ use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
 use crate::format::BorderSide;
+use crate::protection::{ProtectionOptions, SheetProtection, hash_password};
 use crate::{Color, Error, Format, Result, Url};
 
 pub const MAX_ROW: u32 = 1_048_575;
@@ -291,6 +292,7 @@ pub struct Worksheet {
     infinity_value: Option<String>,
     neg_infinity_value: Option<String>,
     hyperlinks: BTreeMap<(RowNum, ColNum), Url>,
+    protection: Option<SheetProtection>,
 }
 
 impl Default for Worksheet {
@@ -341,6 +343,7 @@ impl Worksheet {
             infinity_value: None,
             neg_infinity_value: None,
             hyperlinks: BTreeMap::new(),
+            protection: None,
         }
     }
 
@@ -1381,6 +1384,42 @@ impl Worksheet {
             self.view.selected = false;
         }
         self
+    }
+
+    /// Protects the worksheet without a password.
+    ///
+    /// Existing protection options and password are preserved.
+    pub fn protect(&mut self) -> &mut Self {
+        self.protection
+            .get_or_insert_with(|| SheetProtection::new(ProtectionOptions::new()));
+        self
+    }
+
+    /// Protects the worksheet with a weak legacy password verifier.
+    ///
+    /// Excel sheet passwords are not encryption. Only ASCII passwords are
+    /// supported.
+    pub fn protect_with_password(&mut self, password: &str) -> &mut Self {
+        let protection = self
+            .protection
+            .get_or_insert_with(|| SheetProtection::new(ProtectionOptions::new()));
+        protection.password_hash = hash_password(password);
+        self
+    }
+
+    /// Protects the worksheet with explicit options.
+    ///
+    /// An existing password is preserved.
+    pub fn protect_with_options(&mut self, options: &ProtectionOptions) -> &mut Self {
+        let protection = self
+            .protection
+            .get_or_insert_with(|| SheetProtection::new(ProtectionOptions::new()));
+        protection.options = *options;
+        self
+    }
+
+    pub(crate) const fn protection(&self) -> Option<SheetProtection> {
+        self.protection
     }
 
     /// Marks the worksheet as active when `enable` is true.

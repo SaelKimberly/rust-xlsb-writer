@@ -346,7 +346,10 @@ impl Format {
             font: BrtFont::default(),
             fill: BrtFill::default(),
             border: BrtBorder::default(),
-            xf: BrtXF::default(),
+            xf: BrtXF {
+                fLocked: true,
+                ..BrtXF::default()
+            },
             number_format_spec: None,
             pattern_set: false,
             font_color: None,
@@ -1083,6 +1086,23 @@ mod tests {
 
         let style = cell_style(&Format::new().set_hidden().unset_hidden());
         assert!(!style.xf.fHidden);
+    }
+
+    #[test]
+    fn new_format_is_locked_and_unlocked_format_gets_its_own_xf() {
+        let mut registry = StyleRegistry::new();
+        let default = Format::new()
+            .to_cell_style(&mut registry)
+            .expect("valid format");
+        assert!(default.xf.fLocked);
+        assert_eq!(registry.add(default).expect("adds"), 0);
+
+        let unlocked = Format::new()
+            .set_unlocked()
+            .to_cell_style(&mut registry)
+            .expect("valid format");
+        assert!(!unlocked.xf.fLocked);
+        assert_ne!(registry.add(unlocked).expect("adds"), 0);
     }
 
     #[test]
