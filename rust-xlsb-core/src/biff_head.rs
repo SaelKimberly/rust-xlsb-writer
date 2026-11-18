@@ -3,7 +3,7 @@ use crate::{
     err::{Error, Result},
 };
 use std::{
-    intrinsics::{cold_path, unlikely},
+    hint::cold_path,
     io::{BufRead, Write},
     ops::Deref,
 };
@@ -31,9 +31,9 @@ impl BiffHead {
     }
 
     pub const fn new(id: u16, size: u32) -> Result<Self> {
-        if unlikely(id & 0x80_00 != 0) {
+        if id & 0x80_00 != 0 {
             Err(Error::TooLargeRecordId(id.swap_bytes(), Self::MAX_ID))
-        } else if unlikely(size > Self::MAX_SIZE) {
+        } else if size > Self::MAX_SIZE {
             Err(Error::TooLargeRecordBody(
                 size as usize,
                 Self::MAX_SIZE as usize,
@@ -60,7 +60,7 @@ impl BiffHead {
     pub const fn const_from_data(data: &[u8]) -> Result<(usize, BiffHead)> {
         let len = data.len();
 
-        if unlikely(len < 2) {
+        if len < 2 {
             Err(Error::Incomplete(len, 2))
         } else {
             unsafe {
@@ -75,13 +75,13 @@ impl BiffHead {
                         ));
                     }
                     [id @ 0x00..0x80, _] => {
-                        if unlikely(len == 2) {
+                        if len == 2 {
                             return Err(Error::Incomplete(2, 3));
                         }
                         (id as u16, data.as_ptr().offset(1))
                     }
                     id @ [0x80..=u8::MAX, 0x00..0x80] => {
-                        if unlikely(len == 2) {
+                        if len == 2 {
                             return Err(Error::Incomplete(2, 3));
                         }
                         (u16::from_le_bytes(id), data.as_ptr().offset(2))
@@ -112,14 +112,14 @@ impl BiffHead {
                             p = p.offset(1);
                             sz ^= ((!*p) as u32) << 14;
 
-                            if unlikely(*p > 0x7f) {
+                            if *p > 0x7f {
                                 if data.len() == 5 {
                                     return Err(Error::Incomplete(5, 6));
                                 }
                                 p = p.offset(1);
                                 sz ^= ((!*p) as u32) << 21;
 
-                                if unlikely(*p > 0x7f) {
+                                if *p > 0x7f {
                                     return Err(Error::TooLargeRecordBody(
                                         sz as usize,
                                         Self::MAX_SIZE as usize,

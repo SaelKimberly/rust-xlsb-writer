@@ -15,12 +15,6 @@
 */
 
 #![deny(dead_code)]
-#![allow(internal_features)]
-#![feature(maybe_uninit_write_slice)]
-#![feature(core_intrinsics)]
-#![feature(str_from_utf16_endian)]
-#![feature(slice_pattern)]
-#![feature(assert_matches)]
 mod biff;
 mod biff_head;
 mod biff_id;

@@ -26,9 +26,8 @@ pub enum SSTHolderError {
 ///
 /// A wrapper around SQLite database to store shared strings
 ///
-/// Finalized SSTHolder cannot be modified. Finalize the SSTHolder to unlock retrieving indexes.
-///
-/// Strings in finalized SSTHolder are sorted by their frequency, descending.
+/// `push` and `push_batch` return the shared-string index immediately, so no
+/// separate finalization step is required.
 ///
 /// # Usage
 ///
@@ -37,12 +36,12 @@ pub enum SSTHolderError {
 ///
 /// let holder = SSTHolder::create_in_memory().unwrap();
 ///
-/// let hash: u64 = holder.push("foo").unwrap();
+/// let idx: u32 = holder.push("foo").unwrap();
 /// // ... Add more strings
-/// holder.finalize().unwrap();
-/// let sst: u32 = holder.load(hash).unwrap().unwrap();
+/// let idxs: Vec<u32> = holder.push_batch(["foo", "bar"]).unwrap();
 ///
-/// assert_eq!(sst, 0);
+/// assert_eq!(idx, 0);
+/// assert_eq!(idxs, [0, 1]);
 /// ```
 #[derive(Clone, Debug)]
 pub struct SSTHolder {

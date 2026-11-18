@@ -6,12 +6,6 @@ pub mod scope;
 pub mod structure;
 
 use super::{Checked, Unchecked};
-// #[allow(dead_code)]
-// pub(crate) mod util;
-// #[allow(unused_imports)]
-// pub(crate) use util::{
-//     nullable_utf16_read, nullable_utf16_write, raw_bit_read, raw_bit_write, utf16_read, utf16_write,
-// };
 
 pub use collection::BrtBeginColInfos;
 pub use record::{BrtColor, BrtWsProp, BrtXF};

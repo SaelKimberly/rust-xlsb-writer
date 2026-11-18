@@ -5,7 +5,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-homepage.workspace = true
 documentation.workspace = true
 repository.workspace = true
 authors.workspace = true
@@ -19,29 +18,24 @@ categories.workspace = true
 crate-type = ["rlib"]
 
 [dependencies]
-# [x] for reading and writing zip files
-zip = { version = "^2.6" }
 # [x] for BIFF record content serialization and deserialization
-deku = { version = "^0.19" }
+deku = { version = "^0.20" }
 # [x] for fast and safe zero-copy conversions
-zerocopy = { version = "^0.8" }
+zerocopy = { version = "^0.8.63" }
 # [x] for enum values in debugging
-num_enum = { version = "^0.7" }
-strum = { version = "^0.27" }
-strum_macros = { version = "^0.27" }
+num_enum = { version = "^0.7.6" }
+strum = { version = "^0.28" }
+strum_macros = { version = "^0.28" }
 # [x] for error handling
-thiserror = { version = "^2.0" }
-# [x] for fast allocations
-bumpalo = { version = "^3.17" }
-bumpalo-herd = { version = "^0.1" }
+thiserror = { version = "^2.0.21" }
 # [x] for test generators
-concat-idents = { version = "^1.1" }
+concat-idents = { version = "^1.1.5" }
 # [x] for shared strings
-xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rusqlite = { version = "^0.35", features = ["bundled", "rusqlite-macros"] }
+xxhash-rust = { version = "0.8.21", features = ["xxh3"] }
+rusqlite = { version = "^0.43", features = ["bundled", "rusqlite-macros"] }
 
 [dev-dependencies]
-criterion = "^0.5"
+criterion = "^0.8"
 
 [features]
 default = []
