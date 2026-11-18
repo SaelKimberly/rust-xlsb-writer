@@ -11,8 +11,9 @@ fidelity.
 
 Current reality: the binary record layer plus the value-conversion contract
 (`ToCellValue`/`CellValue`), the workbook context (`WbContext`,
-`NumberPolicy`), and minimal `Workbook`/`Worksheet` types owning the
-shared-string table. Package assembly still lives only in the `e2e` test module
+`NumberPolicy`), minimal `Workbook`/`Worksheet` types owning the
+shared-string table, and `chrono` temporal values (dates, times, datetimes,
+durations) encoded as Excel serial numbers. Package assembly still lives only in the `e2e` test module
 (`src/e2e/`): the harness builds a minimal XLSB package and the tests read it
 back with `calamine`, so layout, BIFF framing, number policy, and every
 implemented cell record are proven together. There is no public worksheet or
@@ -67,14 +68,24 @@ that chooses `Real` or a lossless `Rk` encoding. `Workbook` owns one `SSTHolder`
 to inline strings; only an explicit `SharedString` goes into the SST, and its id
 is range-checked against the target workbook at conversion time.
 
+Temporal conversion lives in `temporal.rs` and reuses the same path.
+`NaiveDate` becomes an integer day serial in the 1900 system, so dates are
+`BrtCellRk` ints; `NaiveTime`, `NaiveDateTime`, and `TimeDelta` become day
+fractions rounded to milliseconds, so they are normally `BrtCellReal`.
+`DateTime<Utc>` uses its UTC wall clock. Values outside 1900-01-01..9999-12-31,
+chrono leap seconds, and a time that rounds past midnight are rejected. There is
+no 1904-system support (`BrtWbProp` does not exist) and no timezone other than
+UTC.
+
 ## Key Directories
 
 | Path | Contents |
 |---|---|
 | `Cargo.toml` | Virtual workspace manifest; members and shared `[workspace.package]` metadata |
-| `rust-xlsb-core/src/` | All working code: record framing, id catalogue, value conversion, workbook context, shared strings |
+| `rust-xlsb-core/src/` | All working code: record framing, id catalogue, value conversion, temporal serials, workbook context, shared strings |
 | `rust-xlsb-core/src/prelude/` | Public record/structure facade (`record/`, `structure/`, `scope.rs`, `collection.rs`) |
 | `rust-xlsb-writer/src/lib.rs` | Stub crate; only a `MiMalloc` global allocator is live |
+| `rust-xlsb-core/examples/` | `showcase.rs`: writes one XLSB row per `ToCellValue` implementation |
 | `.github/` | `FUNDING.yml` only; no workflows, templates, or CI |
 
 ## Development Commands
@@ -110,7 +121,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 116 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 132 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -179,8 +190,10 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/context.rs` | `SharedString`, `WbContext`, `NumberPolicy`, `NumberEncoding` |
 | `rust-xlsb-core/src/cell_value.rs` | `CellValue`, `ToCellValue` and its impl matrix |
 | `rust-xlsb-core/src/workbook.rs` | `Workbook` (owns `SSTHolder`) and `Worksheet<'wb>` |
+| `rust-xlsb-core/src/temporal.rs` | `chrono` → Excel serial conversion for dates, times, datetimes, durations |
 | `rust-xlsb-core/src/e2e/mod.rs` | End-to-end cell tests read back through `calamine` |
-| `rust-xlsb-core/src/e2e/harness.rs` | Builds the minimal package, ZIP included, for those tests |
+| `rust-xlsb-core/src/e2e/harness.rs` | Builds the minimal package, ZIP included, for those tests; reused by the showcase example |
+| `rust-xlsb-core/examples/showcase.rs` | Runnable XLSB showcase of every `ToCellValue` implementor |
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
 | `rust-xlsb-writer/src/lib.rs` | Stub; allocator plus ~500 lines of commented prototype |
 | `rust-toolchain.toml` | Stable `1.100.0` pin at the root; `rust-xlsb-core/rust-toolchain.toml` duplicates it |
@@ -205,8 +218,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - Dependency set, latest major/minor for this toolchain: `deku 0.20`,
   `rusqlite 0.43`, `strum 0.28`, `criterion 0.8`, `zerocopy 0.8.63`,
   `thiserror 2.0.21`, `num_enum 0.7.6`, `xxhash-rust 0.8.21`,
-  `concat-idents 1.1.5`, `mimalloc 0.1.52`, `rstest 0.28` (dev),
-  `calamine 0.38` (dev, reads generated packages back in `e2e` tests).
+  `concat-idents 1.1.5`, `chrono 0.4` (no `clock`, `std` only),
+  `mimalloc 0.1.52`, `rstest 0.28` (dev), `calamine 0.38` (dev, `chrono`
+  feature enabled, reads generated packages back in `e2e` tests).
 - No release tooling, changelog, or publish workflow. Version is `0.1.0` and the
   README defers `1.0.0-alpha` to community adoption.
 
@@ -214,8 +228,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 
 - Every test lives inside the crate: `#[cfg(test)] mod tests` next to the code
   it covers, plus the `#[cfg(test)] mod e2e` package suite (`src/e2e/`). There
-  is no `tests/`, `benches/`, `examples/`, or fixture directory.
-- 116 unit tests and 6 doctests total. Most unit tests are rstest cases in the
+  is no `tests/`, `benches/`, or fixture directory. `examples/showcase.rs` is a
+  runnable demo, not a test; it includes the `e2e` harness by path.
+- 132 unit tests and 6 doctests total. Most unit tests are rstest cases in the
   `test_biff_export` table in `prelude/mod.rs`, each calling the generic
   `checked_test::<T>`: `Default` → `to_bytes` → exact byte-size assert →
   `from_bytes` → `check()` on both → `PartialEq`, `Hash`, and `Debug` equality.
@@ -229,8 +244,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - `e2e` tests are the package-level oracle: cells are built through
   `ToCellValue` against a real `Workbook`, written, then parsed with `calamine`
   0.38 (dev-dependency) to assert value and position. They also assert which
-  cell record a conversion picked and that the Shared Strings part is omitted
-  when the table is empty. `calamine` is an independent reader, so these tests
+  cell record a conversion picked, that temporal serials round-trip at
+  millisecond precision, and that the Shared Strings part is omitted when the
+  table is empty. `calamine` is an independent reader, so these tests
   run in CI without LibreOffice or Excel. Header boundary cases (`0x80`,
   `0x4000`, `0x200000` size thresholds, `Incomplete`, `ConsumeFailed`) are
   still untested.
@@ -238,6 +254,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - No CI runs any of this. Run `cargo test --workspace` before claiming a change
   works, and update the affected size literal rather than loosening the
   assertion.
+- `cargo run -p rust-xlsb-core --example showcase -- showcase.xlsb` writes a
+  workbook with one row per `ToCellValue` implementation, for manual inspection
+  in LibreOffice or Excel.
 
 ## Commit Style
 

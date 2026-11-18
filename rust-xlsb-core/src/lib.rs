@@ -15,6 +15,10 @@
 */
 
 #![deny(dead_code)]
+
+// Allows the `e2e` harness to be included by the `showcase` example as-is.
+#[cfg(test)]
+extern crate self as rust_xlsb_core;
 mod biff;
 mod biff_head;
 mod biff_id;
@@ -24,6 +28,7 @@ mod context;
 mod err;
 pub mod prelude;
 mod sst_sqlite;
+mod temporal;
 mod workbook;
 
 #[cfg(test)]

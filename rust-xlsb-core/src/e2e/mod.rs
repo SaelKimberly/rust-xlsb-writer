@@ -5,11 +5,15 @@
 mod harness;
 
 use calamine::{CellErrorType, Data};
+use chrono::{NaiveDate, NaiveTime, TimeDelta};
 
 use crate::prelude::BErr;
 use crate::{Error, KnownID, ToCellValue, WbContext, Workbook};
 
-use harness::{CellSpec, DATE_STYLE, cell_record_ids, includes_shared_strings_part, roundtrip};
+use harness::{
+    CellSpec, DATE_STYLE, DATETIME_STYLE, DURATION_STYLE, TIME_STYLE, cell_record_ids,
+    includes_shared_strings_part, roundtrip,
+};
 
 fn workbook() -> Workbook {
     Workbook::new().expect("in-memory workbook")
@@ -99,6 +103,115 @@ fn date_format_makes_a_datetime() {
         Some(Data::DateTime(value)) => assert_eq!(value.as_f64(), 45_000.0),
         other => panic!("expected a datetime, got {other:?}"),
     }
+}
+
+#[test]
+fn reads_dates_around_the_1900_leap_bug() {
+    let workbook = workbook();
+    let dates = [
+        NaiveDate::from_ymd_opt(1900, 1, 1).unwrap(),
+        NaiveDate::from_ymd_opt(1900, 2, 28).unwrap(),
+        NaiveDate::from_ymd_opt(1900, 3, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2026, 11, 18).unwrap(),
+        NaiveDate::from_ymd_opt(9999, 12, 31).unwrap(),
+    ];
+    let cells: Vec<CellSpec<'_>> = dates
+        .iter()
+        .enumerate()
+        .map(|(row, date)| {
+            let row = u32::try_from(row).expect("five dates fit u32");
+            CellSpec::new(row, 0, date).style(DATE_STYLE)
+        })
+        .collect();
+    let range = roundtrip(&workbook, &cells);
+    for (row, date) in dates.iter().enumerate() {
+        let row = u32::try_from(row).expect("five dates fit u32");
+        match range.get_value((row, 0)) {
+            Some(Data::DateTime(value)) => assert_eq!(
+                value.as_datetime().expect("within the Excel range").date(),
+                *date
+            ),
+            other => panic!("expected a datetime in row {row}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn reads_datetime_milliseconds() {
+    let workbook = workbook();
+    let value = NaiveDate::from_ymd_opt(2026, 11, 18)
+        .unwrap()
+        .and_hms_milli_opt(12, 34, 56, 789)
+        .unwrap();
+    let range = roundtrip(&workbook, &[CellSpec::new(0, 0, &value).style(DATE_STYLE)]);
+    match range.get_value((0, 0)) {
+        Some(Data::DateTime(datetime)) => assert_eq!(datetime.as_datetime(), Some(value)),
+        other => panic!("expected a datetime, got {other:?}"),
+    }
+}
+
+#[test]
+fn reads_time_and_duration_fractions() {
+    let workbook = workbook();
+    let time = NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
+    let duration = TimeDelta::milliseconds(-1500);
+    let range = roundtrip(
+        &workbook,
+        &[CellSpec::new(0, 0, &time), CellSpec::new(1, 0, &duration)],
+    );
+    assert_eq!(
+        range.get_value((0, 0)),
+        Some(&Data::Float(45_296_789.0 / 86_400_000.0))
+    );
+    assert_eq!(
+        range.get_value((1, 0)),
+        Some(&Data::Float(-1500.0 / 86_400_000.0))
+    );
+}
+
+#[test]
+fn temporal_styles_display_time_and_duration() {
+    let workbook = workbook();
+    let time = NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
+    let instant = NaiveDate::from_ymd_opt(2026, 11, 18)
+        .unwrap()
+        .and_time(time);
+    let duration = TimeDelta::milliseconds(3_723_500);
+    let range = roundtrip(
+        &workbook,
+        &[
+            CellSpec::new(0, 0, &time).style(TIME_STYLE),
+            CellSpec::new(1, 0, &instant).style(DATETIME_STYLE),
+            CellSpec::new(2, 0, &duration).style(DURATION_STYLE),
+        ],
+    );
+
+    let expected: [f64; 3] = [
+        45_296_789.0 / 86_400_000.0,
+        46_344.0 + 45_296_789.0 / 86_400_000.0,
+        3_723_500.0 / 86_400_000.0,
+    ];
+    for (row, expected) in expected.into_iter().enumerate() {
+        let row = u32::try_from(row).expect("three styles fit u32");
+        let actual = match range.get_value((row, 0)) {
+            Some(Data::DateTime(value)) => value.as_f64(),
+            Some(Data::Float(value)) => *value,
+            other => panic!("expected a numeric temporal value in row {row}, got {other:?}"),
+        };
+        assert_eq!(actual.to_bits(), expected.to_bits());
+    }
+}
+
+#[test]
+fn temporal_cells_pick_compact_or_real_records() {
+    let workbook = workbook();
+    let date = NaiveDate::from_ymd_opt(2026, 11, 18).unwrap();
+    let date_ids = cell_record_ids(&workbook, &[CellSpec::new(0, 0, &date)]);
+    assert!(date_ids.contains(&KnownID::BrtCellRk));
+
+    let instant = date.and_hms_milli_opt(12, 34, 56, 789).unwrap();
+    let instant_ids = cell_record_ids(&workbook, &[CellSpec::new(0, 0, &instant)]);
+    assert!(instant_ids.contains(&KnownID::BrtCellReal));
 }
 
 #[test]

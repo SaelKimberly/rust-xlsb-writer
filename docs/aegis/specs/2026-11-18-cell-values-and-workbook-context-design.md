@@ -1,6 +1,6 @@
 # Cell values, workbook context, and shared-string ids
 
-- Status: Implemented (slices 1–5; `e2e` migration included)
+- Status: Implemented (slices 1–7; `e2e` migration and temporal values included)
 - Date: 2026-11-18
 - Method pack: Aegis design spec
 - Target: `rust-xlsb-core`, MS-XLSB revision 22.0
@@ -48,9 +48,9 @@ exists, keeps the contract small: no migration of user code is required, the
 
 ## 3. Non-goals
 
-- Dates, times, number formats, or styles. A cell's style index stays an
-  orthogonal field next to `CellValue`; date tests keep using the harness'
-  style slot.
+- Number formats and styles. A cell's style index stays an orthogonal field
+  next to `CellValue`; temporal tests keep using the harness' style slot.
+  Temporal values themselves are §5.8.
 - Formulas, rich text, error-bar metadata, or merged cells.
 - Automatic interning of `&str`. `&str` converts to an inline string; shared
   strings are always an explicit workbook operation.
@@ -80,6 +80,8 @@ exists, keeps the contract small: no migration of user code is required, the
 | `RkNumber::int` accepts the signed 30-bit range `-2^29..=2^29 - 1`; `percent` sets `fx100`; `float` accepts only doubles whose low 34 bits are zero | `src/prelude/structure/rk_number.rs` |
 | Cell records already exist: `BrtCellReal`, `BrtCellRk`, `BrtCellBool`, `BrtCellError`, `BrtCellBlank`, `BrtCellSt`, `BrtCellIsst` | `src/prelude/record/` |
 | `calamine` reads Rk int as `Data::Int`, Rk f64/percent and Real as `Data::Float`, both string records as `Data::String` | verified in `e2e` |
+| Excel stores dates and times as one serial `f64` (1900 epoch, fake 1900-02-29); `calamine` resolves serials to milliseconds and applies the `f < 60` shift | `calamine` `src/datatype.rs`; verified in `e2e` |
+| `Xnum(f64)` is the body of `BrtCellReal`; Rk is an alternative encoding of the same f64, not a different scalar type | `src/prelude/structure/xnum.rs`, `src/prelude/record/brt_cell_real.rs` |
 | `CheckedBiff`/`BiffWrite` require a record instance before an id is known | `src/biff.rs` |
 
 ## 5. Proposed model
@@ -101,6 +103,7 @@ Three new modules, each owning one concern:
 | `src/context.rs` | `SharedString`, `WbContext`, `NumberPolicy`, `NumberEncoding` |
 | `src/cell_value.rs` | `CellValue`, `ToCellValue` |
 | `src/workbook.rs` | `Workbook`, `Worksheet<'wb>` |
+| `src/temporal.rs` | `ToCellValue` impls for `chrono` types; no new public items |
 
 `lib.rs` re-exports all of them, plus `SSTHolderError` (needed by the new
 `Error` variant). No existing public item changes shape.
@@ -385,6 +388,38 @@ not reopen a table from disk; that path is unsupported by design (§4).
 arrive with the worksheet writer. The type exists now because it is the
 intended context passed to `to_cell_value` by callers.
 
+### 5.8 Temporal values (`temporal.rs`)
+
+`chrono` types convert through the same `ToCellValue` path into
+`CellValue::Number`; no new record or public type is introduced.
+
+| chrono type | Stored value | Typical encoding |
+|---|---|---|
+| `NaiveDate` | serial day `1..=2_958_465` in the 1900 system | Rk int |
+| `NaiveTime` | fraction of a day, rounded to milliseconds | Real (Rk only for exact fractions) |
+| `NaiveDateTime` | day serial plus fraction | Real |
+| `DateTime<Utc>` | `naive_utc()` wall clock | Real |
+| `TimeDelta` | signed day fraction | Real |
+
+Contract:
+
+- Precision is one millisecond, matching Excel and `calamine`; rounding is half
+  away from zero. Sub-millisecond components are rounded, not rejected.
+- Serials are 1900-system only: no `BrtWbProp` exists, so the 1904 system
+  cannot be signalled. Dates before 1900-03-01 are shifted one day earlier to
+  skip Excel's fake 1900-02-29, and a datetime that rounds from 1900-02-28 into
+  the next day lands on serial 61, not the fake day 60.
+- `ValueNotRepresentable` rejects dates outside 1900-01-01..9999-12-31, a
+  `NaiveTime` that rounds to the next midnight, a datetime that rounds past
+  9999-12-31, and chrono leap seconds (`nanosecond >= 1_000_000_000`).
+- `chrono` is `default-features = false, features = ["std"]`; no `clock`
+  feature. Only `DateTime<Utc>` has a timezone implementation: Excel stores no
+  timezone, and `Local` would make output depend on the host.
+- A date serial is an integer, so `NumberPolicy` encodes it as Rk int. Most
+  times and all realistic datetimes fail both Rk integer and Rk float tests
+  (`1/86_400` has non-zero low 34 bits) and become `BrtCellReal`; the policy may
+  still pick Rk percent for exact hundredth fractions such as 12:00:00.
+
 ## 6. Error model
 
 `src/err.rs` gains:
@@ -433,6 +468,8 @@ structured fields.
    tests keep their assertions, new tests cover 9.4.
 6. Superseded test helper: harness `CellValue` is deleted, not kept as a second
    conversion path.
+7. `temporal.rs`: `chrono` impls, epoch arithmetic, range and precision
+   rejection, plus calamine `chrono` feature in `[dev-dependencies]`.
 
 Each slice compiles and passes `cargo test --workspace` on its own; slices 1–3
 add no behavior visible to the file format.
@@ -485,7 +522,18 @@ add no behavior visible to the file format.
 - A sheet with only inline strings opens in `calamine` and its package contains
   no `xl/sharedStrings.bin` once the writer path is exercised.
 
-### 9.5 Quality gates
+### 9.5 Temporal values (`temporal.rs`, `e2e`)
+
+- Serial days 1900-01-01 → 1, 1900-02-28 → 59, 1900-03-01 → 61,
+  2026-11-18 → 46_344, and 9999-12-31 → 2_958_465 read back through `calamine`
+  as the same dates.
+- `2026-11-18T12:34:56.789` round-trips to the millisecond; `NaiveTime` and
+  `TimeDelta` round-trip the exact day fraction.
+- A date cell uses `BrtCellRk`; a datetime uses `BrtCellReal`.
+- Leap seconds, dates outside the Excel range, and times that round past
+  midnight fail before writing.
+
+### 9.6 Quality gates
 
 `cargo test --workspace`, `cargo clippy --workspace --all-targets` (zero
 warnings), `cargo fmt --all --check`.
@@ -502,6 +550,9 @@ warnings), `cargo fmt --all --check`.
 | `CellValue` carrying a style index | Conflates value and formatting; dates need both independently |
 | `SSTHolder::contains(id)` backed by a SQL `EXISTS` query | A DB round-trip per shared-string cell; the cached `len()` plus the insert-only invariant answers the same question in one load |
 | Key the table by `UNIQUE(txt)` with `WITHOUT ROWID` (drop `idx`) | Index key becomes the full text, so inserts compare strings instead of an 8-byte hash and the index duplicates the text. 30k rows: +6% insert / +16% size on short strings, +71% insert / +92% size on 190-byte strings (SQLite 3, WAL). `WITHOUT ROWID` also removes the free insertion-order id, forcing an explicit id column and `ORDER BY id` when emitting |
+| Encode time/datetime as Rk whenever chrono has a value | Rk has no exact form for 99.7% of whole-second times (`1/86_400` has non-zero low 34 bits); forcing Rk would change the value. The policy already picks Rk for the rare exact fractions |
+| `DateTime<Local>` / `DateTime<FixedOffset>` impls | Excel stores no timezone; `Local` makes produced bytes depend on the writer's host zone, and an offset cannot be represented at all. `DateTime<Utc>` is the one unambiguous wall clock |
+| Preserve nanoseconds by storing the raw double | A datetime packs date and fraction into one f64, so it already loses up to 314 ns at 2026 and 20 µs at 9999; Excel and `calamine` resolve only milliseconds. Rounding once, at conversion, makes the contract observable and testable |
 | Reorder the SST by frequency (top-N ids first) and remap every `isst` | `isst` is an ordinal into a record stream that readers materialize before resolving any cell (`calamine` builds the whole `Vec<String>` then indexes it), so item position does not change lookup cost; load cost is the sum of item bytes either way. The remap adds an O(cells) indirection and a lifecycle hazard: ids held in `SharedString` would no longer match emitted ids. Only deterministic output ordering would be gained |
 
 ## 11. Performance levers
@@ -531,9 +582,18 @@ Requirements for the writer work that follows this spec. They do not change the
 - `Rk` percent vs Rk float choice is invisible to `calamine` and Excel (both
   `Float`), so a wrong-but-lossless choice will not be caught by round-trip
   tests; unit tests must assert the exact encoding variant.
+- Temporal conversion is millisecond-exact by contract. A chrono value with
+  nanoseconds is rounded; tests must compare at milliseconds, not nanoseconds.
+- 1904-system workbooks are unsupported until `BrtWbProp` exists. Reading such
+  a file with these impls would be off by 1462 days.
 
 ## 13. Open questions — resolved during implementation
 
 1. `Workbook::new()` returns `Result`; the fallible constructor was kept.
 2. `store_integer` rejects integers above `2^53` with
    `Error::ValueNotRepresentable`; strictness was kept.
+3. Temporal precision is one millisecond and sub-millisecond components are
+   rounded, matching Excel and `calamine`.
+4. The `clock` feature and `Local`/`FixedOffset` impls were dropped;
+   `DateTime<Utc>` is the only timezone. Dates outside 1900-01-01..9999-12-31
+   are rejected.

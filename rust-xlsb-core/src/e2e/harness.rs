@@ -6,8 +6,8 @@ use std::io::{BufReader, Cursor};
 
 use calamine::{Data, Reader, open_workbook_auto_from_rs};
 
-use crate::prelude::*;
-use crate::{
+use rust_xlsb_core::prelude::*;
+use rust_xlsb_core::{
     BiffHead, BiffWrite, CellValue, Error, KnownID, NumberEncoding, Result, ToCellValue, WbContext,
     Workbook, write_as_biff,
 };
@@ -15,7 +15,19 @@ use crate::{
 const SHEET: &str = "Sheet1";
 /// Style index that carries the `yyyy-mm-dd` format.
 pub const DATE_STYLE: u32 = 1;
+/// Style index that carries the `hh:mm:ss.000` format.
+pub const TIME_STYLE: u32 = 2;
+/// Style index that carries the `yyyy-mm-dd hh:mm:ss.000` format.
+pub const DATETIME_STYLE: u32 = 3;
+/// Style index that carries the `[h]:mm:ss.000` format.
+///
+/// `LibreOffice` displays negative durations with it; Excel's 1900 date system
+/// renders them as `####` because negative serial times are invalid there.
+pub const DURATION_STYLE: u32 = 4;
 const DATE_FORMAT_CODE: u16 = 164;
+const TIME_FORMAT_CODE: u16 = 165;
+const DATETIME_FORMAT_CODE: u16 = 166;
+const DURATION_FORMAT_CODE: u16 = 167;
 
 /// One cell to write: `(row, column, style, value)`.
 pub struct CellSpec<'a> {
@@ -37,7 +49,7 @@ impl<'a> CellSpec<'a> {
     }
 
     #[must_use]
-    pub fn style(mut self, style: u32) -> Self {
+    pub const fn style(mut self, style: u32) -> Self {
         self.style = style;
         self
     }
@@ -81,7 +93,7 @@ pub fn includes_shared_strings_part(workbook: &Workbook, cells: &[CellSpec<'_>])
     bytes.windows(NAME.len()).any(|window| window == NAME)
 }
 
-fn build(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
+pub fn build(workbook: &Workbook, cells: &[CellSpec<'_>]) -> Result<Vec<u8>> {
     let has_strings = !workbook.shared_strings().is_empty();
     let mut parts: Vec<(&str, Vec<u8>)> = vec![
         (
@@ -240,14 +252,21 @@ fn styles_part() -> Result<Vec<u8>> {
     let mut out = Vec::new();
     push_record(&mut out, &BrtBeginStyleSheet::default())?;
 
-    push_record(&mut out, &BrtBeginFmts { count: 1 })?;
-    push_record(
-        &mut out,
-        &BrtFmt {
-            ifmt: DATE_FORMAT_CODE,
-            stFmtCode: XlWideString::construct(Some("yyyy-mm-dd")),
-        },
-    )?;
+    push_record(&mut out, &BrtBeginFmts { count: 4 })?;
+    for (ifmt, code) in [
+        (DATE_FORMAT_CODE, "yyyy-mm-dd"),
+        (TIME_FORMAT_CODE, "hh:mm:ss.000"),
+        (DATETIME_FORMAT_CODE, "yyyy-mm-dd hh:mm:ss.000"),
+        (DURATION_FORMAT_CODE, "[h]:mm:ss.000"),
+    ] {
+        push_record(
+            &mut out,
+            &BrtFmt {
+                ifmt,
+                stFmtCode: XlWideString::construct(Some(code)),
+            },
+        )?;
+    }
     push_record(&mut out, &BrtEndFmts::default())?;
 
     push_record(&mut out, &BrtBeginFonts { count: 1 })?;
@@ -266,15 +285,22 @@ fn styles_part() -> Result<Vec<u8>> {
     push_record(&mut out, &BrtXF::default())?;
     push_record(&mut out, &BrtEndCellStyleXFs::default())?;
 
-    push_record(&mut out, &BrtBeginCellXFs { count: 2 })?;
+    push_record(&mut out, &BrtBeginCellXFs { count: 5 })?;
     push_record(&mut out, &BrtXF::default())?;
-    push_record(
-        &mut out,
-        &BrtXF {
-            iFmt: DATE_FORMAT_CODE,
-            ..BrtXF::default()
-        },
-    )?;
+    for ifmt in [
+        DATE_FORMAT_CODE,
+        TIME_FORMAT_CODE,
+        DATETIME_FORMAT_CODE,
+        DURATION_FORMAT_CODE,
+    ] {
+        push_record(
+            &mut out,
+            &BrtXF {
+                iFmt: ifmt,
+                ..BrtXF::default()
+            },
+        )?;
+    }
     push_record(&mut out, &BrtEndCellXFs::default())?;
 
     push_record(&mut out, &BrtBeginStyles { count: 1 })?;

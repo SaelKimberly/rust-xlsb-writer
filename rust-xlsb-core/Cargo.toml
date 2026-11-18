@@ -35,11 +35,13 @@ thiserror = { version = "^2.0.21" }
 concat-idents = { version = "^1.1.5" }
 # [x] for shared strings
 xxhash-rust = { version = "0.8.21", features = ["xxh3"] }
+# [x] for temporal cell values encoded as Excel serial numbers
+chrono = { version = "0.4.40", default-features = false, features = ["std"] }
 rusqlite = { version = "^0.43", features = ["bundled", "rusqlite-macros"] }
 
 [dev-dependencies]
 # [x] for reading generated workbooks back in end-to-end tests
-calamine = "^0.38.0"
+calamine = { version = "^0.38.0", features = ["chrono"] }
 criterion = "^0.8"
 rstest.workspace = true
 
