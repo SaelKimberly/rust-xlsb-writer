@@ -7,7 +7,7 @@ use crate::biff::push_record;
 use crate::prelude::{
     BrtBeginBorders, BrtBeginCellStyleXFs, BrtBeginCellXFs, BrtBeginDXFs, BrtBeginFills,
     BrtBeginFmts, BrtBeginFonts, BrtBeginStyleSheet, BrtBeginStyles, BrtBeginTableStyles,
-    BrtBorder, BrtEndBorders, BrtEndCellStyleXFs, BrtEndCellXFs, BrtEndDXFs, BrtEndFills,
+    BrtBorder, BrtDXF, BrtEndBorders, BrtEndCellStyleXFs, BrtEndCellXFs, BrtEndDXFs, BrtEndFills,
     BrtEndFmts, BrtEndFonts, BrtEndStyleSheet, BrtEndStyles, BrtEndTableStyles, BrtFill, BrtFmt,
     BrtFont, BrtStyle, BrtXF, GrbitAtr, XlStringExt, XlWideString,
 };
@@ -18,6 +18,7 @@ const MAX_FONTS: usize = 65_491;
 const MAX_FILLS: usize = 65_431;
 const MAX_BORDERS: usize = 65_430;
 const MAX_CELL_XFS: usize = 65_430;
+const MAX_DXFS: usize = 65_535;
 
 /// A complete cell format: font, fill, border and the XF attributes that are
 /// stored directly in the record.
@@ -68,12 +69,14 @@ pub struct StyleRegistry {
     fills: Vec<BrtFill>,
     borders: Vec<BrtBorder>,
     xfs: Vec<BrtXF>,
+    dxfs: Vec<BrtDXF>,
     style_xf: BrtXF,
     format_ids: HashMap<String, u16>,
     font_ids: HashMap<BrtFont, u16>,
     fill_ids: HashMap<BrtFill, u16>,
     border_ids: HashMap<BrtBorder, u16>,
     xf_ids: HashMap<BrtXF, u32>,
+    dxf_ids: HashMap<BrtDXF, u32>,
 }
 
 impl Default for StyleRegistry {
@@ -92,6 +95,7 @@ impl StyleRegistry {
             fills: Vec::new(),
             borders: Vec::new(),
             xfs: Vec::new(),
+            dxfs: Vec::new(),
             style_xf: BrtXF {
                 ixfeParent: 0xFFFF,
                 ..CellStyle::default().xf
@@ -101,6 +105,7 @@ impl StyleRegistry {
             fill_ids: HashMap::new(),
             border_ids: HashMap::new(),
             xf_ids: HashMap::new(),
+            dxf_ids: HashMap::new(),
         };
 
         let font = BrtFont::default();
@@ -135,6 +140,31 @@ impl StyleRegistry {
     /// MS-XLSB record limit.
     pub fn register_font(&mut self, font: BrtFont) -> Result<u16> {
         self.add_font(font)
+    }
+
+    /// Registers a differential format and returns its zero-based `BrtDXF`
+    /// index.
+    ///
+    /// Equal DXFs are deduplicated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ValidationError`] if the DXF table reaches its
+    /// MS-XLSB record limit.
+    pub fn register_dxf(&mut self, dxf: BrtDXF) -> Result<u32> {
+        if let Some(&index) = self.dxf_ids.get(&dxf) {
+            return Ok(index);
+        }
+        if self.dxfs.len() >= MAX_DXFS {
+            return Err(Error::ValidationError(
+                "too many differential formats".to_owned(),
+            ));
+        }
+        let index = u32::try_from(self.dxfs.len())
+            .map_err(|_| Error::ValidationError("too many differential formats".to_owned()))?;
+        self.dxf_ids.insert(dxf.clone(), index);
+        self.dxfs.push(dxf);
+        Ok(index)
     }
 
     /// Replaces the default cell style at XF index 0 and the Normal style XF.
@@ -372,7 +402,15 @@ impl StyleRegistry {
         push_record(out, &BrtStyle::default())?;
         push_record(out, &BrtEndStyles::default())?;
 
-        push_record(out, &BrtBeginDXFs { count: 0 })?;
+        push_record(
+            out,
+            &BrtBeginDXFs {
+                count: count(self.dxfs.len())?,
+            },
+        )?;
+        for dxf in &self.dxfs {
+            push_record(out, dxf)?;
+        }
         push_record(out, &BrtEndDXFs::default())?;
 
         push_record(out, &BrtBeginTableStyles::default())?;
@@ -520,5 +558,14 @@ mod tests {
             })
             .expect("adds after registration");
         assert_eq!(index, 1);
+    }
+    #[test]
+    fn dxfs_deduplicate_by_value() {
+        let mut registry = StyleRegistry::new();
+        let dxf = BrtDXF::new(crate::prelude::XFProps::new(vec![
+            crate::prelude::XFProp::new(0x0002, vec![5, 0, 0, 0, 0xFF, 0xFF, 0x00, 0xFF]),
+        ]));
+        assert_eq!(registry.register_dxf(dxf.clone()).expect("dxf"), 0);
+        assert_eq!(registry.register_dxf(dxf).expect("dxf"), 0);
     }
 }

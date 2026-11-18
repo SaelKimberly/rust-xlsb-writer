@@ -23,6 +23,7 @@
 //! Both features are disabled by default. Native [`ExcelDateTime`] values and
 //! `chrono` temporal values are always available.
 
+mod conditional_format;
 mod data;
 mod data_validation;
 mod datetime;
@@ -41,6 +42,10 @@ mod url;
 mod workbook;
 mod worksheet;
 
+pub use conditional_format::{
+    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatValue,
+    IntoConditionalFormatValue,
+};
 #[doc(hidden)]
 pub use data::CellData;
 pub use data::{IntoExcelData, IntoExcelDateTime};

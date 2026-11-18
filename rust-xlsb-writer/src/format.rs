@@ -1,8 +1,8 @@
 //! Public cell formatting builder and its mapping to core style records.
 
 use rust_xlsb_core::prelude::{
-    Bold, BorderType, BrtBorder, BrtColor, BrtFill, BrtFont, BrtXF, HAlign, ReadingOrder, VAlign,
-    XlStringExt, XlWideString,
+    Bold, BorderType, BrtBorder, BrtColor, BrtDXF, BrtFill, BrtFont, BrtXF, HAlign, ReadingOrder,
+    VAlign, XFProp, XFProps, XlStringExt, XlWideString,
 };
 use rust_xlsb_core::{CellStyle, StyleRegistry};
 
@@ -105,6 +105,12 @@ impl Color {
         let green = u8::try_from((value >> 8) & 0xFF).expect("masked to u8");
         let blue = u8::try_from(value & 0xFF).expect("masked to u8");
         Ok(BrtColor::rgb(red, green, blue))
+    }
+}
+
+impl From<&Self> for Format {
+    fn from(format: &Self) -> Self {
+        format.clone()
     }
 }
 
@@ -971,9 +977,7 @@ impl Format {
         Ok(font)
     }
 
-    pub(crate) fn to_cell_style(&self, registry: &mut StyleRegistry) -> Result<CellStyle> {
-        let font = self.build_font()?;
-
+    fn build_fill(&self) -> Result<BrtFill> {
         let mut fill = self.fill.clone();
         if let Some(color) = self.background_color {
             fill.brtColorBack = color.to_brt_color()?;
@@ -987,6 +991,124 @@ impl Format {
         {
             fill.brtColorFore = fill.brtColorBack.clone();
         }
+        Ok(fill)
+    }
+
+    /// Builds the differential format used by conditional formatting.
+    ///
+    /// Only font properties and solid/background fill colors are encoded.
+    pub(crate) fn to_dxf(&self) -> Result<BrtDXF> {
+        let font = self.build_font()?;
+        let fill = self.build_fill()?;
+        let default_font = BrtFont::default();
+        let default_fill = BrtFill::default();
+        let default_xf = BrtXF {
+            fLocked: true,
+            ..BrtXF::default()
+        };
+
+        if self.border != BrtBorder::default() {
+            return Err(Error::ValueNotRepresentable(
+                "conditional-format borders are not supported",
+            ));
+        }
+        if self.number_format_spec.is_some() {
+            return Err(Error::ValueNotRepresentable(
+                "conditional-format number formats are not supported",
+            ));
+        }
+        if self.xf != default_xf {
+            return Err(Error::ValueNotRepresentable(
+                "conditional-format alignment and protection are not supported",
+            ));
+        }
+        if !matches!(fill.fls, 0 | 1) {
+            return Err(Error::ValueNotRepresentable(
+                "conditional-format fill patterns other than solid are not supported",
+            ));
+        }
+
+        let mut props = Vec::new();
+        if fill.brtColorBack != default_fill.brtColorBack {
+            props.push(XFProp::new(
+                0x0002,
+                fill.brtColorBack.xf_prop_bytes().to_vec(),
+            ));
+        }
+        if fill.brtColorFore != default_fill.brtColorFore && fill.brtColorFore != fill.brtColorBack
+        {
+            props.push(XFProp::new(
+                0x0001,
+                fill.brtColorFore.xf_prop_bytes().to_vec(),
+            ));
+        }
+
+        if font.name != default_font.name {
+            let mut data = Vec::with_capacity(2 + font.name.utf16_bytes().len());
+            data.extend_from_slice(
+                &u16::try_from(font.name.len())
+                    .expect("font name is at most 31 code units")
+                    .to_le_bytes(),
+            );
+            data.extend_from_slice(font.name.utf16_bytes());
+            props.push(XFProp::new(0x0018, data));
+        }
+        if font.brtColor != default_font.brtColor {
+            props.push(XFProp::new(0x0005, font.brtColor.xf_prop_bytes().to_vec()));
+        }
+        if font.bls != default_font.bls {
+            let weight = match font.bls {
+                Bold::BLSNORMAL => 0x0190_u16,
+                Bold::BLSBOLD => 0x02BC_u16,
+            };
+            props.push(XFProp::new(0x0019, weight.to_le_bytes().to_vec()));
+        }
+        if font.uls != default_font.uls {
+            props.push(XFProp::new(0x001A, vec![font.uls, 0]));
+        }
+        if font.sss != default_font.sss {
+            props.push(XFProp::new(0x001B, font.sss.to_le_bytes().to_vec()));
+        }
+        if font.grbit.fItalic != default_font.grbit.fItalic {
+            props.push(XFProp::new(0x001C, vec![u8::from(font.grbit.fItalic)]));
+        }
+        if font.grbit.fStrikeOut != default_font.grbit.fStrikeOut {
+            props.push(XFProp::new(0x001D, vec![u8::from(font.grbit.fStrikeOut)]));
+        }
+        if font.grbit.fOutline != default_font.grbit.fOutline {
+            props.push(XFProp::new(0x001E, vec![u8::from(font.grbit.fOutline)]));
+        }
+        if font.grbit.fShadow != default_font.grbit.fShadow {
+            props.push(XFProp::new(0x001F, vec![u8::from(font.grbit.fShadow)]));
+        }
+        if font.grbit.fCondense != default_font.grbit.fCondense {
+            props.push(XFProp::new(0x0020, vec![u8::from(font.grbit.fCondense)]));
+        }
+        if font.grbit.fExtend != default_font.grbit.fExtend {
+            props.push(XFProp::new(0x0021, vec![u8::from(font.grbit.fExtend)]));
+        }
+        if font.bCharSet != default_font.bCharSet {
+            props.push(XFProp::new(0x0022, vec![font.bCharSet]));
+        }
+        if font.bFamily != default_font.bFamily {
+            props.push(XFProp::new(0x0023, vec![font.bFamily]));
+        }
+        if font.dyHeight != default_font.dyHeight {
+            props.push(XFProp::new(
+                0x0024,
+                u32::from(font.dyHeight).to_le_bytes().to_vec(),
+            ));
+        }
+        if font.bFontScheme != default_font.bFontScheme {
+            props.push(XFProp::new(0x0025, vec![font.bFontScheme]));
+        }
+
+        Ok(BrtDXF::new(XFProps::new(props)))
+    }
+
+    pub(crate) fn to_cell_style(&self, registry: &mut StyleRegistry) -> Result<CellStyle> {
+        let font = self.build_font()?;
+        let fill = self.build_fill()?;
 
         let mut border = self.border.clone();
         if let Some(color) = self.border_top_color {
@@ -1157,6 +1279,70 @@ mod tests {
             .expect("valid format");
 
         assert_eq!(registry.add(style).expect("adds"), 0);
+    }
+
+    #[test]
+    fn dxf_maps_font_and_fill_to_properties() {
+        let format = Format::new()
+            .set_font_name("Arial")
+            .set_font_color(Color::Red)
+            .set_bold()
+            .set_font_size(14.0)
+            .set_background_color(Color::Yellow);
+        let dxf = format.to_dxf().expect("dxf");
+        let borrowed = crate::ConditionalFormatCell::new().set_format(&format);
+        assert!(borrowed.format.is_some());
+        let props = &dxf.xfprops.props;
+
+        assert_eq!(
+            props.iter().map(|prop| prop.xfPropType).collect::<Vec<_>>(),
+            [0x0002, 0x0018, 0x0005, 0x0019, 0x0024]
+        );
+        assert_eq!(
+            props[0].data,
+            BrtColor::rgb(0xFF, 0xFF, 0x00).xf_prop_bytes()
+        );
+        assert_eq!(props[1].cb, 16);
+        assert_eq!(&props[1].data[..2], &5_u16.to_le_bytes());
+        assert_eq!(
+            &props[1].data[2..],
+            "Arial"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            props[2].data,
+            BrtColor::rgb(0xFF, 0x00, 0x00).xf_prop_bytes()
+        );
+        assert_eq!(props[3].data, 0x02BC_u16.to_le_bytes());
+        assert_eq!(props[4].cb, 8);
+        assert_eq!(props[4].data, 280_u32.to_le_bytes());
+    }
+
+    #[test]
+    fn empty_dxf_has_no_properties() {
+        let dxf = Format::new().to_dxf().expect("dxf");
+        assert_eq!(dxf.xfprops.props, []);
+        assert_eq!(dxf.xfprops.cprops, 0);
+    }
+
+    #[test]
+    fn dxf_rejects_unsupported_differential_properties() {
+        assert!(
+            Format::new()
+                .set_border(FormatBorder::Thin)
+                .to_dxf()
+                .is_err()
+        );
+        assert!(Format::new().set_num_format("0.00").to_dxf().is_err());
+        assert!(
+            Format::new()
+                .set_align(FormatAlign::Center)
+                .to_dxf()
+                .is_err()
+        );
+        assert!(Format::new().set_unlocked().to_dxf().is_err());
     }
 
     #[test]

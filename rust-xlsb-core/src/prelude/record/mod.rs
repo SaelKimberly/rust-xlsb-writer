@@ -18,7 +18,9 @@ mod brt_cell_rstring;
 mod brt_cell_st;
 mod brt_col_info;
 mod brt_color;
+mod brt_conditional;
 mod brt_dval;
+mod brt_dxf;
 mod brt_extern_sheet;
 mod brt_file_sharing;
 mod brt_fill;
@@ -64,7 +66,12 @@ pub use brt_cell_rstring::BrtCellRString;
 pub use brt_cell_st::BrtCellSt;
 pub use brt_col_info::BrtColInfo;
 pub use brt_color::BrtColor;
+pub use brt_conditional::{
+    BrtBeginCFRule, BrtBeginConditionalFormatting, BrtEndCFRule, BrtEndConditionalFormatting,
+    CFParsedFormula, conditional_format_block,
+};
 pub use brt_dval::{BrtBeginDVals, BrtDVal, BrtEndDVals, DValStrings, DVals};
+pub use brt_dxf::{BrtDXF, XFProp, XFProps};
 pub use brt_extern_sheet::{BrtExternSheet, BrtSupSelf, Xti};
 pub use brt_file_sharing::BrtFileSharing;
 pub use brt_fill::BrtFill;

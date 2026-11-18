@@ -3,18 +3,19 @@
 use std::collections::{BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::{
-    BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
+    BrtBeginAFilter, BrtBeginCFRule, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
     BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet,
     BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
     BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtColInfo,
-    BrtColSpan, BrtCustomFilter, BrtEndAFilter, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos,
-    BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
-    BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView,
-    BrtEndWsViews, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell,
-    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp,
-    Cell, HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX,
-    XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    BrtColSpan, BrtCustomFilter, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs, BrtEndColBrk,
+    BrtEndColInfos, BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals,
+    BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells,
+    BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtFont,
+    BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, HeaderFooterString, RichStr,
+    StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString,
+    Xnum, conditional_format_block,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -47,7 +48,15 @@ pub fn write_sheet(
     selected: bool,
     out: &mut Vec<u8>,
 ) -> Result<()> {
-    write_sheet_with_fonts(sheet, style_indexes, sst, &HashMap::new(), selected, out)
+    write_sheet_with_fonts(
+        sheet,
+        style_indexes,
+        sst,
+        &HashMap::new(),
+        &[],
+        selected,
+        out,
+    )
 }
 
 #[expect(
@@ -59,6 +68,7 @@ pub(crate) fn write_sheet_with_fonts(
     style_indexes: &[u32],
     sst: &SSTHolder,
     rich_fonts: &HashMap<BrtFont, u16>,
+    conditional_dxf_ids: &[Option<u32>],
     selected: bool,
     out: &mut Vec<u8>,
 ) -> Result<()> {
@@ -180,6 +190,7 @@ pub(crate) fn write_sheet_with_fonts(
         push(out, &BrtEndMergeCells::default())?;
     }
 
+    write_conditional_formats(sheet, conditional_dxf_ids, out)?;
     write_data_validations(sheet, out)?;
     write_hyperlinks(sheet, out)?;
     write_print_settings(sheet, out)?;
@@ -189,6 +200,52 @@ pub(crate) fn write_sheet_with_fonts(
     write_list_parts(sheet, out)?;
 
     push(out, &BrtEndSheet::default())?;
+    Ok(())
+}
+
+fn write_conditional_formats(
+    sheet: &Worksheet,
+    dxf_ids: &[Option<u32>],
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let formats = sheet.conditional_formats();
+    if formats.is_empty() {
+        return Ok(());
+    }
+    if dxf_ids.len() != formats.len() {
+        return Err(Error::ValueNotRepresentable(
+            "conditional-format style index count does not match the worksheet",
+        ));
+    }
+
+    for (index, conditional_format) in formats.iter().enumerate() {
+        push(out, &conditional_format_block(conditional_format.range))?;
+        let (formula1, formula2) = conditional_format.formulas()?;
+        let dxf = dxf_ids[index].unwrap_or(u32::MAX);
+        push(
+            out,
+            &BrtBeginCFRule {
+                iType: 1,
+                iTemplate: 0,
+                dxfId: dxf,
+                iPri: i32::try_from(index + 1)
+                    .map_err(|_| Error::ValueNotRepresentable("too many conditional formats"))?,
+                iParam: conditional_format.operator()?,
+                flags: if conditional_format.stop_if_true() {
+                    BrtBeginCFRule::F_STOP_TRUE
+                } else {
+                    0
+                },
+                cbFmla1: formula1.cce,
+                cbFmla2: formula2.as_ref().map_or(0, |formula| formula.cce),
+                formula1: Some(formula1),
+                formula2,
+                ..BrtBeginCFRule::default()
+            },
+        )?;
+        push(out, &BrtEndCFRule::default())?;
+        push(out, &BrtEndConditionalFormatting::default())?;
+    }
     Ok(())
 }
 

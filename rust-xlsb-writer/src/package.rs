@@ -65,6 +65,20 @@ pub fn build_package(
         }
     }
 
+    let mut conditional_dxf_ids = Vec::with_capacity(sheets.len());
+    for sheet in sheets {
+        let mut ids = Vec::with_capacity(sheet.conditional_formats().len());
+        for conditional_format in sheet.conditional_formats() {
+            if let Some(format) = conditional_format.format() {
+                let dxf = format.to_dxf()?;
+                ids.push(Some(registry.register_dxf(dxf)?));
+            } else {
+                ids.push(None);
+            }
+        }
+        conditional_dxf_ids.push(ids);
+    }
+
     let mut sheet_parts = Vec::with_capacity(sheets.len());
     let mut table_parts = Vec::new();
     let mut table_ids = Vec::new();
@@ -77,6 +91,7 @@ pub fn build_package(
             &style_indexes[index],
             &sst,
             &rich_fonts,
+            &conditional_dxf_ids[index],
             selected,
             &mut bytes,
         )?;
@@ -1030,11 +1045,12 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        Bold, BrtBeginAFilter, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
-        BrtBeginFilters, BrtBeginList, BrtBeginListCol, BrtBeginListParts, BrtBeginWsView,
-        BrtBookView, BrtBundleSh, BrtCalcProp, BrtCellRString, BrtCustomFilter, BrtDVal,
-        BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName,
-        BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
+        Bold, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
+        BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters, BrtBeginList,
+        BrtBeginListCol, BrtBeginListParts, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp,
+        BrtCellRString, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing,
+        BrtFilter, BrtFont, BrtHLink, BrtListPart, BrtName, BrtRowHdr, BrtSheetProtection,
+        BrtTableStyleClient, BrtWsFmtInfo, BrtXF,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1109,6 +1125,72 @@ mod tests {
         assert_eq!(fonts[rich.rgsStrRun[0].ifnt as usize], BrtFont::default());
         assert_eq!(fonts[rich.rgsStrRun[1].ifnt as usize].bls, Bold::BLSBOLD);
         assert_eq!(fonts[rich.rgsStrRun[2].ifnt as usize].dyHeight, 280);
+    }
+
+    #[test]
+    fn conditional_format_emits_rule_and_dxf() {
+        let mut workbook = crate::Workbook::new();
+        let format = crate::Format::new()
+            .set_background_color(crate::Color::Yellow)
+            .set_font_color(crate::Color::Red);
+        let rule = crate::ConditionalFormatCell::new()
+            .set_rule(crate::ConditionalFormatCellRule::GreaterThan(5))
+            .set_format(format);
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_number(1, 0, 10).expect("value");
+        worksheet
+            .add_conditional_format(1, 0, 4, 0, &rule)
+            .expect("conditional format");
+        worksheet
+            .add_conditional_format(
+                5,
+                0,
+                6,
+                0,
+                &crate::ConditionalFormatCell::new()
+                    .set_rule(crate::ConditionalFormatCellRule::EqualTo(0)),
+            )
+            .expect("conditional format without a format");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let blocks = records::<BrtBeginConditionalFormatting>(&sheet);
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        let ids = record_ids(&sheet);
+        let first_block = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBeginConditionalFormatting)
+            .expect("conditional-format block");
+        assert_eq!(ids[first_block - 1], KnownID::BrtEndSheetData);
+        assert_eq!(ids[first_block + 1], KnownID::BrtBeginCFRule);
+        assert!(!ids.contains(&KnownID::BrtBeginConditionalFormattings));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].ccf, 1);
+        assert_eq!(blocks[0].sqrfx.crfx, 1);
+        assert_eq!(blocks[0].sqrfx.rgRefx[0].rwFirst, 1);
+        assert_eq!(blocks[0].sqrfx.rgRefx[0].rwLast, 4);
+        assert_eq!(blocks[0].sqrfx.rgRefx[0].colFirst, 0);
+        assert_eq!(blocks[0].sqrfx.rgRefx[0].colLast, 0);
+
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].dxfId, 0);
+        assert_eq!(rules[0].iPri, 1);
+        assert_eq!(rules[0].iParam, 5);
+        assert_eq!(rules[0].cbFmla1, 9);
+        let formula = rules[0].formula1.as_ref().expect("formula");
+        assert_eq!(formula.cce, 9);
+        assert_eq!(formula.rgce[0], 0x1F);
+        assert_eq!(&formula.rgce[1..], &5.0_f64.to_le_bytes());
+        assert_eq!(rules[1].dxfId, u32::MAX);
+        assert_eq!(rules[1].iPri, 2);
+        assert_eq!(rules[1].iParam, 3);
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        let dxfs = records::<BrtDXF>(&styles);
+        assert_eq!(dxfs.len(), 1);
+        assert_eq!(dxfs[0].xfprops.cprops, 2);
+        assert_eq!(dxfs[0].xfprops.props[0].xfPropType, 0x0002);
+        assert_eq!(dxfs[0].xfprops.props[1].xfPropType, 0x0005);
     }
 
     #[test]

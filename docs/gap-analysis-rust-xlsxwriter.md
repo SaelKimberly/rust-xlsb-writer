@@ -22,9 +22,12 @@ It is not a feature-equivalent replacement. The largest gaps are:
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Worksheet layout and view** — user-defined names support literals and
    absolute A1 references only; arbitrary formulas are missing.
-3. **Analysis features** — no conditional formatting; basic tables,
-   `AutoFilter` ranges, list/custom filter conditions, data validation for
-   non-formula rules, and structural sheet protection are present.
+3. **Analysis features** — cell-value conditional formats cover numeric and
+   string comparisons; colour scales, data bars, icon sets, top/bottom,
+   average, duplicate, date, text-specific, and formula rules are missing.
+   Basic tables, `AutoFilter` ranges, list/custom filter conditions, data
+   validation for non-formula rules, and structural sheet protection are
+   present.
 4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64, and
@@ -35,7 +38,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    present.
 7. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 13 `Workbook`, 109
+The current API surface is deliberately narrow: roughly 13 `Workbook`, 110
 `Worksheet`, and 48 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -61,7 +64,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, and date/time parse errors |
-| Verification | 233 core + 270 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 250 core + 277 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -170,7 +173,7 @@ Status meanings:
 | `autofilter` | Supported | Range record, filter columns, and automatic row hiding |
 | `filter_column`, `filter_automatic_off` | Partial | List/custom string and number filters, blanks, AND/OR; temporal and boolean cells stay unmatched |
 | `add_table` | Partial | Header rows, custom columns, built-in styles, and table AutoFilters; totals, formulas, and per-column formats missing |
-| `add_conditional_format` | Missing | DXF and conditional-format records |
+| `add_conditional_format` | Partial | Numeric/string cell rules with font/fill DXFs; scales, bars, icons, top/bottom, average, duplicate, date, text, formula, and multi-range rules missing |
 | `add_data_validation` | Partial | List, whole/decimal, date/time, and text-length rules plus prompt/error options; formula-valued rules and multi-range input missing |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
 | `protect`, `protect_with_password`, `protect_with_options` | Supported | `BrtSheetProtection`; legacy verifier, no encryption |
@@ -281,7 +284,7 @@ records or package parts that do not exist yet.
 | Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
 | Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, and table AutoFilter ranges; totals, calculated columns, and per-column formats remain |
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
-| Conditional formats | DXF styles and conditional-format record groups |
+| Conditional formats | Shipped: numeric/string cell rules and font/fill DXFs; scales, bars, icons, top/bottom, average, duplicate, date, text, formula, and multi-range rules remain |
 | Data validation | Shipped `DVALS` records for non-formula rules and prompt/error options; formula-valued rules and multi-range input remain |
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
@@ -446,7 +449,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 233 core + 270 writer unit tests and 7 doctests in default
+- Test evidence: 250 core + 277 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.

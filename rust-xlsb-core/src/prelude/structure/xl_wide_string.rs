@@ -60,6 +60,12 @@ impl XlString {
         self.len
     }
 
+    /// Returns the UTF-16LE bytes without the length prefix.
+    #[must_use]
+    pub fn utf16_bytes(&self) -> &[u8] {
+        &self.str
+    }
+
     pub fn from_string<T: Deref<Target = str>>(s: T) -> Self {
         let s = &*s;
         let o = s.encode_utf16().collect::<Box<[_]>>();

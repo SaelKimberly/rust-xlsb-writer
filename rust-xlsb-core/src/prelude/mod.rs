@@ -9,19 +9,21 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginAFilter, BrtBeginColBrk, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn,
-    BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginList, BrtBeginListCol, BrtBeginListCols,
-    BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView,
-    BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt,
-    BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtEndAFilter, BrtEndColBrk,
-    BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter,
-    BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst,
-    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt,
-    BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane,
-    BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection,
-    BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
-    DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign, Xti,
+    BrtBeginAFilter, BrtBeginCFRule, BrtBeginColBrk, BrtBeginConditionalFormatting,
+    BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
+    BrtBeginHeaderFooter, BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtBeginListParts,
+    BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder,
+    BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC,
+    BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor,
+    BrtCustomFilter, BrtDVal, BrtDXF, BrtEndAFilter, BrtEndCFRule, BrtEndColBrk,
+    BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals, BrtEndFilterColumn,
+    BrtEndFilters, BrtEndHeaderFooter, BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts,
+    BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing,
+    BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtName,
+    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
+    BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo,
+    BrtWsProp, BrtXF, CFParsedFormula, DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula,
+    ReadingOrder, VAlign, XFProp, XFProps, Xti, conditional_format_block,
 };
 pub use scope::*;
 pub use structure::{
@@ -100,6 +102,24 @@ mod tests {
     #[case::xti(|| checked_test::<Xti>(12))]
     #[case::brt_sup_self(|| checked_test::<BrtSupSelf>(0))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
+    #[case::xf_prop(|| checked_test::<XFProp>(4))]
+    #[case::xf_props(|| checked_test::<XFProps>(4))]
+    #[case::brt_dxf(|| checked_test::<BrtDXF>(6))]
+    #[case::cf_parsed_formula(|| checked_test::<CFParsedFormula>(17))]
+    #[case::brt_begin_cf_rule(|| checked_test::<BrtBeginCFRule>(63))]
+    #[case::brt_end_cf_rule(|| checked_test::<BrtEndCFRule>(0))]
+    #[case::brt_begin_conditional_formatting(
+        || checked_test::<BrtBeginConditionalFormatting>(28)
+    )]
+    #[case::brt_end_conditional_formatting(
+        || checked_test::<BrtEndConditionalFormatting>(0)
+    )]
+    #[case::brt_begin_conditional_formattings(
+        || checked_test::<BrtBeginConditionalFormattings>(0)
+    )]
+    #[case::brt_end_conditional_formattings(
+        || checked_test::<BrtEndConditionalFormattings>(0)
+    )]
     #[case::brt_ws_prop(|| checked_test::<BrtWsProp>(23))]
     #[case::brt_ws_fmt_info(|| checked_test::<BrtWsFmtInfo>(12))]
     #[case::brt_ws_dim(|| checked_test::<BrtWsDim>(16))]

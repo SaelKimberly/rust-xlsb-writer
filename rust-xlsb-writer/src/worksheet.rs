@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::UncheckedRfX;
 
+use crate::conditional_format::{ConditionalFormatCell, ConditionalFormatRange};
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime, RichRun, RichString};
 use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
@@ -301,6 +302,7 @@ pub struct Worksheet {
     filter_automatic_off: bool,
     filter_hidden_rows: BTreeSet<RowNum>,
     has_rich_strings: bool,
+    conditional_formats: Vec<ConditionalFormatRange>,
     view: SheetView,
     visibility: Visibility,
     active: bool,
@@ -373,6 +375,7 @@ impl Worksheet {
             filter_automatic_off: false,
             filter_hidden_rows: BTreeSet::new(),
             has_rich_strings: false,
+            conditional_formats: Vec::new(),
             view: SheetView::default(),
             visibility: Visibility::Visible,
             active: false,
@@ -2613,6 +2616,38 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Adds a cell-value conditional format over a cell range.
+    ///
+    /// The rule is evaluated against each cell's value. A differential format
+    /// is applied when the comparison matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] or [`Error::RowColumnOrder`] for an
+    /// invalid range, or [`Error::Parameter`] when the rule is missing or its
+    /// value is invalid.
+    pub fn add_conditional_format(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        conditional_format: &ConditionalFormatCell,
+    ) -> Result<&mut Self> {
+        Self::check_range(first_row, first_col, last_row, last_col)?;
+        conditional_format.validate()?;
+        self.conditional_formats.push(ConditionalFormatRange {
+            range: UncheckedRfX {
+                rwFirst: first_row,
+                rwLast: last_row,
+                colFirst: u32::from(first_col),
+                colLast: u32::from(last_col),
+            },
+            conditional_format: conditional_format.clone(),
+        });
+        Ok(self)
+    }
+
     /// Adds a data validation for a cell range.
     ///
     /// Multiple validations can be added; each keeps its own range and options.
@@ -2874,6 +2909,10 @@ impl Worksheet {
 
     pub(crate) const fn filter_hidden_rows(&self) -> &BTreeSet<RowNum> {
         &self.filter_hidden_rows
+    }
+
+    pub(crate) fn conditional_formats(&self) -> &[ConditionalFormatRange] {
+        &self.conditional_formats
     }
 
     pub(crate) const fn has_rich_strings(&self) -> bool {
@@ -4750,6 +4789,44 @@ mod tests {
             Err(Error::RowColumnLimit)
         ));
         assert!(worksheet.data_validations().is_empty());
+    }
+
+    #[test]
+    fn add_conditional_format_stores_and_validates_rules() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let rule = crate::ConditionalFormatCell::new()
+            .set_rule(crate::ConditionalFormatCellRule::GreaterThanOrEqualTo(50));
+        worksheet
+            .add_conditional_format(1, 2, 4, 3, &rule)
+            .expect("conditional format");
+        assert_eq!(worksheet.conditional_formats().len(), 1);
+        let stored = &worksheet.conditional_formats()[0];
+        assert_eq!(stored.range.rwFirst, 1);
+        assert_eq!(stored.range.rwLast, 4);
+        assert_eq!(stored.range.colFirst, 2);
+        assert_eq!(stored.range.colLast, 3);
+        assert_eq!(stored.operator().expect("operator"), 7);
+
+        assert!(matches!(
+            worksheet.add_conditional_format(0, 0, 1, 0, &crate::ConditionalFormatCell::new()),
+            Err(Error::Parameter(_))
+        ));
+        let bad_number = crate::ConditionalFormatCell::new()
+            .set_rule(crate::ConditionalFormatCellRule::EqualTo(f64::NAN));
+        assert!(matches!(
+            worksheet.add_conditional_format(0, 0, 1, 0, &bad_number),
+            Err(Error::Parameter(_))
+        ));
+        let empty = crate::ConditionalFormatCell::new()
+            .set_rule(crate::ConditionalFormatCellRule::EqualTo(""));
+        assert!(matches!(
+            worksheet.add_conditional_format(0, 0, 1, 0, &empty),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.add_conditional_format(2, 0, 1, 0, &rule),
+            Err(Error::RowColumnOrder)
+        ));
     }
 
     #[test]

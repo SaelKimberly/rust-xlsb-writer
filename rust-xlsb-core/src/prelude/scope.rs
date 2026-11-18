@@ -33,6 +33,7 @@ macro_rules! declare_scopes {
 
 declare_scopes!(
     CellIgnoreECs,
+    ConditionalFormattings,
     Book,
     BookViews,
     Externals,

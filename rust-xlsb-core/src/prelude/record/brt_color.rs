@@ -123,6 +123,31 @@ impl BrtColor {
     }
 }
 
+impl BrtColor {
+    /// Serializes the color as the 8-byte `XFPropColor` payload.
+    #[must_use]
+    pub fn xf_prop_bytes(&self) -> [u8; 8] {
+        let color_type = match self.xColorType {
+            ColorType::ApplicationDetermined => 0,
+            ColorType::ColorPaletteIndex => 1,
+            ColorType::RGBA => 2,
+            ColorType::ThemeColorIndex => 3,
+        };
+        let flags = u8::from(self.fValidRGB) | (color_type << 1);
+        let tint = self.nTintAndShade.to_le_bytes();
+        [
+            flags,
+            self.index,
+            tint[0],
+            tint[1],
+            self.bRed,
+            self.bGreen,
+            self.bBlue,
+            self.bAlpha,
+        ]
+    }
+}
+
 impl Checked for BrtColor {
     fn check(&self) -> Result<(), &'static str> {
         self.check_internal()
