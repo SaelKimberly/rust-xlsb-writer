@@ -23,9 +23,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
 2. **Cell-level structural features** — no rich strings.
 3. **Worksheet layout and view** — user-defined names support literals and
    absolute A1 references only; arbitrary formulas are missing.
-4. **Analysis features** — no filter conditions, tables, conditional
-   formatting, or data validation; an `AutoFilter` range and structural sheet
-   protection are present.
+4. **Analysis features** — no tables, conditional formatting, or data
+   validation; `AutoFilter` ranges, list/custom filter conditions, and
+   structural sheet protection are present.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 6. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64, and
@@ -51,7 +51,7 @@ the breadth gap.
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, approximate autofit with row/width limits, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
-| Analysis | worksheet `AutoFilter` range; filter conditions are missing |
+| Analysis | worksheet `AutoFilter` ranges with list/custom filter conditions and automatic row hiding |
 | Metadata | core, app, and custom document properties; explicit creation timestamp |
 | Hyperlinks | `write_url` and text/format/tooltip variants, internal and external targets, default hyperlink style, worksheet relationships |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks, print areas, repeat rows/columns |
@@ -62,7 +62,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, and date/time parse errors |
-| Verification | 193 core + 229 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 204 core + 241 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -168,8 +168,8 @@ Status meanings:
 
 | Capability | Current | Gap |
 |---|---|---|
-| `autofilter` | Partial | Range record only; no filter conditions |
-| `filter_column`, `filter_automatic_off` | Missing | Filter records and row hiding |
+| `autofilter` | Supported | Range record, filter columns, and automatic row hiding |
+| `filter_column`, `filter_automatic_off` | Partial | List/custom string and number filters, blanks, AND/OR; temporal and boolean cells stay unmatched |
 | `add_table` | Missing | Table records/styles and column metadata |
 | `add_conditional_format` | Missing | DXF and conditional-format records |
 | `add_data_validation` | Missing | Validation records |
@@ -280,7 +280,8 @@ records or package parts that do not exist yet.
 | Formulas | Formula token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError`-class records, cached results, shared/array formula state |
 | Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
 | Rich strings | Rich-string cell records and run formatting |
-| Tables | Table parts, table styles, column metadata, autofilter integration |
+| Tables | Table parts, table styles, and table autofilter integration |
+| Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
 | Conditional formats | DXF styles and conditional-format record groups |
 | Data validation | Validation records and prompt/error options |
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
@@ -334,8 +335,8 @@ records; LibreOffice renders merged ranges and links; no stubs.
 
 | Item | Why | Size |
 |---|---|---|
-| `autofilter` | Range record only; filter conditions missing | M |
-| `filter_column` | Standard tabular output | M |
+| `autofilter` ✅ | Range and filter-column records | M |
+| `filter_column` ✅ | List/custom filters, blanks, AND/OR, automatic row hiding | M |
 | `add_table` | Structured tables and table styles | L |
 | `add_conditional_format` | Reporting and highlighting | L |
 | `add_data_validation` | Input constraints | M |
@@ -446,7 +447,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 193 core + 229 writer unit tests and 7 doctests in default
+- Test evidence: 204 core + 241 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`.
@@ -462,7 +463,10 @@ parts.
   properties, including custom properties and creation timestamps, but drops
   the worksheet `AutoFilter` on XLSB import, so the
   autofilter record is proven by package decode and an independent SheetJS
-  read; SheetJS reports `!autofilter.ref` and the filter-database name. It also
+  read; SheetJS reports `!autofilter.ref`, the filter-database name, and the
+  expected hidden rows for list plus custom filters. LibreOffice also preserves
+  those hidden rows when importing the XLSB, though it drops the filter
+  controls. It also
   drops all defined-name formulas on XLSB import, including print areas.
   The XLSX round-trip keeps both an
   external relationship and an internal `location`. A generated 60-row workbook with breaks at

@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::data::{CellData, IntoExcelData, IntoExcelDateTime};
+use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
 use crate::{Color, Error, Format, Result, Url};
@@ -294,6 +295,9 @@ pub struct Worksheet {
     format_ids: HashMap<Format, u32>,
     merged_ranges: Vec<MergeRange>,
     autofilter: Option<UncheckedRfX>,
+    filter_conditions: BTreeMap<ColNum, FilterCondition>,
+    filter_automatic_off: bool,
+    filter_hidden_rows: BTreeSet<RowNum>,
     view: SheetView,
     visibility: Visibility,
     active: bool,
@@ -353,6 +357,9 @@ impl Worksheet {
             format_ids: HashMap::new(),
             merged_ranges: Vec::new(),
             autofilter: None,
+            filter_conditions: BTreeMap::new(),
+            filter_automatic_off: false,
+            filter_hidden_rows: BTreeSet::new(),
             view: SheetView::default(),
             visibility: Visibility::Visible,
             active: false,
@@ -2396,7 +2403,83 @@ impl Worksheet {
             colFirst: u32::from(first_col),
             colLast: u32::from(last_col),
         });
+        self.filter_conditions.clear();
+        self.filter_hidden_rows.clear();
         Ok(self)
+    }
+
+    /// Adds or replaces a filter condition for an autofilter column.
+    ///
+    /// Rows that do not match all column conditions are hidden when the
+    /// workbook is saved. Use [`Self::filter_automatic_off`] to keep the
+    /// records but leave row visibility to Excel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] when no autofilter range exists, the column
+    /// is outside that range, or the condition has no filter values.
+    pub fn filter_column(
+        &mut self,
+        col: ColNum,
+        filter_condition: &FilterCondition,
+    ) -> Result<&mut Self> {
+        Self::check_col(col)?;
+        let range = self.autofilter.ok_or_else(|| {
+            Error::Parameter(
+                "the autofilter range must be set before a filter condition".to_owned(),
+            )
+        })?;
+        if u32::from(col) < range.colFirst || u32::from(col) > range.colLast {
+            return Err(Error::Parameter(format!(
+                "column {col} is outside the autofilter range {}-{}",
+                range.colFirst, range.colLast
+            )));
+        }
+        if filter_condition.is_empty() {
+            return Err(Error::Parameter(
+                "filter condition has no values or comparisons".to_owned(),
+            ));
+        }
+        if filter_condition
+            .list
+            .iter()
+            .any(|data| !(1..=255).contains(&data.string.encode_utf16().count()))
+        {
+            return Err(Error::Parameter(
+                "list filter values must contain 1-255 UTF-16 code units".to_owned(),
+            ));
+        }
+        self.filter_conditions.insert(col, filter_condition.clone());
+        Ok(self)
+    }
+
+    /// Disables automatic hidden-row updates for autofilter conditions.
+    ///
+    /// Filter records are still written; only the row visibility is left to the
+    /// application opening the workbook.
+    pub const fn filter_automatic_off(&mut self) -> &mut Self {
+        self.filter_automatic_off = true;
+        self
+    }
+
+    pub(crate) fn apply_filters(&mut self) {
+        self.filter_hidden_rows.clear();
+        let Some(range) = self.autofilter else {
+            return;
+        };
+        if self.filter_automatic_off || self.filter_conditions.is_empty() {
+            return;
+        }
+
+        for row in range.rwFirst.saturating_add(1)..=range.rwLast {
+            let hidden = self.filter_conditions.iter().any(|(&col, condition)| {
+                let cell = self.cells.get(&row).and_then(|cells| cells.get(&col));
+                !condition.matches(cell.map(|cell| &cell.data))
+            });
+            if hidden {
+                self.filter_hidden_rows.insert(row);
+            }
+        }
     }
 
     /// Merges a rectangular range and writes a string into its top-left cell.
@@ -2522,6 +2605,14 @@ impl Worksheet {
 
     pub(crate) const fn autofilter_range(&self) -> Option<UncheckedRfX> {
         self.autofilter
+    }
+
+    pub(crate) const fn filter_conditions(&self) -> &BTreeMap<ColNum, FilterCondition> {
+        &self.filter_conditions
+    }
+
+    pub(crate) const fn filter_hidden_rows(&self) -> &BTreeSet<RowNum> {
+        &self.filter_hidden_rows
     }
 
     pub(crate) const fn print_area(&self) -> Option<(RowNum, ColNum, RowNum, ColNum)> {
@@ -3439,6 +3530,89 @@ mod tests {
                 colLast: 2,
             })
         );
+    }
+
+    #[test]
+    fn filter_conditions_require_an_autofilter_and_a_column_in_range() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let condition = FilterCondition::new().add_list_filter("East");
+
+        assert!(matches!(
+            worksheet.filter_column(0, &condition),
+            Err(Error::Parameter(_))
+        ));
+
+        worksheet.autofilter(0, 1, 4, 2).expect("autofilter");
+        assert!(matches!(
+            worksheet.filter_column(0, &condition),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.filter_column(1, &FilterCondition::new()),
+            Err(Error::Parameter(_))
+        ));
+        worksheet
+            .filter_column(1, &condition)
+            .expect("valid filter");
+
+        let replacement = FilterCondition::new().add_list_filter("West");
+        worksheet
+            .filter_column(1, &replacement)
+            .expect("replacement");
+        assert_eq!(worksheet.filter_conditions().get(&1), Some(&replacement));
+
+        worksheet.autofilter(0, 1, 4, 2).expect("new range");
+        assert!(worksheet.filter_conditions().is_empty());
+    }
+
+    #[test]
+    fn list_filters_hide_nonmatching_rows_and_can_be_disabled() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.autofilter(0, 0, 3, 0).expect("autofilter");
+        worksheet.write_string(0, 0, "Region").expect("header");
+        worksheet.write_string(1, 0, "East").expect("east");
+        worksheet.write_string(2, 0, "West").expect("west");
+        worksheet
+            .filter_column(0, &FilterCondition::new().add_list_filter("East"))
+            .expect("filter");
+
+        worksheet.apply_filters();
+        assert_eq!(worksheet.filter_hidden_rows(), &[2, 3].into());
+
+        worksheet.filter_automatic_off();
+        worksheet.apply_filters();
+        assert!(worksheet.filter_hidden_rows().is_empty());
+    }
+
+    #[test]
+    fn custom_filters_hide_rows_using_and_or_and_blanks() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.autofilter(0, 0, 3, 0).expect("autofilter");
+        for (row, value) in [(1, 3000), (2, 5000), (3, 9000)] {
+            worksheet.write_number(row, 0, value).expect("number");
+        }
+        worksheet
+            .filter_column(
+                0,
+                &FilterCondition::new()
+                    .add_custom_filter(crate::FilterCriteria::GreaterThanOrEqualTo, 4000_i32)
+                    .add_custom_filter(crate::FilterCriteria::LessThanOrEqualTo, 8000_i32),
+            )
+            .expect("between");
+        worksheet.apply_filters();
+        assert_eq!(worksheet.filter_hidden_rows(), &[1, 3].into());
+
+        worksheet
+            .filter_column(
+                0,
+                &FilterCondition::new()
+                    .add_custom_filter(crate::FilterCriteria::EqualTo, 3000_i32)
+                    .add_custom_filter(crate::FilterCriteria::EqualTo, 9000_i32)
+                    .add_custom_boolean_or(),
+            )
+            .expect("or");
+        worksheet.apply_filters();
+        assert_eq!(worksheet.filter_hidden_rows(), &[2].into());
     }
 
     #[test]

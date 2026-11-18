@@ -18,7 +18,8 @@ public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 widths/formats, approximate autofit, multi-sheet package assembly with optional DEFLATE compression and ZIP64 mode, workbook calculation mode,
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
-range, core/app/custom document properties with explicit creation timestamps,
+range with list/custom filter conditions and automatic row hiding,
+core/app/custom document properties with explicit creation timestamps,
 user-defined names for literals and absolute A1 references, and
 `save`/`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
 table and emits `BrtCellIsst`; `ToCellValue` remains the low-level core
@@ -161,9 +162,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 422 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 445 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 426 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 449 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -257,7 +258,8 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
 | `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
 | `rust-xlsb-writer/src/datetime.rs` | Native `ExcelDateTime`, validation, parsing, and serial conversion |
-| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, autofilter, print records |
+| `rust-xlsb-writer/src/filter.rs` | Autofilter condition model and row matching |
+| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, autofilter, filter records, print records |
 | `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
@@ -298,9 +300,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 422 unit tests and 7 doctests in default builds: 193 in core, 229 in writer.
+- 445 unit tests and 7 doctests in default builds: 204 in core, 241 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 426 total. Most core
+  `rust_decimal` adapters, for 449 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

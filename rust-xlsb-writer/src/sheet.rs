@@ -3,12 +3,14 @@
 use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos, BrtBeginHeaderFooter,
+    BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
+    BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter,
     BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
     BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
-    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtEndAFilter, BrtEndCellIgnoreECs,
-    BrtEndColBrk, BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
-    BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtHLink, BrtMargins, BrtMergeCell, BrtPageSetup,
+    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtCustomFilter, BrtEndAFilter,
+    BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndCustomFilters, BrtEndFilterColumn,
+    BrtEndFilters, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData,
+    BrtEndWsView, BrtEndWsViews, BrtFilter, BrtHLink, BrtMargins, BrtMergeCell, BrtPageSetup,
     BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
     HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
     XlWideString, Xnum,
@@ -18,6 +20,7 @@ use rust_xlsb_core::{
 };
 
 use crate::data::CellData;
+use crate::filter::{FilterCriteria, FilterData};
 use crate::worksheet::{ColumnOptions, IgnoreError, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
 
@@ -68,16 +71,18 @@ pub fn write_sheet(
     let mut rows = BTreeSet::new();
     rows.extend(sheet.cells().keys().copied());
     rows.extend(sheet.row_options().keys().copied());
+    rows.extend(sheet.filter_hidden_rows().iter().copied());
 
     for row in rows {
         let row_options = sheet.row_options().get(&row);
+        let filter_hidden = sheet.filter_hidden_rows().contains(&row);
         let row_style = row_options
             .and_then(|options| options.format)
             .map_or(0, |index| mapped_style(index, style_indexes));
         let default_row_height = sheet
             .default_row_height()
             .map_or(DEFAULT_ROW_HEIGHT, height_to_twips);
-        let row_height = if row_options.is_some_and(|options| options.hidden) {
+        let row_height = if filter_hidden || row_options.is_some_and(|options| options.hidden) {
             0
         } else {
             row_options
@@ -93,7 +98,7 @@ pub fn write_sheet(
                 rw: row,
                 ixfe: row_style,
                 miyRw: row_height,
-                fDyZero: row_options.is_some_and(|options| options.hidden),
+                fDyZero: filter_hidden || row_options.is_some_and(|options| options.hidden),
                 fGhostDirty: row_options.and_then(|options| options.format).is_some(),
                 iOutLevel: row_options.map_or(0, |options| options.level),
                 fCollapsed: row_options.is_some_and(|options| options.collapsed),
@@ -128,6 +133,7 @@ pub fn write_sheet(
     write_unprotected_ranges(sheet, out)?;
     if let Some(rfx) = sheet.autofilter_range() {
         push(out, &BrtBeginAFilter { rfx })?;
+        write_filter_columns(sheet, rfx, out)?;
         push(out, &BrtEndAFilter::default())?;
     }
 
@@ -685,6 +691,84 @@ fn column_spans(columns: impl Iterator<Item = u16>) -> Vec<BrtColSpan> {
 
 fn push<T: BiffWrite>(out: &mut Vec<u8>, record: &T) -> Result<()> {
     push_record(out, record).map_err(Error::from)
+}
+
+fn write_filter_columns(sheet: &Worksheet, range: UncheckedRfX, out: &mut Vec<u8>) -> Result<()> {
+    for (&col, condition) in sheet.filter_conditions() {
+        push(
+            out,
+            &BrtBeginFilterColumn {
+                dwCol: u32::from(col) - range.colFirst,
+                fHideArrow: false,
+                fNoBtn: false,
+            },
+        )?;
+
+        if condition.is_list_filter {
+            push(
+                out,
+                &BrtBeginFilters {
+                    fBlank: u32::from(condition.should_match_blanks),
+                    unused: 0,
+                },
+            )?;
+            for data in &condition.list {
+                push(
+                    out,
+                    &BrtFilter {
+                        rgch: XlWideString::construct(Some(data.string.as_str())),
+                    },
+                )?;
+            }
+            push(out, &BrtEndFilters::default())?;
+        } else {
+            push(
+                out,
+                &BrtBeginCustomFilters {
+                    fAnd: u32::from(condition.apply_logical_or && condition.custom2.is_some()),
+                },
+            )?;
+            if let Some(data) = &condition.custom1 {
+                push(out, &custom_filter(data))?;
+            }
+            if let Some(data) = &condition.custom2 {
+                push(out, &custom_filter(data))?;
+            }
+            push(out, &BrtEndCustomFilters::default())?;
+        }
+
+        push(out, &BrtEndFilterColumn::default())?;
+    }
+
+    Ok(())
+}
+
+fn custom_filter(data: &FilterData) -> BrtCustomFilter {
+    let grbit_sgn = data.criteria.operator();
+    if data.is_number() {
+        return BrtCustomFilter {
+            vts: 0x04,
+            grbitSgn: grbit_sgn,
+            union: data.number.to_le_bytes(),
+            vtsStringXls: None,
+        };
+    }
+
+    if data.string == " " && data.criteria == FilterCriteria::NotEqualTo {
+        return BrtCustomFilter {
+            vts: 0x0E,
+            grbitSgn: grbit_sgn,
+            union: [0; 8],
+            vtsStringXls: None,
+        };
+    }
+
+    BrtCustomFilter {
+        vts: 0x06,
+        grbitSgn: grbit_sgn,
+        union: [0; 8],
+        vtsStringXls: Some(XlWideString::construct(Some(data.value()))),
+    }
 }
 
 fn push_cell(

@@ -29,6 +29,7 @@ mod defined_name;
 #[cfg(test)]
 mod e2e;
 mod error;
+mod filter;
 mod format;
 mod package;
 mod properties;
@@ -43,6 +44,7 @@ pub use data::CellData;
 pub use data::{IntoExcelData, IntoExcelDateTime};
 pub use datetime::ExcelDateTime;
 pub use error::{Error, Result, XlsbError};
+pub use filter::{FilterCondition, FilterCriteria, FilterData, IntoFilterData};
 pub use format::{
     Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,
     FormatScript, FormatUnderline,

@@ -299,6 +299,10 @@ impl Workbook {
             }
         }
 
+        for sheet in &mut self.worksheets {
+            sheet.apply_filters();
+        }
+
         let mut defined_names = HashSet::new();
         for name in &self.defined_names {
             if let Some(scope) = name.scope.as_deref() {

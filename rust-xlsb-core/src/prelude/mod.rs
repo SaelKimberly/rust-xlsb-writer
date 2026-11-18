@@ -9,11 +9,13 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginAFilter, BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst,
-    BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp,
-    BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk,
-    BrtCellSt, BrtColInfo, BrtColor, BrtEndAFilter, BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk,
-    BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFmt,
+    BrtBeginAFilter, BrtBeginColBrk, BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters,
+    BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView,
+    BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCalcProp, BrtCellBlank, BrtCellBool,
+    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo,
+    BrtColor, BrtCustomFilter, BrtEndAFilter, BrtEndColBrk, BrtEndCustomFilters,
+    BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst,
+    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt,
     BrtFont, BrtHLink, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
     BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
     BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder,
@@ -125,6 +127,14 @@ mod tests {
     #[case::brt_sheet_protection(|| checked_test::<BrtSheetProtection>(66))]
     #[case::brt_begin_a_filter(|| checked_test::<BrtBeginAFilter>(16))]
     #[case::brt_end_a_filter(|| checked_test::<BrtEndAFilter>(0))]
+    #[case::brt_begin_filter_column(|| checked_test::<BrtBeginFilterColumn>(6))]
+    #[case::brt_end_filter_column(|| checked_test::<BrtEndFilterColumn>(0))]
+    #[case::brt_begin_filters(|| checked_test::<BrtBeginFilters>(8))]
+    #[case::brt_end_filters(|| checked_test::<BrtEndFilters>(0))]
+    #[case::brt_filter(|| checked_test::<BrtFilter>(16))]
+    #[case::brt_begin_custom_filters(|| checked_test::<BrtBeginCustomFilters>(4))]
+    #[case::brt_end_custom_filters(|| checked_test::<BrtEndCustomFilters>(0))]
+    #[case::brt_custom_filter_number(|| checked_test::<BrtCustomFilter>(10))]
     #[case::brt_range_protection(|| checked_test::<BrtRangeProtection>(32))]
     #[case::brt_cell_ignore_ec(|| checked_test::<BrtCellIgnoreEC>(8))]
     #[case::brt_book_view(|| checked_test::<BrtBookView>(29))]

@@ -975,13 +975,26 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        Bold, BrtBeginAFilter, BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp,
-        BrtExternSheet, BrtFileSharing, BrtFont, BrtHLink, BrtName, BrtSheetProtection,
+        Bold, BrtBeginAFilter, BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters,
+        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCalcProp, BrtCustomFilter, BrtExternSheet,
+        BrtFileSharing, BrtFilter, BrtFont, BrtHLink, BrtName, BrtRowHdr, BrtSheetProtection,
         BrtWsFmtInfo, BrtXF,
     };
-    use rust_xlsb_core::{BiffHead, CheckedBiff};
+    use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
     use super::*;
+    use crate::filter::{FilterCondition, FilterCriteria};
+
+    fn record_ids(part: &[u8]) -> Vec<KnownID> {
+        let mut reader = BufReader::new(part);
+        let mut ids = Vec::new();
+        while let Ok((head, _)) = BiffHead::read_from_with_data(&mut reader) {
+            if let Some(id) = head.known_id() {
+                ids.push(id);
+            }
+        }
+        ids
+    }
 
     fn records<T>(part: &[u8]) -> Vec<T>
     where
@@ -1447,6 +1460,170 @@ mod tests {
             Some("_xlnm._FilterDatabase")
         );
         assert_eq!(names[0].formula.rgce, area3d(0, 1, 2, 5, 4).to_vec());
+    }
+
+    #[test]
+    fn filter_conditions_emit_records_and_hide_rows() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.autofilter(0, 1, 3, 2).expect("autofilter");
+        worksheet.write_string(0, 1, "Region").expect("header");
+        worksheet.write_string(0, 2, "Sales").expect("header");
+        worksheet.write_string(1, 1, "East").expect("east");
+        worksheet.write_string(2, 1, "West").expect("west");
+        worksheet.write_number(1, 2, 4).expect("number");
+        worksheet.write_number(2, 2, 9).expect("number");
+        worksheet
+            .filter_column(
+                1,
+                &FilterCondition::new()
+                    .add_list_filter("East")
+                    .add_list_blanks_filter(),
+            )
+            .expect("list filter");
+        worksheet
+            .filter_column(
+                2,
+                &FilterCondition::new()
+                    .add_custom_filter(FilterCriteria::GreaterThanOrEqualTo, 4_i32)
+                    .add_custom_filter(FilterCriteria::LessThanOrEqualTo, 8_i32),
+            )
+            .expect("custom filter");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+
+        let columns = records::<BrtBeginFilterColumn>(&sheet);
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].dwCol, 0);
+        assert_eq!(columns[1].dwCol, 1);
+
+        let list = records::<BrtBeginFilters>(&sheet);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].fBlank, 1);
+        let filters = records::<BrtFilter>(&sheet);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].rgch.try_to_string().expect("string"), "East");
+
+        let custom = records::<BrtBeginCustomFilters>(&sheet);
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].fAnd, 0);
+        let custom = records::<BrtCustomFilter>(&sheet);
+        assert_eq!(custom.len(), 2);
+        assert_eq!((custom[0].vts, custom[0].grbitSgn), (0x04, 0x06));
+        assert_eq!(f64::from_le_bytes(custom[0].union), 4.0);
+        assert_eq!((custom[1].vts, custom[1].grbitSgn), (0x04, 0x03));
+        assert_eq!(f64::from_le_bytes(custom[1].union), 8.0);
+
+        let ids = record_ids(&sheet);
+        let position = |id: KnownID| {
+            ids.iter()
+                .position(|record_id| *record_id == id)
+                .expect("record")
+        };
+        let list_start = position(KnownID::BrtBeginFilters);
+        let list_end = position(KnownID::BrtEndFilters);
+        let custom_start = position(KnownID::BrtBeginCustomFilters);
+        let custom_end = position(KnownID::BrtEndCustomFilters);
+        assert!(position(KnownID::BrtBeginAFilter) < position(KnownID::BrtBeginFilterColumn));
+        assert!(list_start < list_end && list_end < custom_start);
+        assert!(custom_start < custom_end && custom_end < position(KnownID::BrtEndAFilter));
+        let column_ends: Vec<_> = ids
+            .iter()
+            .enumerate()
+            .filter_map(|(index, id)| (*id == KnownID::BrtEndFilterColumn).then_some(index))
+            .collect();
+        assert_eq!(column_ends.len(), 2);
+        assert!(column_ends[0] > list_end && column_ends[1] > custom_end);
+
+        let rows = records::<BrtRowHdr>(&sheet);
+        let hidden = |row: u32| {
+            rows.iter()
+                .find(|record| record.rw == row)
+                .is_some_and(|record| record.fDyZero && record.miyRw == 0)
+        };
+        assert!(!hidden(1));
+        assert!(hidden(2));
+        assert!(hidden(3));
+    }
+
+    #[test]
+    fn custom_filter_or_sets_the_or_relationship() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.autofilter(0, 0, 2, 0).expect("autofilter");
+        worksheet
+            .filter_column(
+                0,
+                &FilterCondition::new()
+                    .add_custom_filter(FilterCriteria::EqualTo, 3000_i32)
+                    .add_custom_filter(FilterCriteria::EqualTo, 9000_i32)
+                    .add_custom_boolean_or(),
+            )
+            .expect("filter");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let custom = records::<BrtBeginCustomFilters>(&sheet);
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].fAnd, 1);
+    }
+
+    #[test]
+    fn non_blank_custom_filters_use_the_special_value_type() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.autofilter(0, 0, 2, 1).expect("autofilter");
+        worksheet
+            .filter_column(
+                0,
+                &FilterCondition::new().add_custom_filter(FilterCriteria::NotEqualTo, " "),
+            )
+            .expect("nonblank");
+        worksheet
+            .filter_column(
+                1,
+                &FilterCondition::new().add_custom_filter(FilterCriteria::EqualTo, " "),
+            )
+            .expect("blank");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let custom = records::<BrtCustomFilter>(&sheet);
+        assert_eq!(custom.len(), 2);
+        assert_eq!(custom[0].vts, 0x0E);
+        assert_eq!(custom[1].vts, 0x06);
+        assert_eq!(
+            custom[1]
+                .vtsStringXls
+                .as_ref()
+                .expect("string")
+                .try_to_string()
+                .expect("value"),
+            " "
+        );
+    }
+
+    #[test]
+    fn filter_automatic_off_keeps_records_without_hiding_rows() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.autofilter(0, 0, 2, 0).expect("autofilter");
+        worksheet.write_string(1, 0, "East").expect("east");
+        worksheet.write_string(2, 0, "West").expect("west");
+        worksheet
+            .filter_column(0, &FilterCondition::new().add_list_filter("East"))
+            .expect("filter");
+        worksheet.filter_automatic_off();
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        assert_eq!(records::<BrtBeginFilterColumn>(&sheet).len(), 1);
+        assert!(
+            records::<BrtRowHdr>(&sheet)
+                .iter()
+                .all(|record| !record.fDyZero)
+        );
     }
 
     #[test]
