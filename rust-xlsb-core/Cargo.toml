@@ -36,6 +36,7 @@ rusqlite = { version = "^0.43", features = ["bundled", "rusqlite-macros"] }
 
 [dev-dependencies]
 criterion = "^0.8"
+rstest.workspace = true
 
 [features]
 default = []

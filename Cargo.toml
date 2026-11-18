@@ -2,6 +2,10 @@
 members = ["rust-xlsb-writer", "rust-xlsb-core"]
 resolver = "3"
 
+[workspace.dependencies]
+# [x] for parametrized tests
+rstest = { version = "^0.28" }
+
 [workspace.package]
 
 version = "0.1.0"

@@ -20,3 +20,4 @@ mimalloc = "0.1.52"
 
 [dev-dependencies]
 criterion = "^0.8"
+rstest.workspace = true
