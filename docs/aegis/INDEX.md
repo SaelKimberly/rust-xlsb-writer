@@ -11,6 +11,7 @@
 - [P0a low-risk API parity](plans/2026-11-18-p0a-low-risk-parity.md)
 - [merge_range: MS-XLSB merged cells](plans/2026-11-18-merge-range.md)
 - [Worksheet views: freeze panes, selection, top-left cell](plans/2026-11-18-worksheet-views.md)
+- [Worksheet view options and pixel units](plans/2026-11-18-view-options-and-pixel-units.md)
 
 ## Analysis
 

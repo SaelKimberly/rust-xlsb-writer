@@ -154,8 +154,21 @@ fn view_state_does_not_disturb_cell_values() {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_freeze_panes(1, 0).expect("freeze");
+    sheet
+        .set_freeze_panes_top_cell(2, 0)
+        .expect("freeze top cell");
     sheet.set_selection(2, 1, 3, 2).expect("selection");
     sheet.set_top_left_cell(1, 1).expect("top left");
+    sheet
+        .set_zoom(150)
+        .set_screen_gridlines(false)
+        .set_hidden_zeroes(true)
+        .set_right_to_left(true);
+    sheet.set_row_height_pixels(5, 30).expect("row pixels");
+    sheet.set_column_width_pixels(2, 70).expect("column pixels");
+    sheet
+        .set_column_range_width_pixels(3, 4, 40)
+        .expect("range pixels");
     sheet.write(0, 0, "header").expect("header");
     sheet.write(1, 0, "row").expect("row");
 

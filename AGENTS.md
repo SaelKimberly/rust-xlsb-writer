@@ -72,7 +72,7 @@ conversion time.
 
 The public writer has its own `IntoExcelData` / `IntoExcelDateTime` path.
 `Worksheet` owns sparse cells, row options, column options, merged ranges,
-worksheet view state, and a worksheet-local format table; `write` stores
+worksheet view/display state, and a worksheet-local format table; `write` stores
 context-free `CellData` and `write_with_format` interns a `Format` by value. At
 save, the writer creates an `SSTHolder`, turns high-level strings into shared
 strings (`BrtCellIsst`), and converts numbers through `WbContext`.
@@ -141,7 +141,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 194 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 199 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -267,7 +267,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 194 unit tests and 6 doctests total: 132 in core, 62 in writer. Most core
+- 199 unit tests and 6 doctests total: 132 in core, 67 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

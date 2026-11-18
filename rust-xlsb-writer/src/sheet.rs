@@ -154,15 +154,16 @@ fn write_sheet_views(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     push(
         out,
         &BrtBeginWsView {
-            fDspGrid: true,
+            fDspGrid: view.show_gridlines,
             fDspRwCol: true,
-            fDspZeros: true,
+            fDspZeros: view.show_zeros,
+            fRightToLeft: view.right_to_left,
             fDspGuts: true,
             fDefaultHdr: true,
             rwTop: rw_top,
             colLeft: col_left,
             icvHdr: 0x40,
-            wScale: 100,
+            wScale: view.zoom,
             wScaleNormal: 100,
             ..BrtBeginWsView::default()
         },
@@ -171,20 +172,14 @@ fn write_sheet_views(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     if let Some((row, col)) = view.freeze
         && (row > 0 || col > 0)
     {
-        let (top_row, left_col) = if row > 0 && col > 0 {
-            (row, u32::from(col))
-        } else if row > 0 {
-            (row, 0)
-        } else {
-            (0, u32::from(col))
-        };
+        let (top_row, left_col) = view.freeze_top_cell.unwrap_or((row, col));
         push(
             out,
             &BrtPane {
                 xnumXSplit: Xnum::from(f64::from(row)),
                 xnumYSplit: Xnum::from(f64::from(col)),
                 rwTop: top_row,
-                colLeft: left_col,
+                colLeft: u32::from(left_col),
                 pnnAct: active_pane,
                 fFrozen: false,
                 fFrozenNoSplit: true,
@@ -514,6 +509,49 @@ mod tests {
                 colLast: 4,
             }
         );
+    }
+
+    #[test]
+    fn view_options_and_freeze_top_cell_serialize() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_freeze_panes(1, 2).expect("freeze");
+        sheet.set_freeze_panes_top_cell(3, 4).expect("top cell");
+        sheet.set_zoom(175);
+        sheet.set_screen_gridlines(false);
+        sheet.set_hidden_zeroes(false);
+        sheet.set_right_to_left(true);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        let views = records::<BrtBeginWsView>(&out);
+        assert_eq!(views.len(), 1);
+        assert!(!views[0].fDspGrid);
+        assert!(views[0].fDspZeros);
+        assert!(views[0].fRightToLeft);
+        assert_eq!((views[0].wScale, views[0].wScaleNormal), (175, 100));
+
+        let panes = records::<BrtPane>(&out);
+        assert_eq!(panes.len(), 1);
+        assert_eq!((panes[0].rwTop, panes[0].colLeft), (3, 4));
+        assert_eq!(*panes[0].xnumXSplit, 1.0);
+        assert_eq!(*panes[0].xnumYSplit, 2.0);
+    }
+
+    #[test]
+    fn hidden_zeroes_disable_the_zero_display_flag() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_hidden_zeroes(true);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        let views = records::<BrtBeginWsView>(&out);
+        assert_eq!(views.len(), 1);
+        assert!(views[0].fDspGrid);
+        assert!(!views[0].fDspZeros);
     }
 
     #[test]

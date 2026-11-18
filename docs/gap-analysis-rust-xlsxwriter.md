@@ -21,7 +21,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no hyperlinks or rich strings.
 3. **Worksheet layout and view** — no autofit, grouping, page setup, print
-   settings, zoom, or sheet state.
+   settings, or sheet state.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
    validation, or protection.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
@@ -46,13 +46,13 @@ the breadth gap.
 | Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format, merged ranges |
-| View | freeze panes, selection range, top-left cell |
+| View | freeze panes and top-cell, selection, top-left cell, zoom, gridline/zero/right-to-left flags |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 132 core + 62 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 132 core + 67 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -106,19 +106,19 @@ Status meanings:
 | `write_rich_string_with_format`, `write_url_with_format` | Missing | Formatted rich text and links |
 | `set_formula_result`, `set_formula_result_default` | Missing | Stored formula results |
 | `set_nan_value`, `set_infinity_value`, `set_neg_infinity_value` | Missing | Display text for non-finite numbers |
-| `set_hidden_zeroes` | Missing | Worksheet display option |
+| `set_hidden_zeroes` | Supported | — |
 
 ### 3.3 Worksheet Layout, View, And Print
 
 | Capability | Current | Gap |
 |---|---|---|
 | `set_row_height`, `set_row_format` | Supported | — |
-| `set_row_height_pixels` | Missing | Pixel units |
+| `set_row_height_pixels` | Supported | — |
 | `set_row_hidden`, `set_row_unhidden` | Supported | — |
 | `set_default_row_height`, `set_default_row_height_pixels` | Missing | Default row height |
 | `group_rows`, `group_rows_collapsed` | Missing | Outline groups |
 | `set_column_width`, `set_column_range_width` | Supported | — |
-| `set_column_width_pixels`, `set_column_range_width_pixels` | Missing | Pixel units |
+| `set_column_width_pixels`, `set_column_range_width_pixels` | Supported | — |
 | `set_column_autofit_width` | Missing | Autofit width hint |
 | `set_column_format`, `set_column_range_format` | Supported | — |
 | `set_column_hidden`, `set_column_range_hidden` | Supported | — |
@@ -133,10 +133,10 @@ Status meanings:
 | `clear_cell`, `clear_cell_format` | Supported | — |
 | `set_selection`, `set_top_left_cell` | Supported | — |
 | `set_freeze_panes` | Supported | — |
-| `set_freeze_panes_top_cell` | Missing | Frozen-pane top-left override |
-| `set_zoom`, `set_zoom_to_fit` | Missing | View zoom |
-| `set_screen_gridlines`, `set_print_gridlines` | Missing | Gridline display |
-| `set_right_to_left` | Missing | Sheet direction |
+| `set_freeze_panes_top_cell` | Supported | — |
+| `set_zoom` | Supported | `set_zoom_to_fit` remains chartsheet-only |
+| `set_screen_gridlines` | Supported | `set_print_gridlines` missing |
+| `set_right_to_left` | Supported | — |
 | `set_active`, `set_selected`, `set_hidden`, `set_very_hidden` | Missing | Sheet state |
 | `set_first_tab`, `set_tab_color` | Missing | Tab state/color |
 | `set_landscape`, `set_portrait`, `set_paper_size`, `set_page_order` | Missing | Page setup |
@@ -304,8 +304,9 @@ objects.
 **P0a status:** shipped `Result<T,E>`, formatted row/column writes, row/column
 matrices, cell/range format edits, clear operations, hidden rows/columns, and
 the format-only parity setters. **Merge status:** `merge_range` and the three
-MS-XLSB merge records are shipped. **View status:** freeze panes, selection,
-top-left cell, and the `WSVIEWS2` records are shipped. **P0b** remains the
+MS-XLSB merge records are shipped. **View status:** freeze panes, frozen-pane top cell, selection,
+top-left cell, zoom, display flags, pixel-unit layout setters, and the
+`WSVIEWS2` records are shipped. **P0b** remains the
 formula engine; hyperlinks and worksheet state are the next smaller P0 gaps.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
@@ -335,7 +336,7 @@ rejected before output.
 | Headers/footers and header/footer images | Reporting | M |
 | Print area, repeat rows/columns, page breaks | Multi-page reports | M |
 | Print scale/fit-to-pages, centering, gridlines/headings | Print fidelity | M |
-| Zoom, gridlines, right-to-left, sheet active/selected | UX parity | S–M |
+| Sheet active/selected | UX parity | S–M |
 | Group rows/columns, outline symbols | Collapsible reports | M |
 | Autofit and default row height | Readability | M |
 
@@ -427,7 +428,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 132 core + 62 writer unit tests and 6 doctests; calamine
+- Test evidence: 132 core + 67 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a

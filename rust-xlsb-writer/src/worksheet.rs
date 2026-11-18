@@ -10,6 +10,9 @@ use crate::{Error, Format, Result};
 pub const MAX_ROW: u32 = 1_048_575;
 pub const MAX_COL: u16 = 16_383;
 const MAX_STRING_UTF16: usize = 32_767;
+const DEFAULT_ZOOM: u16 = 100;
+const MIN_ZOOM: u16 = 10;
+const MAX_ZOOM: u16 = 400;
 
 /// Zero-based row number.
 pub type RowNum = u32;
@@ -45,16 +48,43 @@ pub struct MergeRange {
     pub(crate) last_col: u16,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SheetView {
     pub(crate) freeze: Option<(RowNum, ColNum)>,
     pub(crate) selection: Option<UncheckedRfX>,
     pub(crate) top_left: Option<(RowNum, ColNum)>,
+    pub(crate) freeze_top_cell: Option<(RowNum, ColNum)>,
+    pub(crate) zoom: u16,
+    pub(crate) show_gridlines: bool,
+    pub(crate) show_zeros: bool,
+    pub(crate) right_to_left: bool,
+}
+
+impl Default for SheetView {
+    fn default() -> Self {
+        Self {
+            freeze: None,
+            selection: None,
+            top_left: None,
+            freeze_top_cell: None,
+            zoom: DEFAULT_ZOOM,
+            show_gridlines: true,
+            show_zeros: true,
+            right_to_left: false,
+        }
+    }
 }
 
 impl SheetView {
+    // freeze_top_cell alone is not a view change; set_freeze_panes gates it.
     pub(crate) const fn is_default(&self) -> bool {
-        self.freeze.is_none() && self.selection.is_none() && self.top_left.is_none()
+        self.freeze.is_none()
+            && self.selection.is_none()
+            && self.top_left.is_none()
+            && self.zoom == DEFAULT_ZOOM
+            && self.show_gridlines
+            && self.show_zeros
+            && !self.right_to_left
     }
 }
 
@@ -472,6 +502,21 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Sets one column width in pixels.
+    ///
+    /// A width of `0` hides the column.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the column is out of range, or
+    /// [`Error::ValueNotRepresentable`] when the width exceeds the Excel limit.
+    pub fn set_column_width_pixels(&mut self, col: ColNum, width: u32) -> Result<&mut Self> {
+        if width == 0 {
+            return self.set_column_hidden(col);
+        }
+        self.set_column_width(col, pixels_to_width(width))
+    }
+
     /// Sets a column range width in character units.
     ///
     /// # Errors
@@ -496,6 +541,27 @@ impl Worksheet {
             self.columns.entry(col).or_default().width = Some(width);
         }
         Ok(self)
+    }
+
+    /// Sets a column range width in pixels.
+    ///
+    /// A width of `0` hides the columns.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when `first > last`,
+    /// [`Error::RowColumnLimit`] when the range is out of bounds, or
+    /// [`Error::ValueNotRepresentable`] when the width exceeds the Excel limit.
+    pub fn set_column_range_width_pixels(
+        &mut self,
+        first: ColNum,
+        last: ColNum,
+        width: u32,
+    ) -> Result<&mut Self> {
+        if width == 0 {
+            return self.set_column_range_hidden(first, last);
+        }
+        self.set_column_range_width(first, last, pixels_to_width(width))
     }
 
     /// Sets one column format.
@@ -546,6 +612,21 @@ impl Worksheet {
         validate_row_height(height)?;
         self.rows.entry(row).or_default().height = Some(height);
         Ok(self)
+    }
+
+    /// Sets one row height in pixels.
+    ///
+    /// A height of `0` hides the row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row is out of range, or
+    /// [`Error::ValueNotRepresentable`] when the height exceeds the Excel limit.
+    pub fn set_row_height_pixels(&mut self, row: RowNum, height: u32) -> Result<&mut Self> {
+        if height == 0 {
+            return self.set_row_hidden(row);
+        }
+        self.set_row_height(row, f64::from(height) * 0.75)
     }
 
     /// Sets one row format.
@@ -669,6 +750,48 @@ impl Worksheet {
         Self::check_col(col)?;
         self.view.top_left = Some((row, col));
         Ok(self)
+    }
+
+    /// Sets the first visible cell of the frozen pane.
+    ///
+    /// Has no effect until [`Self::set_freeze_panes`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row or column is out of range.
+    pub fn set_freeze_panes_top_cell(&mut self, row: RowNum, col: ColNum) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        self.view.freeze_top_cell = Some((row, col));
+        Ok(self)
+    }
+
+    /// Sets the worksheet zoom percentage.
+    ///
+    /// Values outside `10..=400` are ignored.
+    pub fn set_zoom(&mut self, zoom: u16) -> &mut Self {
+        if (MIN_ZOOM..=MAX_ZOOM).contains(&zoom) {
+            self.view.zoom = zoom;
+        }
+        self
+    }
+
+    /// Turns screen gridlines on or off.
+    pub const fn set_screen_gridlines(&mut self, enable: bool) -> &mut Self {
+        self.view.show_gridlines = enable;
+        self
+    }
+
+    /// Hides zero values when `enable` is true.
+    pub const fn set_hidden_zeroes(&mut self, enable: bool) -> &mut Self {
+        self.view.show_zeros = !enable;
+        self
+    }
+
+    /// Displays the worksheet right-to-left when `enable` is true.
+    pub const fn set_right_to_left(&mut self, enable: bool) -> &mut Self {
+        self.view.right_to_left = enable;
+        self
     }
 
     /// Applies a format to one cell without changing its value.
@@ -976,6 +1099,15 @@ fn validate_row_height(height: f64) -> Result<()> {
     }
 }
 
+fn pixels_to_width(pixels: u32) -> f64 {
+    let pixels = f64::from(pixels);
+    if pixels <= 12.0 {
+        pixels / 12.0
+    } else {
+        (pixels - 5.0) / 7.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1079,6 +1211,118 @@ mod tests {
         worksheet.set_top_left_cell(0, 1).expect("replace");
         assert_eq!(worksheet.view().freeze, Some((1, 0)));
         assert_eq!(worksheet.view().top_left, Some((0, 1)));
+    }
+
+    #[test]
+    fn stores_view_display_options_and_freeze_top_cell() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet
+            .set_zoom(150)
+            .set_screen_gridlines(false)
+            .set_hidden_zeroes(true)
+            .set_right_to_left(true);
+        worksheet.set_freeze_panes(1, 2).expect("freeze");
+        worksheet.set_freeze_panes_top_cell(4, 3).expect("top cell");
+
+        assert_eq!(worksheet.view().zoom, 150);
+        assert!(!worksheet.view().show_gridlines);
+        assert!(!worksheet.view().show_zeros);
+        assert!(worksheet.view().right_to_left);
+        assert_eq!(worksheet.view().freeze_top_cell, Some((4, 3)));
+
+        worksheet.set_zoom(9);
+        assert_eq!(worksheet.view().zoom, 150);
+    }
+
+    #[test]
+    fn pixel_dimensions_convert_and_zero_hides() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_row_height_pixels(3, 40).expect("row pixels");
+        worksheet
+            .set_column_width_pixels(4, 64)
+            .expect("column pixels");
+        worksheet
+            .set_column_range_width_pixels(5, 6, 64)
+            .expect("range pixels");
+        worksheet
+            .set_column_width_pixels(10, 12)
+            .expect("12 pixels");
+        worksheet
+            .set_column_width_pixels(11, 13)
+            .expect("13 pixels");
+        worksheet
+            .set_column_width_pixels(12, 0)
+            .expect("hidden column");
+        worksheet.set_row_height_pixels(7, 0).expect("hidden row");
+        worksheet
+            .set_column_range_width_pixels(8, 9, 0)
+            .expect("hidden columns");
+
+        assert_eq!(
+            worksheet
+                .row_options()
+                .get(&3)
+                .and_then(|options| options.height),
+            Some(30.0)
+        );
+        let expected = (64.0 - 5.0) / 7.0;
+        for col in 4..=6 {
+            assert_eq!(
+                worksheet
+                    .column_options()
+                    .get(&col)
+                    .and_then(|options| options.width),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            worksheet
+                .column_options()
+                .get(&10)
+                .and_then(|options| options.width),
+            Some(1.0)
+        );
+        assert_eq!(
+            worksheet
+                .column_options()
+                .get(&11)
+                .and_then(|options| options.width),
+            Some(8.0 / 7.0)
+        );
+        assert!(
+            worksheet
+                .column_options()
+                .get(&12)
+                .is_some_and(|column| column.hidden)
+        );
+        assert!(
+            worksheet
+                .row_options()
+                .get(&7)
+                .is_some_and(|row| row.hidden)
+        );
+        for col in 8..=9 {
+            assert!(
+                worksheet
+                    .column_options()
+                    .get(&col)
+                    .is_some_and(|column| column.hidden)
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_freeze_top_cell_without_mutation() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.set_freeze_panes_top_cell(MAX_ROW + 1, 0),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.set_freeze_panes_top_cell(0, MAX_COL + 1),
+            Err(Error::RowColumnLimit)
+        ));
+        assert_eq!(worksheet.view().freeze_top_cell, None);
     }
 
     #[test]
