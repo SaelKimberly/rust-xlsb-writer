@@ -182,6 +182,14 @@ pub struct CodeName {
 declare_xl_string!(CodeName);
 
 #[derive(Debug, Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
+pub struct HeaderFooterString {
+    #[deku(assert = "inner.is_null() || inner.len() <= 255")]
+    inner: XlString,
+}
+
+declare_xl_string!(HeaderFooterString, true);
+
+#[derive(Debug, Clone, PartialEq, Eq, DekuRead, DekuWrite, std::hash::Hash)]
 pub struct SimpleRichStr {
     #[deku(pad_bytes_before = "1")]
     #[deku(assert = "!inner.is_null()")]
@@ -197,7 +205,7 @@ mod tests {
 
     use crate::prelude::structure::xl_wide_string::{XlString, XlStringExt};
 
-    use super::XlWideString;
+    use super::{HeaderFooterString, XlWideString};
 
     #[test]
     fn test_xl_wide_string() {
@@ -236,5 +244,39 @@ mod tests {
 
         let r = x.to_bytes();
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn header_footer_string_limits_utf16_units() {
+        let max = HeaderFooterString::construct(Some("x".repeat(255)));
+        assert_eq!(max.try_to_string().expect("valid").len(), 255);
+        assert!(max.to_bytes().is_ok());
+
+        let too_long = HeaderFooterString::construct(Some("x".repeat(256)));
+        assert!(too_long.to_bytes().is_err());
+
+        let null = HeaderFooterString::default();
+        assert!(null.is_null());
+        assert!(null.to_bytes().is_ok());
+
+        let non_ascii = HeaderFooterString::construct(Some("Привет 😀"));
+        let bytes = non_ascii.to_bytes().expect("serializes");
+        let (_, parsed) = HeaderFooterString::from_bytes((&bytes, 0)).expect("decodes");
+        assert_eq!(parsed.try_to_string().expect("valid"), "Привет 😀");
+    }
+
+    #[test]
+    fn header_footer_string_counts_surrogate_pairs_and_rejects_long_decodes() {
+        let maximum = HeaderFooterString::construct(Some("😀".repeat(127).as_str()));
+        assert_eq!(maximum.len(), 254);
+        assert!(maximum.to_bytes().is_ok());
+
+        let too_long = HeaderFooterString::construct(Some("😀".repeat(128).as_str()));
+        assert_eq!(too_long.len(), 256);
+        assert!(too_long.to_bytes().is_err());
+
+        let mut bytes = vec![0_u8; 4 + 256 * 2];
+        bytes[..4].copy_from_slice(&256_u32.to_le_bytes());
+        assert!(HeaderFooterString::from_bytes((&bytes, 0)).is_err());
     }
 }

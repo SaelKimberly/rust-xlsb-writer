@@ -72,7 +72,8 @@ conversion time.
 
 The public writer has its own `IntoExcelData` / `IntoExcelDateTime` path.
 `Worksheet` owns sparse cells, row options, column options, merged ranges,
-worksheet view/display state, tab state, and a worksheet-local format table;
+worksheet view/display state, tab state, print state (page setup, text
+headers/footers, and manual page breaks), and a worksheet-local format table;
 `write` stores
 context-free `CellData` and `write_with_format` interns a `Format` by value. At
 save, the writer creates an `SSTHolder`, turns high-level strings into shared
@@ -142,7 +143,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 228 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 251 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -225,11 +226,13 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
 | `rust-xlsb-core/src/prelude/record/brt_merge_cell.rs` | `BrtMergeCell` range record |
 | `rust-xlsb-core/src/prelude/record/brt_begin_ws_view.rs` | `WSVIEWS2` view records; `brt_pane.rs`/`brt_sel.rs` carry panes and selection |
+| `rust-xlsb-core/src/prelude/record/brt_begin_header_footer.rs` | `BrtBeginHeaderFooter` text payload and flags |
+| `rust-xlsb-core/src/prelude/record/brt_page_breaks.rs` | manual row/column break records |
 | `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, save entry points |
-| `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, and view API |
+| `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, view, and print API |
 | `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
 | `rust-xlsb-writer/src/data.rs` | `IntoExcelData`/`IntoExcelDateTime` and context-free `CellData` |
-| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans |
+| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, print records |
 | `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only ZIP |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
@@ -268,7 +271,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 228 unit tests and 6 doctests total: 143 in core, 85 in writer. Most core
+- 251 unit tests and 6 doctests total: 158 in core, 93 in writer. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →
@@ -281,13 +284,14 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   and two-byte body reads), `sst_sqlite::tests::test_sst_sqlite` (push, batch,
   SST counters, item decode), `prelude::structure::xl_wide_string::tests`,
   `prelude::record::brt_color` LSB/RGB regressions,
-  `prelude::record::brt_font::tests::default_font_matches_excel`, and
-  `prelude::record::brt_row_hdr::ghost_dirty_lands_in_the_lsb_first_bit`.
+  `prelude::record::brt_font::tests::default_font_matches_excel`,
+  `prelude::record::brt_row_hdr::ghost_dirty_lands_in_the_lsb_first_bit`,
+  and header/footer/page-break record limits and field packing.
 - Hand-written writer tests cover `Format` mapping/dedup/validation,
   `IntoExcelData`, worksheet bounds and overrides, sheet record layout
   (`BrtColInfo` coalescing, `BrtRowHdr` ghost-dirty/spans/style precedence),
-  package parts, multi-sheet save, and calamine round-trips for values and
-  temporal formats.
+  package parts, multi-sheet save, print/header/page-break serialization, and
+  calamine round-trips for values and temporal formats.
 - `criterion` is a dev-dependency in both crates but no benchmark exists.
 - No CI runs any of this. Run `cargo test --workspace` before claiming a change
   works, and update the affected size literal rather than loosening the

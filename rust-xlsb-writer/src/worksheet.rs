@@ -184,6 +184,34 @@ impl PageSetup {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderFooter {
+    pub(crate) header: Option<String>,
+    pub(crate) footer: Option<String>,
+    pub(crate) scale_with_doc: bool,
+    pub(crate) align_with_page: bool,
+}
+
+impl Default for HeaderFooter {
+    fn default() -> Self {
+        Self {
+            header: None,
+            footer: None,
+            scale_with_doc: true,
+            align_with_page: true,
+        }
+    }
+}
+
+impl HeaderFooter {
+    pub(crate) const fn is_default(&self) -> bool {
+        self.header.is_none()
+            && self.footer.is_none()
+            && self.scale_with_doc
+            && self.align_with_page
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     #[default]
@@ -208,6 +236,9 @@ pub struct Worksheet {
     tab_color: Option<Color>,
     default_row_height: Option<f64>,
     page_setup: PageSetup,
+    header_footer: HeaderFooter,
+    page_breaks: Vec<u32>,
+    vertical_page_breaks: Vec<u32>,
 }
 
 impl Worksheet {
@@ -227,6 +258,9 @@ impl Worksheet {
             tab_color: None,
             default_row_height: None,
             page_setup: PageSetup::default(),
+            header_footer: HeaderFooter::default(),
+            page_breaks: Vec::new(),
+            vertical_page_breaks: Vec::new(),
         }
     }
 
@@ -1144,6 +1178,82 @@ impl Worksheet {
         self
     }
 
+    /// Sets the printed page header.
+    ///
+    /// Accepts the `&P`, `&N`, `&D`, `&T`, `&F`, `&A`, `&Z`, `&L`, `&C`,
+    /// `&R`, `&B`, `&I`, `&U`, and `&&` control codes, plus the reference
+    /// aliases such as `&[Page]` and `&[Tab]`. Strings longer than 255 UTF-16
+    /// code units are ignored.
+    pub fn set_header(&mut self, header: impl Into<String>) -> &mut Self {
+        if let Some(header) = normalize_header_footer(header.into()) {
+            self.header_footer.header = Some(header);
+        }
+        self
+    }
+
+    /// Sets the printed page footer.
+    ///
+    /// Uses the same control codes and 255-code-unit limit as
+    /// [`Self::set_header`].
+    pub fn set_footer(&mut self, footer: impl Into<String>) -> &mut Self {
+        if let Some(footer) = normalize_header_footer(footer.into()) {
+            self.header_footer.footer = Some(footer);
+        }
+        self
+    }
+
+    /// Scales headers and footers with the document when `enable` is true.
+    ///
+    /// Enabled by default.
+    pub const fn set_header_footer_scale_with_doc(&mut self, enable: bool) -> &mut Self {
+        self.header_footer.scale_with_doc = enable;
+        self
+    }
+
+    /// Aligns headers and footers with the page margins when `enable` is true.
+    ///
+    /// Enabled by default.
+    pub const fn set_header_footer_align_with_page(&mut self, enable: bool) -> &mut Self {
+        self.header_footer.align_with_page = enable;
+        self
+    }
+
+    /// Sets horizontal page breaks between rows.
+    ///
+    /// Zero entries are ignored. The remaining entries are sorted and
+    /// deduplicated. An empty slice leaves the current breaks unchanged; a
+    /// non-empty slice with only zeros clears them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a row is above
+    /// [`MAX_ROW`], or [`Error::TooManyPageBreaks`] when more than 1023 breaks
+    /// remain.
+    pub fn set_page_breaks(&mut self, breaks: &[RowNum]) -> Result<&mut Self> {
+        if let Some(breaks) = normalize_page_breaks(breaks, MAX_ROW)? {
+            self.page_breaks = breaks;
+        }
+        Ok(self)
+    }
+
+    /// Sets vertical page breaks between columns.
+    ///
+    /// Zero entries are ignored. The remaining entries are sorted and
+    /// deduplicated. An empty slice leaves the current breaks unchanged; a
+    /// non-empty slice with only zeros clears them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a column is above
+    /// [`MAX_COL`], or [`Error::TooManyPageBreaks`] when more than 1023 breaks
+    /// remain.
+    pub fn set_vertical_page_breaks(&mut self, breaks: &[u32]) -> Result<&mut Self> {
+        if let Some(breaks) = normalize_page_breaks(breaks, u32::from(MAX_COL))? {
+            self.vertical_page_breaks = breaks;
+        }
+        Ok(self)
+    }
+
     /// Applies a format to one cell without changing its value.
     ///
     /// A missing cell becomes a formatted blank cell.
@@ -1415,6 +1525,18 @@ impl Worksheet {
         &self.page_setup
     }
 
+    pub(crate) const fn header_footer(&self) -> &HeaderFooter {
+        &self.header_footer
+    }
+
+    pub(crate) fn page_breaks(&self) -> &[u32] {
+        &self.page_breaks
+    }
+
+    pub(crate) fn vertical_page_breaks(&self) -> &[u32] {
+        &self.vertical_page_breaks
+    }
+
     #[must_use]
     pub const fn row_options(&self) -> &BTreeMap<u32, RowOptions> {
         &self.rows
@@ -1452,6 +1574,71 @@ const fn ranges_overlap(left: MergeRange, right: MergeRange) -> bool {
         && right.first_row <= left.last_row
         && left.first_col <= right.last_col
         && right.first_col <= left.last_col
+}
+
+fn normalize_header_footer(text: String) -> Option<String> {
+    const MAX_CODE_UNITS: usize = 255;
+
+    let text = if text.contains("&[") {
+        expand_header_footer(&text)
+    } else {
+        text
+    };
+    (text.encode_utf16().count() <= MAX_CODE_UNITS).then_some(text)
+}
+
+fn expand_header_footer(text: &str) -> String {
+    let mut expanded = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(start) = rest.find("&[") {
+        expanded.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find(']') else {
+            expanded.push_str(&rest[start..]);
+            return expanded;
+        };
+        let replacement = match &after[..end] {
+            "Tab" => Some("&A"),
+            "Date" => Some("&D"),
+            "File" => Some("&F"),
+            "Page" => Some("&P"),
+            "Path" => Some("&Z"),
+            "Time" => Some("&T"),
+            "Pages" => Some("&N"),
+            "Picture" => Some("&G"),
+            _ => None,
+        };
+        if let Some(replacement) = replacement {
+            expanded.push_str(replacement);
+            rest = &after[end + 1..];
+        } else {
+            expanded.push('&');
+            rest = &rest[start + 1..];
+        }
+    }
+
+    expanded.push_str(rest);
+    expanded
+}
+
+fn normalize_page_breaks(breaks: &[u32], maximum: u32) -> Result<Option<Vec<u32>>> {
+    const MAX_PAGE_BREAKS: usize = 1023;
+
+    if breaks.is_empty() {
+        return Ok(None);
+    }
+
+    let mut breaks: Vec<u32> = breaks.iter().copied().filter(|value| *value != 0).collect();
+    if breaks.iter().any(|value| *value > maximum) {
+        return Err(Error::RowColumnLimit);
+    }
+    breaks.sort_unstable();
+    breaks.dedup();
+    if breaks.len() > MAX_PAGE_BREAKS {
+        return Err(Error::TooManyPageBreaks);
+    }
+    Ok(Some(breaks))
 }
 
 fn validate_column_width(width: f64) -> Result<()> {
@@ -1724,6 +1911,94 @@ mod tests {
             Err(Error::RowColumnLimit)
         ));
         assert!(worksheet.view().is_default());
+    }
+
+    #[test]
+    fn header_footer_aliases_and_flags_are_stored() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet
+            .set_header("&L&[Tab]&C&[Page] of &[Pages]")
+            .set_footer("&R&[File] &[Date] &[Time] &[Path] &[Picture]")
+            .set_header_footer_scale_with_doc(false)
+            .set_header_footer_align_with_page(false);
+
+        assert_eq!(
+            worksheet.header_footer().header.as_deref(),
+            Some("&L&A&C&P of &N")
+        );
+        assert_eq!(
+            worksheet.header_footer().footer.as_deref(),
+            Some("&R&F &D &T &Z &G")
+        );
+        assert!(!worksheet.header_footer().scale_with_doc);
+        assert!(!worksheet.header_footer().align_with_page);
+        assert!(!worksheet.header_footer().is_default());
+    }
+
+    #[test]
+    fn header_footer_length_is_checked_after_expansion() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let maximum = "x".repeat(255);
+        worksheet.set_header(maximum.clone());
+        assert_eq!(
+            worksheet.header_footer().header.as_deref(),
+            Some(maximum.as_str())
+        );
+
+        worksheet.set_header("y".repeat(256));
+        assert_eq!(
+            worksheet.header_footer().header.as_deref(),
+            Some(maximum.as_str())
+        );
+
+        worksheet.set_footer("&[Page]".repeat(128));
+        assert!(worksheet.header_footer().footer.is_none());
+    }
+
+    #[test]
+    fn page_breaks_sort_deduplicate_and_clear() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet
+            .set_page_breaks(&[40, 20, 20, 0, 60])
+            .expect("horizontal");
+        worksheet
+            .set_vertical_page_breaks(&[5, 3, 5])
+            .expect("vertical");
+
+        assert_eq!(worksheet.page_breaks(), [20, 40, 60]);
+        assert_eq!(worksheet.vertical_page_breaks(), [3, 5]);
+
+        worksheet.set_page_breaks(&[]).expect("empty no-op");
+        assert_eq!(worksheet.page_breaks(), [20, 40, 60]);
+
+        worksheet.set_page_breaks(&[0]).expect("clear");
+        assert_eq!(worksheet.page_breaks(), []);
+    }
+
+    #[test]
+    fn page_break_limits_do_not_mutate_state() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_page_breaks(&[20]).expect("horizontal");
+
+        assert!(matches!(
+            worksheet.set_page_breaks(&[MAX_ROW + 1]),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            worksheet.set_vertical_page_breaks(&[u32::from(MAX_COL) + 1]),
+            Err(Error::RowColumnLimit)
+        ));
+        assert_eq!(worksheet.page_breaks(), [20]);
+
+        let too_many: Vec<u32> = (1..=1024).collect();
+        assert!(matches!(
+            worksheet.set_page_breaks(&too_many),
+            Err(Error::TooManyPageBreaks)
+        ));
+        assert_eq!(worksheet.page_breaks(), [20]);
+
+        worksheet.set_page_breaks(&too_many[..1023]).expect("limit");
+        assert_eq!(worksheet.page_breaks().len(), 1023);
     }
 
     #[test]

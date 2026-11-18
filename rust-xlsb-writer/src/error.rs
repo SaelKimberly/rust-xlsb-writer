@@ -37,6 +37,10 @@ pub enum Error {
     #[error("worksheet index out of range: {0}")]
     WorksheetIndex(usize),
 
+    /// A worksheet has more than 1023 horizontal or vertical page breaks.
+    #[error("a worksheet allows at most 1023 page breaks")]
+    TooManyPageBreaks,
+
     /// A merge range contains only one cell.
     #[error("a merged range must contain more than one cell")]
     MergeRangeSingleCell,

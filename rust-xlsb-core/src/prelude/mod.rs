@@ -9,18 +9,19 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBundleSh,
-    BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt,
-    BrtColInfo, BrtColor, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtFill, BrtFmt, BrtFont,
-    BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSSTItem,
-    BrtSel, BrtStyle, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr, HAlign, ReadingOrder,
-    VAlign,
+    BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginRwBrk, BrtBeginSst, BrtBeginTableStyles,
+    BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCellBlank, BrtCellBool,
+    BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor,
+    BrtEndColBrk, BrtEndHeaderFooter, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles, BrtEndWsView,
+    BrtFill, BrtFmt, BrtFont, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRowHdr, BrtSSTItem, BrtSel, BrtStyle, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, GrbitAtr,
+    HAlign, ReadingOrder, VAlign,
 };
 pub use scope::*;
 pub use structure::{
     ACProductVersion, BErr, Blxf, Bold, BorderType, BrtColSpan, Cell, CodeName, FontFlags,
-    RkNumber, SimpleRichStr, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
-    XlWideString, Xnum,
+    HeaderFooterString, RkNumber, SimpleRichStr, UncheckedRfX, UncheckedSqRfX,
+    XlNullableWideString, XlStringExt, XlWideString, Xnum,
 };
 
 #[cfg(test)]
@@ -82,6 +83,7 @@ mod tests {
     #[case::code_name(|| checked_test::<CodeName>(4))]
     #[case::xl_wide_string(|| checked_test::<XlWideString>(4))]
     #[case::xl_nullable_wide_string(|| checked_test::<XlNullableWideString>(4))]
+    #[case::header_footer_string(|| checked_test::<HeaderFooterString>(4))]
     #[case::simple_rich_str(|| checked_test::<SimpleRichStr>(5))]
     #[case::brt_color(|| checked_test::<BrtColor>(8))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
@@ -101,6 +103,13 @@ mod tests {
     #[case::brt_end_fmts(|| checked_test::<BrtEndFmts>(0))]
     #[case::brt_cell_isst(|| checked_test::<BrtCellIsst>(12))]
     #[case::brt_sst_item(|| checked_test::<BrtSSTItem>(5))]
+    #[case::brt_begin_header_footer(|| checked_test::<BrtBeginHeaderFooter>(26))]
+    #[case::brt_end_header_footer(|| checked_test::<BrtEndHeaderFooter>(0))]
+    #[case::brt_begin_rw_brk(|| checked_test::<BrtBeginRwBrk>(8))]
+    #[case::brt_end_rw_brk(|| checked_test::<BrtEndRwBrk>(0))]
+    #[case::brt_begin_col_brk(|| checked_test::<BrtBeginColBrk>(8))]
+    #[case::brt_end_col_brk(|| checked_test::<BrtEndColBrk>(0))]
+    #[case::brt_brk(|| checked_test::<BrtBrk>(20))]
     #[case::brt_begin_sst(|| checked_test::<BrtBeginSst>(8))]
     #[case::brt_end_sst(|| checked_test::<BrtEndSst>(0))]
     #[case::brt_bundle_sh(|| checked_test::<BrtBundleSh>(16))]

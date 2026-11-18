@@ -3,18 +3,20 @@
 use std::collections::BTreeSet;
 
 use rust_xlsb_core::prelude::{
-    BrtBeginColInfos, BrtBeginMergeCells, BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView,
-    BrtBeginWsViews, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk,
-    BrtColInfo, BrtColSpan, BrtEndColInfos, BrtEndMergeCells, BrtEndSheet, BrtEndSheetData,
-    BrtEndWsView, BrtEndWsViews, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, UncheckedRfX, UncheckedSqRfX, Xnum,
+    BrtBeginColBrk, BrtBeginColInfos, BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk,
+    BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIsst, BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan,
+    BrtEndColBrk, BrtEndColInfos, BrtEndHeaderFooter, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
+    BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane,
+    BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
+    HeaderFooterString, UncheckedRfX, UncheckedSqRfX, XlStringExt, Xnum,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
 };
 
 use crate::data::CellData;
-use crate::worksheet::{ColumnOptions, Worksheet};
+use crate::worksheet::{ColumnOptions, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
 
 const DEFAULT_COL_WIDTH: u32 = 2_158;
@@ -140,6 +142,8 @@ pub fn write_sheet(
     }
 
     write_print_settings(sheet, out)?;
+    write_header_footer(sheet, out)?;
+    write_page_breaks(sheet, out)?;
 
     push(out, &BrtEndSheet::default())?;
     Ok(())
@@ -368,6 +372,88 @@ fn write_print_settings(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+fn write_header_footer(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let header_footer = sheet.header_footer();
+    if header_footer.is_default() {
+        return Ok(());
+    }
+
+    let mut grbit = 0;
+    if header_footer.scale_with_doc {
+        grbit |= BrtBeginHeaderFooter::F_SCALE_WITH_DOC;
+    }
+    if header_footer.align_with_page {
+        grbit |= BrtBeginHeaderFooter::F_ALIGN_MARGINS;
+    }
+
+    push(
+        out,
+        &BrtBeginHeaderFooter {
+            grbit,
+            stHeader: HeaderFooterString::construct(header_footer.header.as_deref()),
+            stFooter: HeaderFooterString::construct(header_footer.footer.as_deref()),
+            ..BrtBeginHeaderFooter::default()
+        },
+    )?;
+    push(out, &BrtEndHeaderFooter::default())
+}
+
+fn write_page_breaks(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
+    let breaks = sheet.page_breaks();
+    if !breaks.is_empty() {
+        let count = u32::try_from(breaks.len())
+            .map_err(|_| Error::ValueNotRepresentable("too many page breaks"))?;
+        push(
+            out,
+            &BrtBeginRwBrk {
+                ibrkMac: count,
+                ibrkManMac: count,
+            },
+        )?;
+        for &row in breaks {
+            push(
+                out,
+                &BrtBrk {
+                    unRwCol: row,
+                    unColRwStrt: 0,
+                    unColRwEnd: u32::from(MAX_COL),
+                    fMan: 1,
+                    fPivot: 0,
+                },
+            )?;
+        }
+        push(out, &BrtEndRwBrk::default())?;
+    }
+
+    let breaks = sheet.vertical_page_breaks();
+    if !breaks.is_empty() {
+        let count = u32::try_from(breaks.len())
+            .map_err(|_| Error::ValueNotRepresentable("too many page breaks"))?;
+        push(
+            out,
+            &BrtBeginColBrk {
+                ibrkMac: count,
+                ibrkManMac: count,
+            },
+        )?;
+        for &col in breaks {
+            push(
+                out,
+                &BrtBrk {
+                    unRwCol: col,
+                    unColRwStrt: 0,
+                    unColRwEnd: MAX_ROW,
+                    fMan: 1,
+                    fPivot: 0,
+                },
+            )?;
+        }
+        push(out, &BrtEndColBrk::default())?;
+    }
+
+    Ok(())
+}
+
 fn dimension(sheet: &Worksheet) -> BrtWsDim {
     let mut min_row = u32::MAX;
     let mut max_row = 0;
@@ -577,9 +663,10 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginMergeCells, BrtBeginWsView, BrtCellIsst, BrtCellRk, BrtColInfo, BrtColor,
-        BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel,
-        BrtWsFmtInfo, BrtWsProp,
+        BrtBeginColBrk, BrtBeginHeaderFooter, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginWsView,
+        BrtBrk, BrtCellIsst, BrtCellRk, BrtColInfo, BrtColor, BrtEndSheet, BrtMargins,
+        BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsFmtInfo,
+        BrtWsProp,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID, SSTHolder, StyleRegistry};
 
@@ -760,6 +847,110 @@ mod tests {
         assert_eq!(records::<BrtPrintOptions>(&out).len(), 0);
         assert_eq!(records::<BrtMargins>(&out).len(), 0);
         assert_eq!(records::<BrtPageSetup>(&out).len(), 0);
+        assert_eq!(records::<BrtBeginHeaderFooter>(&out).len(), 0);
+        assert_eq!(records::<BrtBeginRwBrk>(&out).len(), 0);
+        assert_eq!(records::<BrtBeginColBrk>(&out).len(), 0);
+        assert_eq!(records::<BrtBrk>(&out).len(), 0);
+    }
+
+    #[test]
+    fn header_footer_serializes_text_and_flags() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_landscape();
+        sheet.set_header("&L&[Page]");
+        sheet.set_footer("&R&[File]");
+        sheet.set_header_footer_scale_with_doc(false);
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let headers = records::<BrtBeginHeaderFooter>(&out);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].grbit, BrtBeginHeaderFooter::F_ALIGN_MARGINS);
+        assert_eq!(headers[0].stHeader.try_to_string().expect("header"), "&L&P");
+        assert_eq!(headers[0].stFooter.try_to_string().expect("footer"), "&R&F");
+        assert!(headers[0].stHeaderEven.is_null());
+        assert!(headers[0].stFooterFirst.is_null());
+
+        let ids = record_ids(&out);
+        let position = |id| ids.iter().position(|known| *known == id).expect("record");
+        assert!(
+            position(BrtPageSetup::default().id()) < position(BrtBeginHeaderFooter::default().id())
+        );
+        assert!(
+            position(BrtBeginHeaderFooter::default().id()) < position(BrtEndSheet::default().id())
+        );
+    }
+
+    #[test]
+    fn header_footer_preserves_non_ascii_text() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_header("&CПривет 😀");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let headers = records::<BrtBeginHeaderFooter>(&out);
+        assert_eq!(
+            headers[0].stHeader.try_to_string().expect("header"),
+            "&CПривет 😀"
+        );
+        assert_eq!(headers[0].stHeader.len(), 11);
+    }
+
+    #[test]
+    fn page_breaks_serialize_with_full_span() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.set_header("report");
+        sheet.set_page_breaks(&[40, 20, 20]).expect("horizontal");
+        sheet.set_vertical_page_breaks(&[5, 3]).expect("vertical");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, false, &mut out).expect("sheet");
+
+        let rows = records::<BrtBeginRwBrk>(&out);
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0].ibrkMac, rows[0].ibrkManMac), (2, 2));
+
+        let columns = records::<BrtBeginColBrk>(&out);
+        assert_eq!(columns.len(), 1);
+        assert_eq!((columns[0].ibrkMac, columns[0].ibrkManMac), (2, 2));
+
+        let breaks = records::<BrtBrk>(&out);
+        assert_eq!(breaks.len(), 4);
+        assert_eq!(
+            (
+                breaks[0].unRwCol,
+                breaks[0].unColRwStrt,
+                breaks[0].unColRwEnd
+            ),
+            (20, 0, u32::from(MAX_COL))
+        );
+        assert_eq!(
+            (
+                breaks[2].unRwCol,
+                breaks[2].unColRwStrt,
+                breaks[2].unColRwEnd
+            ),
+            (3, 0, MAX_ROW)
+        );
+        assert!(
+            breaks
+                .iter()
+                .all(|entry| entry.fMan == 1 && entry.fPivot == 0)
+        );
+
+        let ids = record_ids(&out);
+        let position = |id| ids.iter().position(|known| *known == id).expect("record");
+        assert!(
+            position(BrtBeginHeaderFooter::default().id())
+                < position(BrtBeginRwBrk::default().id())
+        );
+        assert!(position(BrtBeginRwBrk::default().id()) < position(BrtBeginColBrk::default().id()));
+        assert!(position(BrtBeginColBrk::default().id()) < position(BrtEndSheet::default().id()));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+mod brt_begin_header_footer;
 mod brt_begin_sst;
 mod brt_begin_table_styles;
 mod brt_begin_ws_view;
@@ -18,6 +19,7 @@ mod brt_fmt;
 mod brt_font;
 mod brt_margins;
 mod brt_merge_cell;
+mod brt_page_breaks;
 mod brt_page_setup;
 mod brt_pane;
 mod brt_print_options;
@@ -29,6 +31,7 @@ mod brt_ws_fmt_info;
 mod brt_ws_prop;
 mod brt_xf;
 
+pub use brt_begin_header_footer::{BrtBeginHeaderFooter, BrtEndHeaderFooter};
 pub use brt_begin_sst::{BrtBeginSst, BrtEndSst};
 pub use brt_begin_table_styles::{BrtBeginTableStyles, BrtEndTableStyles};
 pub use brt_begin_ws_view::{BrtBeginWsView, BrtEndWsView};
@@ -49,6 +52,7 @@ pub use brt_fmt::BrtFmt;
 pub use brt_font::BrtFont;
 pub use brt_margins::BrtMargins;
 pub use brt_merge_cell::BrtMergeCell;
+pub use brt_page_breaks::{BrtBeginColBrk, BrtBeginRwBrk, BrtBrk, BrtEndColBrk, BrtEndRwBrk};
 pub use brt_page_setup::BrtPageSetup;
 pub use brt_pane::BrtPane;
 pub use brt_print_options::BrtPrintOptions;

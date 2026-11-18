@@ -19,6 +19,6 @@ pub use rfx::UncheckedRfX;
 pub use rk_number::RkNumber;
 pub use sqrfx::UncheckedSqRfX;
 pub use xl_wide_string::{
-    CodeName, SimpleRichStr, XlNullableWideString, XlStringExt, XlWideString,
+    CodeName, HeaderFooterString, SimpleRichStr, XlNullableWideString, XlStringExt, XlWideString,
 };
 pub use xnum::Xnum;

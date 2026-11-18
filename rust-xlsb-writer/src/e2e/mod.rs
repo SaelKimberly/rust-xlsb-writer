@@ -100,6 +100,27 @@ fn dates_use_number_formats_and_roundtrip() {
 }
 
 #[test]
+fn headers_footers_and_page_breaks_do_not_disturb_cell_values() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet
+        .set_header("&LReport&C&[Page] of &[Pages]&R&D")
+        .set_footer("&C&[File]")
+        .set_header_footer_scale_with_doc(false)
+        .set_header_footer_align_with_page(false);
+    sheet.set_page_breaks(&[20, 40]).expect("horizontal");
+    sheet.set_vertical_page_breaks(&[3]).expect("vertical");
+    sheet.write(0, 0, "printable").expect("write");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(
+        range.get((0, 0)),
+        Some(&Data::String("printable".to_owned()))
+    );
+}
+
+#[test]
 fn multiple_sheets_keep_their_values() {
     let mut workbook = Workbook::new();
     workbook

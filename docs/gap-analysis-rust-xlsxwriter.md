@@ -20,8 +20,8 @@ It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
 2. **Cell-level structural features** — no hyperlinks or rich strings.
-3. **Worksheet layout and view** — no autofit, grouping, page setup, print
-   settings, or view modes.
+3. **Worksheet layout and view** — no autofit, grouping, print areas/repeat
+   titles, or page-break preview.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
    validation, or protection.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
@@ -47,14 +47,14 @@ the breadth gap.
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
 | Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
-| Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number |
+| Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks |
 | Layout defaults | default row height and pixel variant |
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 143 core + 85 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 158 core + 93 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -143,13 +143,14 @@ Status meanings:
 | `set_first_tab`, `set_tab_color` | Supported | — |
 | `set_landscape`, `set_portrait`, `set_paper_size`, `set_page_order` | Supported | — |
 | `set_margins` | Supported | — |
-| `set_header`, `set_footer` | Missing | Page layout |
+| `set_header`, `set_footer` | Supported | Text headers/footers |
+| `set_header_footer_scale_with_doc`, `set_header_footer_align_with_page` | Supported | Header/footer scaling/alignment |
 | `set_header_image`, `set_footer_image` | Missing | Header/footer images |
 | `set_print_area`, `set_repeat_rows`, `set_repeat_columns` | Missing | Print ranges |
 | `set_print_scale`, `set_print_fit_to_pages` | Supported | — |
 | `set_print_center_horizontally`, `set_print_center_vertically` | Supported | — |
 | `set_print_gridlines`, `set_print_headings`, `set_print_black_and_white`, `set_print_draft` | Supported | — |
-| `set_page_breaks`, `set_vertical_page_breaks` | Missing | Manual page breaks |
+| `set_page_breaks`, `set_vertical_page_breaks` | Supported | Manual page breaks |
 | `set_view_normal`, `set_view_page_layout`, `set_view_page_break_preview` | Missing | View modes |
 | `set_print_first_page_number` | Supported | — |
 
@@ -273,7 +274,6 @@ records or package parts that do not exist yet.
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
-| Page setup/print | Worksheet print records and view records |
 | Defined names | Workbook defined-name records |
 | Document properties | Core/app/custom property parts |
 | Themes | Theme part and theme color indexes |
@@ -333,12 +333,14 @@ rejected before output.
 
 ### P2 — Print and view
 
-| Item | Why | Size |
-|---|---|---|
-| Headers/footers and header/footer images | Reporting | M |
-| Print area, repeat rows/columns, page breaks | Multi-page reports | M |
-| Group rows/columns, outline symbols | Collapsible reports | M |
-| Autofit | Readability | M |
+| Item | Status | Why | Size |
+|---|---|---|---|
+| Text headers/footers | ✅ | Reporting | M |
+| Header/footer images | Open | Reporting | M |
+| Print area, repeat rows/columns | Open | Multi-page reports | M |
+| Manual page breaks | ✅ | Multi-page reports | S |
+| Group rows/columns, outline symbols | Open | Collapsible reports | M |
+| Autofit | Open | Readability | M |
 
 **Exit criteria:** PDF/print preview through LibreOffice shows the expected
 page layout; record-level tests cover print/view records.
@@ -414,9 +416,9 @@ spec:
 3. Cached `set_formula_result` values.
 4. Array and dynamic-array formulas.
 
-The smaller P0 gaps are `write_url`, default row height, sheet visibility/tab
-color, and freeze-pane top-cell control. Ship those as P0c if formula work needs
-to wait.
+The remaining smaller P0 gap is `write_url`. Worksheet state, page setup,
+text headers/footers, and manual page breaks are shipped; print areas, repeat
+titles, grouping, and autofit remain in P2.
 
 P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
@@ -428,13 +430,18 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 143 core + 85 writer unit tests and 6 doctests; calamine
+- Test evidence: 158 core + 93 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
   rendered freeze. It preserves orientation, page order, margins, print
-  gridlines/headings/centering, fit-to-page, and first page number; it
-  normalizes paper size and drops black-and-white and draft state.
+  gridlines/headings/centering, fit-to-page, first page number, text
+  headers/footers, and manual page breaks; it normalizes paper size and drops
+  black-and-white and draft state. A generated 60-row workbook with breaks at
+  rows 20 and 40 renders as three PDF pages, with `Report 1 of 3` through
+  `Report 3 of 3` in the header. Real Excel fixtures decode through
+  `BrtBeginHeaderFooter`: `Simple.xlsb` has six null strings and flags
+  `0x000c`; `testVarious.xlsb` has text and flags `0x000f`.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are
   architectural, not benchmarked.
 - No Microsoft Excel validation was available. LibreOffice is the visual oracle.
