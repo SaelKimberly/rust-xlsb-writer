@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::sst_sqlite::SSTHolderError;
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Unknown ID: {0}")]
@@ -22,6 +24,12 @@ pub enum Error {
     BiffWriteFailed(std::io::Error),
     #[error("BIFF record fail validation: {0}")]
     ValidationError(String),
+    #[error("Shared string id {id} is out of range (len {len})")]
+    SharedStringOutOfRange { id: u32, len: u32 },
+    #[error("Value cannot be represented exactly: {0}")]
+    ValueNotRepresentable(&'static str),
+    #[error("Shared string table error: {0}")]
+    Sst(#[from] SSTHolderError),
 }
 
 pub type Result<T> = std::result::Result<T, self::Error>;

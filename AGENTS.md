@@ -9,11 +9,14 @@ The long-term goal is cell-by-cell writing plus batched
 Apache Arrow ingestion, with styles, low RAM use, and exact IEEE 754 float
 fidelity.
 
-Current reality: the binary record layer, with package assembly living only in
-the `e2e` test module (`src/e2e/`). There is no shipped workbook or cell API:
-the harness builds a minimal seven-part XLSB package and the tests read it back
-with `calamine`, so the layout, BIFF framing, and every implemented cell record
-are proven together. `KnownID` covers 860 of the 878 records in revision 22.0;
+Current reality: the binary record layer plus the value-conversion contract
+(`ToCellValue`/`CellValue`), the workbook context (`WbContext`,
+`NumberPolicy`), and minimal `Workbook`/`Worksheet` types owning the
+shared-string table. Package assembly still lives only in the `e2e` test module
+(`src/e2e/`): the harness builds a minimal XLSB package and the tests read it
+back with `calamine`, so layout, BIFF framing, number policy, and every
+implemented cell record are proven together. There is no public worksheet or
+cell writer yet. `KnownID` covers 860 of the 878 records in revision 22.0;
 every id it does carry matches the spec. Treat the README as a roadmap, not as a
 description of shipped API.
 
@@ -50,16 +53,26 @@ ids with `num_enum::TryFromPrimitiveError`.
 Shared strings go through `SSTHolder` (`sst_sqlite.rs`): a SQLite table keyed by
 the `xxh3_64` hash of the string, with a hit counter. `push` returns a stable
 index (`ROWID - 1`), `push_batch` wraps the inserts in `BEGIN IMMEDIATE`, and
-`write_to_biff_sst` emits `BrtBeginSst` / `BrtSSTItem`* / `BrtEndSst`. Note the
-doc comment claims strings are ordered by descending frequency, but the read
-query has no `ORDER BY`; do not rely on that claim.
+`write_to_biff_sst` emits `BrtBeginSst` / `BrtSSTItem`* / `BrtEndSst` ordered by
+`ROWID`, with UTF-16 code-unit lengths. `len()` / `is_empty()` are a cached
+`Arc<AtomicU32>` maintained by `push`/`push_batch`; it is not a query. The
+holder is write-session scratch and is not reopened from disk, so ids are
+contiguous `0..len`.
+
+Value conversion is separate from records. `ToCellValue::to_cell_value(&dyn
+WbContext)` returns a semantic `CellValue`; `WbContext` supplies the
+shared-string table (`shared_strings`, `shared_string`) and a `NumberPolicy`
+that chooses `Real` or a lossless `Rk` encoding. `Workbook` owns one `SSTHolder`,
+`Worksheet` borrows it, and both implement `WbContext`. `&str`/`String` convert
+to inline strings; only an explicit `SharedString` goes into the SST, and its id
+is range-checked against the target workbook at conversion time.
 
 ## Key Directories
 
 | Path | Contents |
 |---|---|
 | `Cargo.toml` | Virtual workspace manifest; members and shared `[workspace.package]` metadata |
-| `rust-xlsb-core/src/` | All working code: record framing, id catalogue, traits, shared strings |
+| `rust-xlsb-core/src/` | All working code: record framing, id catalogue, value conversion, workbook context, shared strings |
 | `rust-xlsb-core/src/prelude/` | Public record/structure facade (`record/`, `structure/`, `scope.rs`, `collection.rs`) |
 | `rust-xlsb-writer/src/lib.rs` | Stub crate; only a `MiMalloc` global allocator is live |
 | `.github/` | `FUNDING.yml` only; no workflows, templates, or CI |
@@ -97,7 +110,7 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 90 unit tests and 6 doctests pass, 0 failures, with
+- `cargo test --workspace` → 116 unit tests and 6 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -162,7 +175,10 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/biff.rs` | `BiffWrite`, `write_as_biff`, `write_as_empty_biff` |
 | `rust-xlsb-core/src/check.rs` | `Checked`, `Unchecked`, `CheckedBiff` traits |
 | `rust-xlsb-core/src/err.rs` | `Error`, `Result` |
-| `rust-xlsb-core/src/sst_sqlite.rs` | `SSTHolder` shared-string table and SST emission |
+| `rust-xlsb-core/src/sst_sqlite.rs` | `SSTHolder` shared-string table, cached length, SST emission |
+| `rust-xlsb-core/src/context.rs` | `SharedString`, `WbContext`, `NumberPolicy`, `NumberEncoding` |
+| `rust-xlsb-core/src/cell_value.rs` | `CellValue`, `ToCellValue` and its impl matrix |
+| `rust-xlsb-core/src/workbook.rs` | `Workbook` (owns `SSTHolder`) and `Worksheet<'wb>` |
 | `rust-xlsb-core/src/e2e/mod.rs` | End-to-end cell tests read back through `calamine` |
 | `rust-xlsb-core/src/e2e/harness.rs` | Builds the minimal package, ZIP included, for those tests |
 | `rust-xlsb-core/src/prelude/mod.rs` | Re-exports plus the shared round-trip test harness |
@@ -199,7 +215,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 - Every test lives inside the crate: `#[cfg(test)] mod tests` next to the code
   it covers, plus the `#[cfg(test)] mod e2e` package suite (`src/e2e/`). There
   is no `tests/`, `benches/`, `examples/`, or fixture directory.
-- 90 unit tests and 6 doctests total. Most unit tests are rstest cases in the
+- 116 unit tests and 6 doctests total. Most unit tests are rstest cases in the
   `test_biff_export` table in `prelude/mod.rs`, each calling the generic
   `checked_test::<T>`: `Default` → `to_bytes` → exact byte-size assert →
   `from_bytes` → `check()` on both → `PartialEq`, `Hash`, and `Debug` equality.
@@ -210,9 +226,11 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   parse), `sst_sqlite::tests::test_sst_sqlite` (push, batch, SST counters, item
   decode), `prelude::structure::xl_wide_string::tests::test_xl_wide_string`,
   and `prelude::record::brt_color::test_brt_color`.
-- `e2e` tests are the package-level oracle: each writes cells of one type,
-  parses the resulting bytes with `calamine` 0.38 (dev-dependency), and asserts
-  the value and position. `calamine` is an independent reader, so these tests
+- `e2e` tests are the package-level oracle: cells are built through
+  `ToCellValue` against a real `Workbook`, written, then parsed with `calamine`
+  0.38 (dev-dependency) to assert value and position. They also assert which
+  cell record a conversion picked and that the Shared Strings part is omitted
+  when the table is empty. `calamine` is an independent reader, so these tests
   run in CI without LibreOffice or Excel. Header boundary cases (`0x80`,
   `0x4000`, `0x200000` size thresholds, `Incomplete`, `ConsumeFailed`) are
   still untested.

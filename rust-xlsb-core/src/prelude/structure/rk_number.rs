@@ -48,4 +48,21 @@ impl RkNumber {
             })
         }
     }
+
+    /// Decodes the stored value, applying `fx100` when it is set.
+    #[must_use]
+    pub fn value(&self) -> f64 {
+        let magnitude = if self.raw & Self::FINT != 0 {
+            let int = i32::from_le_bytes(self.raw.to_le_bytes()) >> 2;
+            f64::from(int)
+        } else {
+            f64::from_bits(u64::from(self.raw & !0b11) << 32)
+        };
+
+        if self.raw & Self::FX100 != 0 {
+            magnitude / 100.0
+        } else {
+            magnitude
+        }
+    }
 }

@@ -18,10 +18,13 @@
 mod biff;
 mod biff_head;
 mod biff_id;
+mod cell_value;
 mod check;
+mod context;
 mod err;
 pub mod prelude;
 mod sst_sqlite;
+mod workbook;
 
 #[cfg(test)]
 mod e2e;
@@ -29,10 +32,12 @@ mod e2e;
 pub use biff::{BiffWrite, write_as_biff, write_as_empty_biff};
 pub use biff_head::BiffHead;
 pub use biff_id::{KnownID, RawBiffLiteral};
+pub use cell_value::{CellValue, ToCellValue};
 pub use check::{Checked, CheckedBiff, Unchecked};
+pub use context::{NumberEncoding, NumberPolicy, SharedString, WbContext};
 pub use err::{Error, Result};
-
-pub use sst_sqlite::SSTHolder;
+pub use sst_sqlite::{SSTHolder, SSTHolderError};
+pub use workbook::{Workbook, Worksheet};
 
 #[allow(clippy::crate_in_macro_def)]
 #[macro_export]

@@ -1,4 +1,12 @@
-use std::{ffi::OsStr, io::Write, path::Path, sync::Arc};
+use std::{
+    ffi::OsStr,
+    io::Write,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 
 use rusqlite::{fallible_iterator::FallibleIterator, prepare_cached_and_bind};
 use xxhash_rust::xxh3::xxh3_64;
@@ -46,6 +54,7 @@ pub enum SSTHolderError {
 #[derive(Clone, Debug)]
 pub struct SSTHolder {
     conn: Arc<rusqlite::Connection>,
+    len: Arc<AtomicU32>,
 }
 
 impl SSTHolder {
@@ -85,9 +94,12 @@ impl SSTHolder {
         conn.pragma_update(None, "temp_store", "MEMORY")
             .map_err(SSTHolderError::FailureOnInit)?;
 
-        Self { conn }
-            .initialize()
-            .map_err(SSTHolderError::FailureOnInit)
+        Self {
+            conn,
+            len: Arc::new(AtomicU32::new(0)),
+        }
+        .initialize()
+        .map_err(SSTHolderError::FailureOnInit)
     }
 
     /// Create a new `SSTHolder` in memory. Useful for testing.
@@ -109,13 +121,16 @@ impl SSTHolder {
             rusqlite::Connection::open_in_memory().map_err(SSTHolderError::FailureOnInit)?,
         );
 
-        Self { conn }
-            .initialize()
-            .map_err(SSTHolderError::FailureOnInit)
+        Self {
+            conn,
+            len: Arc::new(AtomicU32::new(0)),
+        }
+        .initialize()
+        .map_err(SSTHolderError::FailureOnInit)
     }
 
     /// Push a string to the `SSTHolder`
-    /// Returns the hash of the string
+    /// Returns the shared-string index
     ///
     /// # Errors
     ///
@@ -139,14 +154,17 @@ impl SSTHolder {
     pub fn push(&self, data: &str) -> Result<u32, SSTHolderError> {
         let hash: i64 = zerocopy::transmute!(xxh3_64(data.as_bytes()));
 
-        Ok(prepare_cached_and_bind!(
+        let id = prepare_cached_and_bind!(
             self.conn,
             "INSERT INTO sst (idx, txt) VALUES (:hash, :data) ON CONFLICT (idx) DO UPDATE SET cnt = cnt + 1 RETURNING ROWID - 1;"
-        ).raw_query().map(|row| row.get::<_, i64>(0)).next()?.expect("Cannot be null") as u32)
+        ).raw_query().map(|row| row.get::<_, i64>(0)).next()?.expect("Cannot be null") as u32;
+
+        self.len.fetch_max(id.saturating_add(1), Ordering::Relaxed);
+        Ok(id)
     }
 
     /// Push multiple strings to the `SSTHolder`
-    /// Returns the hashes of the strings
+    /// Returns the shared-string indexes
     ///
     /// # Errors
     ///
@@ -190,7 +208,27 @@ impl SSTHolder {
             .collect::<Result<Vec<u32>, _>>()?;
 
         self.conn.execute_batch("COMMIT;")?;
+
+        if let Some(&max) = ret.iter().max() {
+            self.len.fetch_max(max.saturating_add(1), Ordering::Relaxed);
+        }
+
         Ok(ret)
+    }
+
+    /// Number of distinct strings in the table.
+    ///
+    /// Shared-string ids are `0..len()`, because the table is insert-only and
+    /// `push` returns `ROWID - 1`.
+    #[must_use]
+    pub fn len(&self) -> u32 {
+        self.len.load(Ordering::Relaxed)
+    }
+
+    /// Returns `true` when no string has been pushed yet.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Initialize the database
@@ -242,7 +280,7 @@ impl SSTHolder {
     pub fn write_to_biff_sst<W: Write>(&self, writer: &mut W) -> Result<(), SSTHolderError> {
         let cstTotal = self
             .conn
-            .query_row("SELECT SUM(cnt) FROM sst;", [], |row| {
+            .query_row("SELECT COALESCE(SUM(cnt), 0) FROM sst;", [], |row| {
                 row.get(0).map(|val: i64| val as u32)
             })
             .map_err(SSTHolderError::BiffWriteError)?;
@@ -255,9 +293,11 @@ impl SSTHolder {
 
         let max_capacity = self
             .conn
-            .query_row("SELECT max(length(txt)) FROM sst;", [], |row| {
-                row.get(0).map(|val: i64| val as usize)
-            })
+            .query_row(
+                "SELECT COALESCE(max(length(txt)), 0) FROM sst;",
+                [],
+                |row| row.get(0).map(|val: i64| val as usize),
+            )
             .map_err(SSTHolderError::BiffWriteError)?;
 
         // multiply by 2, because of utf-16. 4 bytes - length of string, one byte reserved.
@@ -271,7 +311,7 @@ impl SSTHolder {
         )
         .map_err(SSTHolderError::BiffWriteIoError)?;
 
-        let mut stmt = self.conn.prepare("SELECT txt FROM sst;")?;
+        let mut stmt = self.conn.prepare("SELECT txt FROM sst ORDER BY ROWID;")?;
         let mut query = stmt.raw_query();
         while let Some(txt) = query
             .next()
@@ -280,7 +320,8 @@ impl SSTHolder {
             .as_deref()
         {
             buf.truncate(1);
-            buf.extend_from_slice((txt.len() as u32).as_bytes());
+            let cch = txt.encode_utf16().count() as u32;
+            buf.extend_from_slice(&cch.to_le_bytes());
             txt.encode_utf16().for_each(|c| {
                 buf.extend_from_slice(c.as_bytes());
             });
@@ -307,22 +348,88 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_empty_sst() {
+        let holder = SSTHolder::create_in_memory().unwrap();
+        assert_eq!(holder.len(), 0);
+        assert!(holder.is_empty());
+
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        holder.write_to_biff_sst(&mut cursor).unwrap();
+        cursor.rewind().unwrap();
+
+        let (head, data) = BiffHead::read_from_with_data(&mut cursor).unwrap();
+        assert_eq!(head.known_id(), Some(KnownID::BrtBeginSst));
+        let counts: [u32; 2] =
+            zerocopy::FromBytes::read_from_bytes(data.as_deref().expect("Should be present"))
+                .expect("Should be ok");
+        assert_eq!(counts, [0, 0]);
+
+        let (tail, _) = BiffHead::read_from_with_data(&mut cursor).unwrap();
+        assert_eq!(tail.known_id(), Some(KnownID::BrtEndSst));
+    }
+
+    #[test]
+    fn test_clone_shares_length() {
+        let holder = SSTHolder::create_in_memory().unwrap();
+        let clone = holder.clone();
+
+        clone.push("from clone").unwrap();
+        assert_eq!(holder.len(), 1);
+
+        holder.push("from holder").unwrap();
+        assert_eq!(clone.len(), 2);
+
+        assert_eq!(clone.push("from clone").unwrap(), 0);
+        assert_eq!(holder.len(), 2);
+    }
+
+    #[test]
+    fn test_sst_writes_utf16_lengths() {
+        let holder = SSTHolder::create_in_memory().unwrap();
+        holder.push("привет").unwrap();
+
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        holder.write_to_biff_sst(&mut cursor).unwrap();
+        cursor.rewind().unwrap();
+
+        let (head, _) = BiffHead::read_from_with_data(&mut cursor).unwrap();
+        assert_eq!(head.known_id(), Some(KnownID::BrtBeginSst));
+
+        let (head, data) = BiffHead::read_from_with_data(&mut cursor).unwrap();
+        assert_eq!(head.known_id(), Some(KnownID::BrtSSTItem));
+        let (_, text) = SimpleRichStr::from_bytes((data.as_deref().expect("present"), 0))
+            .expect("Should be ok");
+        assert_eq!(text.to_optional_string().expect("not null"), "привет");
+
+        let (tail, _) = BiffHead::read_from_with_data(&mut cursor).unwrap();
+        assert_eq!(tail.known_id(), Some(KnownID::BrtEndSst));
+    }
+
+    #[test]
     #[allow(non_snake_case)]
     fn test_sst_sqlite() {
         let holder = SSTHolder::create_in_memory().unwrap();
+        let observer = holder.clone();
+
+        assert_eq!(holder.len(), 0);
+        assert!(holder.is_empty());
 
         let foo_idx = holder.push("foo").unwrap();
         assert_eq!(foo_idx, 0);
+        assert_eq!(holder.len(), 1);
 
         let bar_idx_1 = holder.push("bar").unwrap();
         let bar_idx_2 = holder.push("bar").unwrap();
         assert_eq!(bar_idx_1, 1);
         assert_eq!(bar_idx_1, bar_idx_2);
+        assert_eq!(holder.len(), 2);
 
         let idxs = holder
             .push_batch(vec!["some", "batched", "some", "batched"])
             .unwrap();
         assert_eq!(idxs, vec![2, 3, 2, 3]);
+        assert_eq!(holder.len(), 4);
+        assert_eq!(observer.len(), 4);
 
         let mut cursor = Cursor::new(Vec::<u8>::with_capacity(1024));
         holder.write_to_biff_sst(&mut cursor).unwrap();
