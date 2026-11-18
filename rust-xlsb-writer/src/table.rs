@@ -373,7 +373,7 @@ mod tests {
     use rust_xlsb_core::prelude::{
         BrtBeginAFilter, BrtBeginList, BrtBeginListCol, BrtTableStyleClient,
     };
-    use rust_xlsb_core::{BiffHead, CheckedBiff};
+    use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
     use super::*;
 
@@ -393,6 +393,17 @@ mod tests {
             }
         }
         records
+    }
+
+    fn record_ids(part: &[u8]) -> Vec<KnownID> {
+        let mut reader = std::io::BufReader::new(part);
+        let mut ids = Vec::new();
+        while let Ok((head, _)) = BiffHead::read_from_with_data(&mut reader) {
+            if let Some(id) = head.known_id() {
+                ids.push(id);
+            }
+        }
+        ids
     }
 
     fn range() -> UncheckedRfX {
@@ -430,6 +441,25 @@ mod tests {
     fn table_part_orders_records_and_style_flags() {
         let mut part = Vec::new();
         write_table_part(&table(), &mut part).expect("table part");
+
+        assert_eq!(
+            record_ids(&part),
+            [
+                KnownID::BrtBeginList,
+                KnownID::BrtBeginAFilter,
+                KnownID::BrtEndAFilter,
+                KnownID::BrtBeginListCols,
+                KnownID::BrtBeginListCol,
+                KnownID::BrtEndListCol,
+                KnownID::BrtBeginListCol,
+                KnownID::BrtEndListCol,
+                KnownID::BrtBeginListCol,
+                KnownID::BrtEndListCol,
+                KnownID::BrtEndListCols,
+                KnownID::BrtTableStyleClient,
+                KnownID::BrtEndList,
+            ]
+        );
 
         let list = records::<BrtBeginList>(&part);
         assert_eq!(list.len(), 1);
