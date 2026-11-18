@@ -28,7 +28,10 @@ mod worksheet;
 pub use data::CellData;
 pub use data::{IntoExcelData, IntoExcelDateTime};
 pub use error::{Error, Result, XlsbError};
-pub use format::{Color, Format, FormatAlign, FormatBorder, FormatPattern};
+pub use format::{
+    Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,
+    FormatScript, FormatUnderline,
+};
 pub use workbook::Workbook;
 pub use worksheet::{ColNum, RowNum, Worksheet};
 

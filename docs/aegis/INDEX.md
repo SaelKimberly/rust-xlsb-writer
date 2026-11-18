@@ -8,6 +8,7 @@
 ## Plans
 
 - [XLSB writer API implementation plan](plans/2026-11-18-xlsxwriter-compatible-api.md)
+- [P0a low-risk API parity](plans/2026-11-18-p0a-low-risk-parity.md)
 
 ## Analysis
 

@@ -64,9 +64,13 @@ pub fn write_sheet(
         let row_style = row_options
             .and_then(|options| options.format)
             .map_or(0, |index| mapped_style(index, style_indexes));
-        let row_height = row_options
-            .and_then(|options| options.height)
-            .map_or(DEFAULT_ROW_HEIGHT, height_to_twips);
+        let row_height = if row_options.is_some_and(|options| options.hidden) {
+            0
+        } else {
+            row_options
+                .and_then(|options| options.height)
+                .map_or(DEFAULT_ROW_HEIGHT, height_to_twips)
+        };
         let cells = sheet.cells().get(&row);
         let spans = cells.map_or_else(Vec::new, |cells| column_spans(cells.keys().copied()));
 
@@ -76,6 +80,7 @@ pub fn write_sheet(
                 rw: row,
                 ixfe: row_style,
                 miyRw: row_height,
+                fDyZero: row_options.is_some_and(|options| options.hidden),
                 fGhostDirty: row_options.and_then(|options| options.format).is_some(),
                 ccolspan: u32::try_from(spans.len())
                     .map_err(|_| Error::ValueNotRepresentable("too many column spans"))?,
@@ -158,6 +163,7 @@ fn column_infos(sheet: &Worksheet, style_indexes: &[u32]) -> Vec<BrtColInfo> {
             if **next == last.saturating_add(1)
                 && next_options.width == first_options.width
                 && next_options.format == first_options.format
+                && next_options.hidden == first_options.hidden
             {
                 last = **next;
                 columns.next();
@@ -175,10 +181,15 @@ fn col_info(first: u16, last: u16, options: &ColumnOptions, style_indexes: &[u32
     BrtColInfo {
         colFirst: u32::from(first),
         colLast: u32::from(last),
-        coldx: options.width.map_or(DEFAULT_COL_WIDTH, width_to_units),
+        coldx: if options.hidden {
+            0
+        } else {
+            options.width.map_or(DEFAULT_COL_WIDTH, width_to_units)
+        },
         ixfe: options
             .format
             .map_or(0, |index| mapped_style(index, style_indexes)),
+        fHidden: options.hidden,
         fUserSet: true,
         ..BrtColInfo::default()
     }
@@ -460,5 +471,45 @@ mod tests {
             (16_383, 16_383)
         );
         assert_eq!(rows[1].ccolspan, 16);
+    }
+
+    #[test]
+    fn hidden_rows_and_columns_emit_flags() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.write(0, 0, 1_i32).expect("writes");
+        sheet.write(0, 1, 2_i32).expect("writes");
+        sheet.set_row_hidden(0).expect("hide row");
+        sheet.set_column_width(0, 10.0).expect("width");
+        sheet.set_column_width(1, 10.0).expect("width");
+        sheet.set_column_hidden(1).expect("hide column");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        let rows = records::<BrtRowHdr>(&out);
+        assert!(rows[0].fDyZero);
+        assert_eq!(rows[0].miyRw, 0);
+        let columns = records::<BrtColInfo>(&out);
+        assert_eq!(columns.len(), 2);
+        assert!(!columns[0].fHidden);
+        assert!(columns[1].fHidden);
+        assert_eq!(columns[1].coldx, 0);
+    }
+
+    #[test]
+    fn unhidden_row_restores_default_height() {
+        let mut sheet = Worksheet::new("Sheet1".to_owned());
+        sheet.write(0, 0, 1_i32).expect("writes");
+        sheet.set_row_hidden(0).expect("hide row");
+        sheet.set_row_unhidden(0).expect("unhide row");
+        let sst = SSTHolder::create_in_memory().expect("sst");
+        let mut out = Vec::new();
+
+        write_sheet(&sheet, &[], &sst, &mut out).expect("sheet");
+
+        let rows = records::<BrtRowHdr>(&out);
+        assert!(!rows[0].fDyZero);
+        assert_eq!(rows[0].miyRw, 300);
     }
 }

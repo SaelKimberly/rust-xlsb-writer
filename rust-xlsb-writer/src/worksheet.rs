@@ -21,16 +21,18 @@ pub struct Cell {
     pub(crate) format: Option<u32>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RowOptions {
     pub(crate) height: Option<f64>,
     pub(crate) format: Option<u32>,
+    pub(crate) hidden: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ColumnOptions {
     pub(crate) width: Option<f64>,
     pub(crate) format: Option<u32>,
+    pub(crate) hidden: bool,
 }
 
 /// One worksheet with sparse cells, row options, and column options.
@@ -137,6 +139,102 @@ impl Worksheet {
             let offset = u32::try_from(offset).map_err(|_| Error::RowColumnLimit)?;
             let target = row.checked_add(offset).ok_or(Error::RowColumnLimit)?;
             value.write(self, target, col)?;
+        }
+        Ok(self)
+    }
+
+    /// Writes an iterator as a formatted row.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first write error; cells written before it remain.
+    pub fn write_row_with_format<I>(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        data: I,
+        format: &Format,
+    ) -> Result<&mut Self>
+    where
+        I: IntoIterator,
+        I::Item: IntoExcelData,
+    {
+        for (offset, value) in data.into_iter().enumerate() {
+            let offset = u16::try_from(offset).map_err(|_| Error::RowColumnLimit)?;
+            let target = col.checked_add(offset).ok_or(Error::RowColumnLimit)?;
+            value.write_with_format(self, row, target, format)?;
+        }
+        Ok(self)
+    }
+
+    /// Writes an iterator as a formatted column.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first write error; cells written before it remain.
+    pub fn write_column_with_format<I>(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        data: I,
+        format: &Format,
+    ) -> Result<&mut Self>
+    where
+        I: IntoIterator,
+        I::Item: IntoExcelData,
+    {
+        for (offset, value) in data.into_iter().enumerate() {
+            let offset = u32::try_from(offset).map_err(|_| Error::RowColumnLimit)?;
+            let target = row.checked_add(offset).ok_or(Error::RowColumnLimit)?;
+            value.write_with_format(self, target, col, format)?;
+        }
+        Ok(self)
+    }
+
+    /// Writes an iterator of rows as a matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first write error; cells written before it remain.
+    pub fn write_row_matrix<I, II>(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        data: I,
+    ) -> Result<&mut Self>
+    where
+        I: IntoIterator<Item = II>,
+        II: IntoIterator,
+        II::Item: IntoExcelData,
+    {
+        for (offset, values) in data.into_iter().enumerate() {
+            let offset = u32::try_from(offset).map_err(|_| Error::RowColumnLimit)?;
+            let target = row.checked_add(offset).ok_or(Error::RowColumnLimit)?;
+            self.write_row(target, col, values)?;
+        }
+        Ok(self)
+    }
+
+    /// Writes an iterator of columns as a matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first write error; cells written before it remain.
+    pub fn write_column_matrix<I, II>(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        data: I,
+    ) -> Result<&mut Self>
+    where
+        I: IntoIterator<Item = II>,
+        II: IntoIterator,
+        II::Item: IntoExcelData,
+    {
+        for (offset, values) in data.into_iter().enumerate() {
+            let offset = u16::try_from(offset).map_err(|_| Error::RowColumnLimit)?;
+            let target = col.checked_add(offset).ok_or(Error::RowColumnLimit)?;
+            self.write_column(row, target, values)?;
         }
         Ok(self)
     }
@@ -435,6 +533,168 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Hides one row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row is out of range.
+    pub fn set_row_hidden(&mut self, row: RowNum) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        self.rows.entry(row).or_default().hidden = true;
+        Ok(self)
+    }
+
+    /// Unhides one row.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row is out of range.
+    pub fn set_row_unhidden(&mut self, row: RowNum) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        if let Some(options) = self.rows.get_mut(&row) {
+            options.hidden = false;
+        }
+        Ok(self)
+    }
+
+    /// Hides one column.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the column is out of range.
+    pub fn set_column_hidden(&mut self, col: ColNum) -> Result<&mut Self> {
+        Self::check_col(col)?;
+        self.columns.entry(col).or_default().hidden = true;
+        Ok(self)
+    }
+
+    /// Hides an inclusive column range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when `first > last`, or
+    /// [`Error::RowColumnLimit`] when the range is out of bounds.
+    pub fn set_column_range_hidden(&mut self, first: ColNum, last: ColNum) -> Result<&mut Self> {
+        if first > last {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_col(first)?;
+        Self::check_col(last)?;
+        for col in first..=last {
+            self.columns.entry(col).or_default().hidden = true;
+        }
+        Ok(self)
+    }
+
+    /// Applies a format to one cell without changing its value.
+    ///
+    /// A missing cell becomes a formatted blank cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the row or column is out of range.
+    pub fn set_cell_format(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        let format = self.intern_format(format);
+        self.cells
+            .entry(row)
+            .or_default()
+            .entry(col)
+            .and_modify(|cell| cell.format = Some(format))
+            .or_insert(Cell {
+                data: CellData::Blank,
+                format: Some(format),
+            });
+        Ok(self)
+    }
+
+    /// Applies a format to an inclusive rectangular range without changing
+    /// values.
+    ///
+    /// Missing cells become formatted blank cells.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnOrder`] when the range is reversed, or
+    /// [`Error::RowColumnLimit`] when it is out of bounds.
+    pub fn set_range_format(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+        Self::check_row(first_row)?;
+        Self::check_row(last_row)?;
+        Self::check_col(first_col)?;
+        Self::check_col(last_col)?;
+        let format = self.intern_format(format);
+        for row in first_row..=last_row {
+            let cells = self.cells.entry(row).or_default();
+            for col in first_col..=last_col {
+                cells
+                    .entry(col)
+                    .and_modify(|cell| cell.format = Some(format))
+                    .or_insert(Cell {
+                        data: CellData::Blank,
+                        format: Some(format),
+                    });
+            }
+        }
+        Ok(self)
+    }
+
+    /// Removes a cell value and format.
+    ///
+    /// Out-of-range coordinates are ignored.
+    pub fn clear_cell(&mut self, row: RowNum, col: ColNum) -> &mut Self {
+        if row > MAX_ROW || col > MAX_COL {
+            return self;
+        }
+        let remove_row = self.cells.get_mut(&row).is_some_and(|cells| {
+            cells.remove(&col);
+            cells.is_empty()
+        });
+        if remove_row {
+            self.cells.remove(&row);
+        }
+        self
+    }
+
+    /// Removes a cell format while preserving its value.
+    ///
+    /// Out-of-range coordinates are ignored.
+    pub fn clear_cell_format(&mut self, row: RowNum, col: ColNum) -> &mut Self {
+        if row > MAX_ROW || col > MAX_COL {
+            return self;
+        }
+        let remove_row = self.cells.get_mut(&row).is_some_and(|cells| {
+            if let Some(cell) = cells.get_mut(&col) {
+                cell.format = None;
+                if cell.data == CellData::Blank {
+                    cells.remove(&col);
+                }
+                cells.is_empty()
+            } else {
+                false
+            }
+        });
+        if remove_row {
+            self.cells.remove(&row);
+        }
+        self
+    }
+
     pub(crate) fn store(
         &mut self,
         row: RowNum,
@@ -634,6 +894,134 @@ mod tests {
         assert!(matches!(
             worksheet.set_name("bad/name"),
             Err(Error::InvalidSheetName(_))
+        ));
+    }
+
+    #[test]
+    fn formatted_row_and_column_writes_apply_one_format() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let format = Format::new().set_bold();
+        worksheet
+            .write_row_with_format(0, 0, [1_i32, 2_i32], &format)
+            .expect("row");
+        worksheet
+            .write_column_with_format(1, 2, [3_i32, 4_i32], &format)
+            .expect("column");
+
+        assert_eq!(worksheet.formats().len(), 1);
+        for (row, col) in [(0, 0), (0, 1), (1, 2), (2, 2)] {
+            let cell = worksheet
+                .cells()
+                .get(&row)
+                .and_then(|row| row.get(&col))
+                .expect("cell");
+            assert_eq!(cell.format, Some(0));
+        }
+    }
+
+    #[test]
+    fn writes_row_and_column_matrices() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet
+            .write_row_matrix(0, 0, [[1_i32, 2_i32], [3_i32, 4_i32]])
+            .expect("row matrix");
+        worksheet
+            .write_column_matrix(3, 0, [[5_i32, 6_i32], [7_i32, 8_i32]])
+            .expect("column matrix");
+
+        for (row, col, expected) in [
+            (0, 0, 1),
+            (0, 1, 2),
+            (1, 0, 3),
+            (1, 1, 4),
+            (3, 0, 5),
+            (4, 0, 6),
+            (3, 1, 7),
+            (4, 1, 8),
+        ] {
+            let cell = worksheet
+                .cells()
+                .get(&row)
+                .and_then(|row| row.get(&col))
+                .expect("matrix cell");
+            assert_eq!(cell.data, CellData::Integer(expected));
+        }
+    }
+
+    #[test]
+    fn cell_and_range_format_edits_preserve_or_clear_data() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        let bold = Format::new().set_bold();
+        let italic = Format::new().set_italic();
+        worksheet.write(0, 0, 42_i32).expect("writes");
+
+        worksheet.set_cell_format(0, 0, &bold).expect("format");
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&0))
+                .map(|cell| (&cell.data, cell.format)),
+            Some((&CellData::Integer(42), Some(0)))
+        );
+
+        worksheet
+            .set_range_format(1, 1, 1, 2, &italic)
+            .expect("range format");
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&1)
+                .and_then(|row| row.get(&2))
+                .map(|cell| (&cell.data, cell.format)),
+            Some((&CellData::Blank, Some(1)))
+        );
+
+        worksheet.clear_cell_format(0, 0);
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&0))
+                .map(|cell| (&cell.data, cell.format)),
+            Some((&CellData::Integer(42), None))
+        );
+        worksheet.clear_cell(0, 0);
+        assert!(worksheet.cells().get(&0).is_none());
+        worksheet.clear_cell_format(1, 1);
+        assert!(
+            worksheet
+                .cells()
+                .get(&1)
+                .and_then(|row| row.get(&1))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn hidden_row_and_column_options_are_reversible() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        worksheet.set_row_hidden(0).expect("hide row");
+        worksheet.set_column_hidden(1).expect("hide col");
+        worksheet.set_column_range_hidden(2, 3).expect("hide cols");
+
+        assert!(worksheet.row_options().get(&0).is_some_and(|o| o.hidden));
+        assert!(worksheet.column_options().get(&1).is_some_and(|o| o.hidden));
+        assert!(worksheet.column_options().get(&3).is_some_and(|o| o.hidden));
+
+        worksheet.set_row_unhidden(0).expect("unhide row");
+        assert!(!worksheet.row_options().get(&0).is_some_and(|o| o.hidden));
+
+        worksheet.set_row_unhidden(5).expect("unhide absent row");
+        assert!(worksheet.row_options().get(&5).is_none());
+    }
+
+    #[test]
+    fn rejects_reversed_range_format() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.set_range_format(2, 0, 1, 0, &Format::new()),
+            Err(Error::RowColumnOrder)
         ));
     }
 

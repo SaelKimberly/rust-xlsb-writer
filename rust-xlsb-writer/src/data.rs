@@ -305,6 +305,28 @@ impl<T: IntoExcelData> IntoExcelData for Option<T> {
     }
 }
 
+impl<T: IntoExcelData, E: IntoExcelData> IntoExcelData for Result<T, E> {
+    fn write(self, worksheet: &mut Worksheet, row: u32, col: u16) -> Result<&mut Worksheet> {
+        match self {
+            Ok(value) => value.write(worksheet, row, col),
+            Err(error) => error.write(worksheet, row, col),
+        }
+    }
+
+    fn write_with_format<'a>(
+        self,
+        worksheet: &'a mut Worksheet,
+        row: u32,
+        col: u16,
+        format: &Format,
+    ) -> Result<&'a mut Worksheet> {
+        match self {
+            Ok(value) => value.write_with_format(worksheet, row, col, format),
+            Err(error) => error.write_with_format(worksheet, row, col, format),
+        }
+    }
+}
+
 macro_rules! impl_datetime {
     ($($ty:ty => $variant:ident),* $(,)?) => {
         $(
@@ -446,6 +468,23 @@ mod tests {
         );
         assert_eq!(cell_data(&worksheet, 0, 1), &CellData::Bool(true));
         assert_eq!(cell_data(&worksheet, 0, 2), &CellData::Blank);
+    }
+
+    #[test]
+    fn writes_result_ok_and_err_values() {
+        let mut worksheet = Worksheet::new("Sheet1".to_owned());
+        Ok::<i32, &str>(7)
+            .write(&mut worksheet, 0, 0)
+            .expect("writes");
+        Err::<i32, &str>("bad")
+            .write(&mut worksheet, 0, 1)
+            .expect("writes");
+
+        assert_eq!(cell_data(&worksheet, 0, 0), &CellData::Integer(7));
+        assert_eq!(
+            cell_data(&worksheet, 0, 1),
+            &CellData::String("bad".to_owned())
+        );
     }
 
     #[test]

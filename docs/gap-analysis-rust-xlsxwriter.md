@@ -19,22 +19,22 @@ and the three save entry points.
 It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — no scalar, array, dynamic-array, or formula-result support.
-2. **Cell-level structural features** — no merged ranges, hyperlinks, rich
-   strings, cell/range formatting, or clear-cell operations.
-3. **Worksheet layout and view** — no hidden rows/columns, freeze panes,
-   autofit, grouping, page setup, print settings, or sheet state.
+2. **Cell-level structural features** — no merged ranges, hyperlinks, or rich
+   strings.
+3. **Worksheet layout and view** — no freeze panes, autofit, grouping, page
+   setup, print settings, or sheet state.
 4. **Analysis features** — no autofilters, tables, conditional formatting, data
    validation, or protection.
 5. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 6. **Workbook metadata and packaging** — no defined names, document properties,
    themes, chartsheets, VBA, or compressed ZIP.
-7. **Data ecosystem** — no `Result<T, E>` cells, `Formula`, `Url`, `ExcelDateTime`,
-   jiff, `rust_decimal`, serde, or Polars adapters.
+7. **Data ecosystem** — no `Formula`, `Url`, `ExcelDateTime`, jiff,
+   `rust_decimal`, serde, or Polars adapters.
 8. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 6 `Workbook`, 29
-`Worksheet`, and 26 `Format` public methods, versus 31, 165, and 52 methods in
+The current API surface is deliberately narrow: roughly 6 `Workbook`, 41
+`Worksheet`, and 47 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
 
@@ -44,15 +44,15 @@ the breadth gap.
 |---|---|
 | Workbook | `new`, `add_worksheet`, `worksheet_from_index`, `save`, `save_to_buffer`, `save_to_writer` |
 | Worksheet identity | `set_name`, `name`, name validation, default `SheetN` names |
-| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
-| Writes | generic `write`, `write_with_format`, `write_row`, `write_column`, typed string/number/boolean/blank/date/time/datetime helpers |
-| Cell layout | column width and range width, column format and range format, row height, row format |
-| Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, locked/hidden |
+| Values | strings, numbers, booleans, `BErr`, blank, `Option<T>`, `Result<T, E>`, chrono dates/times/datetimes, `TimeDelta`, `DateTime<Utc>` |
+| Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers |
+| Cell layout | column width and range width, column format and range format, row height, row format, hidden rows/columns, cell/range format edits, clear value/format |
+| Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings |
 | Package | multi-sheet workbook, styles part, shared strings part, rels/content types, store-only ZIP |
 | Errors | `Error` / `XlsbError`, sheet-name, row/column, string-length, and value-representation errors |
-| Verification | 119 core + 40 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
+| Verification | 119 core + 52 writer unit tests, 6 doctests, calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -92,9 +92,9 @@ Status meanings:
 | Capability | Current | Gap |
 |---|---|---|
 | `write`, `write_with_format` | Supported | — |
-| `write_row`, `write_column` | Supported | No formatted variants |
-| `write_row_with_format`, `write_column_with_format` | Missing | Row/column formatted writes |
-| `write_row_matrix`, `write_column_matrix` | Missing | Matrix writes |
+| `write_row`, `write_column` | Supported | — |
+| `write_row_with_format`, `write_column_with_format` | Supported | — |
+| `write_row_matrix`, `write_column_matrix` | Supported | — |
 | `write_string`, `write_number`, `write_boolean`, `write_blank` | Supported | — |
 | `write_datetime`, `write_date_with_format`, `write_time_with_format` | Supported | Unformatted `write_date`/`write_time` are additive extensions |
 | `write_date`, `write_time` (unformatted) | Supported extension | Not present in `rust_xlsxwriter` |
@@ -114,22 +114,23 @@ Status meanings:
 |---|---|---|
 | `set_row_height`, `set_row_format` | Supported | — |
 | `set_row_height_pixels` | Missing | Pixel units |
-| `set_row_hidden`, `set_row_unhidden` | Missing | Row visibility |
+| `set_row_hidden`, `set_row_unhidden` | Supported | — |
 | `set_default_row_height`, `set_default_row_height_pixels` | Missing | Default row height |
 | `group_rows`, `group_rows_collapsed` | Missing | Outline groups |
 | `set_column_width`, `set_column_range_width` | Supported | — |
 | `set_column_width_pixels`, `set_column_range_width_pixels` | Missing | Pixel units |
 | `set_column_autofit_width` | Missing | Autofit width hint |
 | `set_column_format`, `set_column_range_format` | Supported | — |
-| `set_column_hidden`, `set_column_range_hidden` | Missing | Column visibility |
+| `set_column_hidden`, `set_column_range_hidden` | Supported | — |
 | `group_columns`, `group_columns_collapsed` | Missing | Column outline groups |
 | `group_symbols_above`, `group_symbols_to_left` | Missing | Outline display |
 | `hide_unused_rows` | Missing | Row hiding |
 | `autofit`, `autofit_to_max_width` | Missing | Width calculation |
 | `set_autofit_max_row`, `set_autofit_max_width` | Missing | Autofit limits |
 | `set_default_format` | Missing | Worksheet default format |
-| `set_cell_format`, `set_range_format`, `set_range_format_with_border` | Missing | Format-only edits |
-| `clear_cell`, `clear_cell_format` | Missing | Cell clearing |
+| `set_cell_format`, `set_range_format` | Supported | — |
+| `set_range_format_with_border` | Missing | Border-aware range edit |
+| `clear_cell`, `clear_cell_format` | Supported | — |
 | `set_selection`, `set_top_left_cell` | Missing | View selection |
 | `set_freeze_panes`, `set_freeze_panes_top_cell` | Missing | Frozen panes |
 | `set_zoom`, `set_zoom_to_fit` | Missing | View zoom |
@@ -187,15 +188,15 @@ Status meanings:
 | `set_border`, four sides, four side colors | Supported | — |
 | `set_locked`, `set_hidden`, `unset_hidden` | Supported | — |
 | `merge` | Missing | Merge two formats |
-| `set_font_scheme`, `set_font_family`, `set_font_charset` | Missing | Font metadata |
-| `set_underline`, `set_font_strikethrough`, `set_font_script` | Missing | Font decoration |
-| `set_indent`, `set_rotation`, `set_reading_direction`, `set_shrink` | Missing | Text layout |
-| `set_border_diagonal`, diagonal color/type | Missing | Diagonal borders |
+| `set_font_scheme`, `set_font_family`, `set_font_charset` | Supported | — |
+| `set_underline`, `set_font_strikethrough`, `set_font_script` | Supported | — |
+| `set_indent`, `set_rotation`, `set_reading_direction`, `set_shrink`, `unset_shrink` | Supported | — |
+| `set_border_diagonal`, diagonal color/type | Supported | — |
 | `set_hyperlink`, `unset_hyperlink_style` | Missing | Hyperlink style |
-| `set_unlocked` | Missing | Protection (only locked exists) |
-| `set_quote_prefix`, `unset_quote_prefix` | Missing | Text quote marker |
+| `set_unlocked` | Supported | — |
+| `set_quote_prefix`, `unset_quote_prefix` | Supported | — |
 | `set_checkbox`, `unset_checkbox` | Missing | Checkbox format |
-| `unset_bold`, `unset_italic`, `unset_font_strikethrough`, `unset_text_wrap`, `unset_shrink` | Missing | Reset helpers |
+| `unset_bold`, `unset_italic`, `unset_font_strikethrough`, `unset_text_wrap`, `unset_shrink` | Supported | — |
 
 ### 3.7 Data Types And Features
 
@@ -203,7 +204,7 @@ Status meanings:
 |---|---|---|
 | Strings, numbers, booleans, errors, blank | Supported | — |
 | `Option<T>` | Supported | — |
-| `Result<T, E>` | Missing | Error/value cell selection |
+| `Result<T, E>` | Supported | — |
 | chrono `NaiveDate`/`NaiveTime`/`NaiveDateTime` | Supported | — |
 | `TimeDelta`, `DateTime<Utc>` | Supported | Additive extensions |
 | `ExcelDateTime` | Missing | Native Excel datetime type |
@@ -288,19 +289,22 @@ objects, then workbook metadata, then performance.
 **Goal:** cover the common “write a real worksheet” path before adding visual
 objects.
 
-| Item | Why | Size |
-|---|---|---|
-| `IntoExcelData for Result<T, E>` | Common fallible-data pattern; cheap parity win | S |
-| `merge_range` | Very common layout feature; also unblocks styled reports | M |
-| `write_url` + formatted variants | Common in reports and dashboards | M |
-| Row/column hidden, default row height, sheet visibility, tab color | Basic worksheet state; low record complexity | S–M |
-| `set_freeze_panes`, `set_selection`, `set_top_left_cell` | Basic view usability | S–M |
-| `set_cell_format`, `set_range_format`, `clear_cell`, `clear_cell_format` | Format-only edits without rewriting values | S–M |
-| `write_formula` + `set_formula_result` | Biggest functional gap; enables computed reports | L |
-| `write_array_formula` / dynamic formulas | Common Excel 365 reporting | L |
+| Item | Status | Why | Size |
+|---|---|---|---|
+| `IntoExcelData for Result<T, E>` | ✅ P0a | Common fallible-data pattern; cheap parity win | S |
+| `merge_range` | Open | Very common layout feature; also unblocks styled reports | M |
+| `write_url` + formatted variants | Open | Common in reports and dashboards | M |
+| Row/column hidden | ✅ P0a | Basic worksheet state; low record complexity | S |
+| Default row height, sheet visibility, tab color | Open | Basic worksheet state | S–M |
+| `set_freeze_panes`, `set_selection`, `set_top_left_cell` | Open | Basic view usability | S–M |
+| `set_cell_format`, `set_range_format`, `clear_cell`, `clear_cell_format` | ✅ P0a | Format-only edits without rewriting values | S–M |
+| `write_formula` + `set_formula_result` | Open | Biggest functional gap; enables computed reports | L |
+| `write_array_formula` / dynamic formulas | Open | Common Excel 365 reporting | L |
 
-**Recommended split:** ship the S/M items first as “P0a”; treat the formula
-engine as “P0b” because it needs a token encoder and new record families.
+**P0a status:** shipped `Result<T,E>`, formatted row/column writes, row/column
+matrices, cell/range format edits, clear operations, hidden rows/columns, and
+the format-only parity setters. **P0b** remains the formula engine; `merge_range`
+and hyperlinks are the next smaller P0 gaps.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
 cached results where supported; record-level tests assert formula/merge/link
@@ -376,7 +380,7 @@ known-good sample.
 | Serde serialization/deserialization | Structured Rust data | L |
 | Polars adapter | Data-pipeline use | L |
 | jiff and `rust_decimal` support | Optional type coverage | S–M |
-| Matrix writes | Convenience/performance | S |
+| ✅ Matrix writes | Shipped in P0a | — |
 | Compression/large-file tuning | Throughput and size | M |
 
 **Exit criteria:** peak memory is measured against a large fixture; output is
@@ -398,20 +402,20 @@ still deterministic; no cell data loss under streaming.
 
 ## 8. Immediate Recommendation
 
-The next milestone should be **P0a**:
+**P0a is shipped.** The next milestone should be **P0b**, the formula engine,
+because formulas are the largest remaining functional gap and need a dedicated
+spec:
 
-1. `Result<T, E>` cell values.
-2. `merge_range`.
-3. `write_url` and formatted variants.
-4. Row/column hidden, default row height, sheet visibility/tab color.
-5. Freeze panes and selection.
-6. `set_cell_format`, `set_range_format`, `clear_cell`.
+1. Formula tokenizer/encoder.
+2. `write_formula` and `write_formula_with_format`.
+3. Cached `set_formula_result` values.
+4. Array and dynamic-array formulas.
 
-Then start **P0b** formula work as a separate spec because it needs a formula
-tokenizer/encoder and new core records. This ordering delivers visible utility
-before the largest single implementation risk.
+The smaller P0 gaps are `merge_range`, `write_url`, default row height, sheet
+visibility/tab color, and freeze panes/selection. Ship those as P0c if formula
+work needs to wait.
 
-P0a is also the best compatibility test: it exercises the existing style,
+P0a was the best compatibility test: it exercised the existing style,
 row/column, SST, and package pipelines without requiring new drawing or chart
 parts.
 
@@ -421,7 +425,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 119 core + 40 writer unit tests and 6 doctests; calamine
+- Test evidence: 119 core + 52 writer unit tests and 6 doctests; calamine
   round-trips; LibreOffice render of `rust-xlsb-writer/examples/showcase.rs`.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are
   architectural, not benchmarked.

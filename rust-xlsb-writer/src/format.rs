@@ -1,8 +1,8 @@
 //! Public cell formatting builder and its mapping to core style records.
 
 use rust_xlsb_core::prelude::{
-    Bold, BorderType, BrtBorder, BrtColor, BrtFill, BrtFont, BrtXF, HAlign, VAlign, XlStringExt,
-    XlWideString,
+    Bold, BorderType, BrtBorder, BrtColor, BrtFill, BrtFont, BrtXF, HAlign, ReadingOrder, VAlign,
+    XlStringExt, XlWideString,
 };
 use rust_xlsb_core::{CellStyle, StyleRegistry};
 
@@ -233,6 +233,60 @@ pub enum FormatPattern {
     Gray0625,
 }
 
+/// Font underline styles.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
+pub enum FormatUnderline {
+    /// No underline.
+    #[default]
+    None,
+    /// Single underline.
+    Single,
+    /// Double underline.
+    Double,
+    /// Single accounting underline.
+    SingleAccounting,
+    /// Double accounting underline.
+    DoubleAccounting,
+}
+
+/// Font superscript/subscript styles.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
+pub enum FormatScript {
+    /// Normal text.
+    #[default]
+    None,
+    /// Superscript.
+    Superscript,
+    /// Subscript.
+    Subscript,
+}
+
+/// Font scheme classification.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
+pub enum FontScheme {
+    /// Minor/body theme font.
+    #[default]
+    Body,
+    /// Major/heading theme font.
+    Headings,
+    /// Custom font outside the theme.
+    None,
+}
+
+/// Diagonal border direction.
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
+pub enum FormatDiagonalBorder {
+    /// No diagonal border.
+    #[default]
+    None,
+    /// Bottom-left to top-right.
+    BorderUp,
+    /// Top-left to bottom-right.
+    BorderDown,
+    /// Both diagonals.
+    BorderUpDown,
+}
+
 /// A complete cell format.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Format {
@@ -249,6 +303,7 @@ pub struct Format {
     border_bottom_color: Option<Color>,
     border_left_color: Option<Color>,
     border_right_color: Option<Color>,
+    border_diagonal_color: Option<Color>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -281,6 +336,7 @@ impl Format {
             border_bottom_color: None,
             border_left_color: None,
             border_right_color: None,
+            border_diagonal_color: None,
         }
     }
 
@@ -489,6 +545,203 @@ impl Format {
         self
     }
 
+    /// Unlocks the cell when the sheet is protected.
+    #[must_use]
+    pub const fn set_unlocked(mut self) -> Self {
+        self.xf.fLocked = false;
+        self
+    }
+
+    /// Clears bold text.
+    #[must_use]
+    pub const fn unset_bold(mut self) -> Self {
+        self.font.bls = Bold::BLSNORMAL;
+        self
+    }
+
+    /// Clears italic text.
+    #[must_use]
+    pub const fn unset_italic(mut self) -> Self {
+        self.font.grbit.fItalic = false;
+        self
+    }
+
+    /// Disables text wrapping.
+    #[must_use]
+    pub const fn unset_text_wrap(mut self) -> Self {
+        self.xf.fWrap = false;
+        self
+    }
+
+    /// Sets font strikethrough.
+    #[must_use]
+    pub const fn set_font_strikethrough(mut self) -> Self {
+        self.font.grbit.fStrikeOut = true;
+        self
+    }
+
+    /// Clears font strikethrough.
+    #[must_use]
+    pub const fn unset_font_strikethrough(mut self) -> Self {
+        self.font.grbit.fStrikeOut = false;
+        self
+    }
+
+    /// Sets the font underline style.
+    #[must_use]
+    pub const fn set_underline(mut self, underline: FormatUnderline) -> Self {
+        self.font.uls = match underline {
+            FormatUnderline::None => 0x00,
+            FormatUnderline::Single => 0x01,
+            FormatUnderline::Double => 0x02,
+            FormatUnderline::SingleAccounting => 0x21,
+            FormatUnderline::DoubleAccounting => 0x22,
+        };
+        self
+    }
+
+    /// Sets font superscript/subscript.
+    #[must_use]
+    pub const fn set_font_script(mut self, script: FormatScript) -> Self {
+        self.font.sss = match script {
+            FormatScript::None => 0,
+            FormatScript::Superscript => 1,
+            FormatScript::Subscript => 2,
+        };
+        self
+    }
+
+    /// Sets the indentation level, clamped to the XLSB range `0..=250`.
+    #[must_use]
+    pub const fn set_indent(mut self, indent: u8) -> Self {
+        if indent <= 250 {
+            self.xf.indent = indent;
+        }
+        self
+    }
+
+    /// Enables shrink-to-fit.
+    #[must_use]
+    pub const fn set_shrink(mut self) -> Self {
+        self.xf.fShrinkToFit = true;
+        self
+    }
+
+    /// Disables shrink-to-fit.
+    #[must_use]
+    pub const fn unset_shrink(mut self) -> Self {
+        self.xf.fShrinkToFit = false;
+        self
+    }
+
+    /// Sets text rotation in degrees.
+    ///
+    /// Valid inputs are `-90..=90` and `270` for vertical text. Other values
+    /// are ignored.
+    #[must_use]
+    pub fn set_rotation(mut self, rotation: i16) -> Self {
+        match rotation {
+            270 => self.xf.trot = 255,
+            -90..=-1 => {
+                self.xf.trot = u8::try_from(90 - rotation).expect("rotation range checked");
+            }
+            0..=90 => {
+                self.xf.trot = u8::try_from(rotation).expect("rotation range checked");
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// Sets reading direction: `0` context, `1` left-to-right, `2` right-to-left.
+    #[must_use]
+    pub const fn set_reading_direction(mut self, reading_direction: u8) -> Self {
+        self.xf.iReadingOrder = match reading_direction {
+            0 => ReadingOrder::ContextDependent,
+            1 => ReadingOrder::LeftToRight,
+            2 => ReadingOrder::RightToLeft,
+            _ => return self,
+        };
+        self
+    }
+
+    /// Sets the font scheme.
+    #[must_use]
+    pub const fn set_font_scheme(mut self, scheme: FontScheme) -> Self {
+        self.font.bFontScheme = match scheme {
+            FontScheme::None => 0,
+            FontScheme::Headings => 1,
+            FontScheme::Body => 2,
+        };
+        self
+    }
+
+    /// Sets the font family.
+    #[must_use]
+    pub const fn set_font_family(mut self, font_family: u8) -> Self {
+        self.font.bFamily = font_family;
+        self
+    }
+
+    /// Sets the font character set.
+    #[must_use]
+    pub const fn set_font_charset(mut self, font_charset: u8) -> Self {
+        self.font.bCharSet = font_charset;
+        self
+    }
+
+    /// Sets the diagonal border style.
+    #[must_use]
+    pub const fn set_border_diagonal(mut self, border: FormatBorder) -> Self {
+        self.border.blxfDiag.border_type = border_type(border);
+        self
+    }
+
+    /// Sets the diagonal border color.
+    #[must_use]
+    pub fn set_border_diagonal_color(mut self, color: impl Into<Color>) -> Self {
+        self.border_diagonal_color = Some(color.into());
+        self
+    }
+
+    /// Sets the diagonal border direction.
+    #[must_use]
+    pub const fn set_border_diagonal_type(mut self, border_type: FormatDiagonalBorder) -> Self {
+        match border_type {
+            FormatDiagonalBorder::None => {
+                self.border.fBdrDiagDown = false;
+                self.border.fBdrDiagUp = false;
+            }
+            FormatDiagonalBorder::BorderUp => {
+                self.border.fBdrDiagDown = false;
+                self.border.fBdrDiagUp = true;
+            }
+            FormatDiagonalBorder::BorderDown => {
+                self.border.fBdrDiagDown = true;
+                self.border.fBdrDiagUp = false;
+            }
+            FormatDiagonalBorder::BorderUpDown => {
+                self.border.fBdrDiagDown = true;
+                self.border.fBdrDiagUp = true;
+            }
+        }
+        self
+    }
+
+    /// Marks the cell text as quote-prefixed.
+    #[must_use]
+    pub const fn set_quote_prefix(mut self) -> Self {
+        self.xf.f123Prefix = true;
+        self
+    }
+
+    /// Clears the quote-prefix marker.
+    #[must_use]
+    pub const fn unset_quote_prefix(mut self) -> Self {
+        self.xf.f123Prefix = false;
+        self
+    }
+
     pub(crate) fn to_cell_style(&self, registry: &mut StyleRegistry) -> Result<CellStyle> {
         let mut font = self.font.clone();
         if let Some(color) = self.font_color {
@@ -531,6 +784,9 @@ impl Format {
         }
         if let Some(color) = self.border_right_color {
             border.blxfRight.color = color.to_brt_color()?;
+        }
+        if let Some(color) = self.border_diagonal_color {
+            border.blxfDiag.color = color.to_brt_color()?;
         }
 
         let mut xf = self.xf.clone();
@@ -776,6 +1032,92 @@ mod tests {
 
         let style = cell_style(&Format::new().set_hidden().unset_hidden());
         assert!(!style.xf.fHidden);
+    }
+
+    #[test]
+    fn maps_font_decoration_and_metadata() {
+        let style = cell_style(
+            &Format::new()
+                .set_underline(FormatUnderline::DoubleAccounting)
+                .set_font_script(FormatScript::Superscript)
+                .set_font_strikethrough()
+                .set_font_family(3)
+                .set_font_charset(1)
+                .set_font_scheme(FontScheme::Headings),
+        );
+
+        assert_eq!(style.font.uls, 0x22);
+        assert_eq!(style.font.sss, 1);
+        assert!(style.font.grbit.fStrikeOut);
+        assert_eq!(style.font.bFamily, 3);
+        assert_eq!(style.font.bCharSet, 1);
+        assert_eq!(style.font.bFontScheme, 1);
+    }
+
+    #[test]
+    fn maps_alignment_extras_and_protection_resets() {
+        let style = cell_style(
+            &Format::new()
+                .set_unlocked()
+                .set_indent(2)
+                .set_shrink()
+                .set_rotation(-30)
+                .set_reading_direction(2)
+                .set_quote_prefix(),
+        );
+
+        assert!(!style.xf.fLocked);
+        assert_eq!(style.xf.indent, 2);
+        assert!(style.xf.fShrinkToFit);
+        assert_eq!(style.xf.trot, 120);
+        assert_eq!(style.xf.iReadingOrder, ReadingOrder::RightToLeft);
+        assert!(style.xf.f123Prefix);
+
+        let style = cell_style(
+            &Format::new()
+                .set_reading_direction(1)
+                .set_reading_direction(9),
+        );
+        assert_eq!(style.xf.iReadingOrder, ReadingOrder::LeftToRight);
+
+        let style = cell_style(
+            &Format::new()
+                .unset_bold()
+                .unset_italic()
+                .unset_text_wrap()
+                .unset_shrink()
+                .unset_font_strikethrough()
+                .unset_quote_prefix(),
+        );
+        assert_eq!(style.font.bls, Bold::BLSNORMAL);
+        assert!(!style.font.grbit.fItalic);
+        assert!(!style.xf.fWrap);
+        assert!(!style.xf.fShrinkToFit);
+        assert!(!style.font.grbit.fStrikeOut);
+        assert!(!style.xf.f123Prefix);
+    }
+
+    #[test]
+    fn maps_diagonal_border() {
+        let style = cell_style(
+            &Format::new()
+                .set_border_diagonal(FormatBorder::Thin)
+                .set_border_diagonal_color(Color::Red)
+                .set_border_diagonal_type(FormatDiagonalBorder::BorderUpDown),
+        );
+
+        assert_eq!(style.border.blxfDiag.border_type, BorderType::Thin);
+        assert_eq!(style.border.blxfDiag.color, BrtColor::rgb(0xFF, 0x00, 0x00));
+        assert!(style.border.fBdrDiagDown);
+        assert!(style.border.fBdrDiagUp);
+    }
+
+    #[test]
+    fn rotation_boundaries() {
+        assert_eq!(cell_style(&Format::new().set_rotation(270)).xf.trot, 255);
+        assert_eq!(cell_style(&Format::new().set_rotation(90)).xf.trot, 90);
+        assert_eq!(cell_style(&Format::new().set_rotation(-90)).xf.trot, 180);
+        assert_eq!(cell_style(&Format::new().set_rotation(100)).xf.trot, 0);
     }
 
     #[test]
