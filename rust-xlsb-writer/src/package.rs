@@ -29,7 +29,7 @@ use crate::table::write_table_part;
 use crate::theme::Theme;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
-use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
+use crate::worksheet::{HeaderImagePosition, MAX_COL, MAX_ROW, Visibility, Worksheet};
 use crate::{DocProperties, Error, Format, Result};
 
 pub fn build_package(
@@ -162,7 +162,10 @@ pub fn build_package(
     let mut drawing_ids = Vec::new();
     let mut media_parts = Vec::new();
     let mut image_types = Vec::new();
+    let mut vml_parts = Vec::new();
+    let mut header_media: Vec<(crate::Image, u32)> = Vec::new();
     let mut drawing_number = 0u32;
+    let mut vml_number = 0u32;
     let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
         let image_index = sheet.background_image().map(|image| {
@@ -211,9 +214,73 @@ pub fn build_package(
         };
         let background_rel_id = if image_index.is_some() {
             let rel_id = next_rel_id;
+            next_rel_id += 1;
             Some(rel_id)
         } else {
             None
+        };
+        let mut header_images = Vec::new();
+        for (is_header, images) in [
+            (true, sheet.header_images()),
+            (false, sheet.footer_images()),
+        ] {
+            for (index, image) in images.iter().enumerate() {
+                let Some(image) = image else {
+                    continue;
+                };
+                let (width, height) = image.scaled_size()?;
+                let media_index = if let Some((_, index)) = header_media
+                    .iter()
+                    .find(|(known, _)| known.same_media(image))
+                {
+                    *index
+                } else {
+                    let index = u32::try_from(media_parts.len() + 1)
+                        .map_err(|_| Error::ValueNotRepresentable("too many images"))?;
+                    let extension = image.extension();
+                    media_parts.push((
+                        format!("xl/media/image{index}.{extension}"),
+                        image.data().to_vec(),
+                    ));
+                    if !image_types.iter().any(|(known, _)| *known == extension) {
+                        image_types.push((extension, image.content_type()));
+                    }
+                    header_media.push((image.clone(), index));
+                    index
+                };
+                let extension = image.extension();
+                header_images.push(HeaderImageSave {
+                    data_id: vml_number + 1,
+                    position: [
+                        HeaderImagePosition::Left,
+                        HeaderImagePosition::Center,
+                        HeaderImagePosition::Right,
+                    ][index],
+                    is_header,
+                    rel_id: u32::try_from(header_images.len() + 1)
+                        .map_err(|_| Error::ValueNotRepresentable("too many header images"))?,
+                    media_index,
+                    width,
+                    height,
+                    is_scaled: image.is_scaled(),
+                    extension,
+                });
+            }
+        }
+        let vml = if header_images.is_empty() {
+            None
+        } else {
+            vml_number += 1;
+            let rel_id = next_rel_id;
+            vml_parts.push((
+                format!("xl/drawings/vmlDrawing{vml_number}.vml"),
+                vml_header_xml(vml_number, &header_images).into_bytes(),
+            ));
+            vml_parts.push((
+                format!("xl/drawings/_rels/vmlDrawing{vml_number}.vml.rels"),
+                vml_header_rels(&header_images).into_bytes(),
+            ));
+            Some((vml_number, rel_id))
         };
         let mut bytes = Vec::new();
         let selected = index == view.active && (view.explicit_active || view.active != 0);
@@ -227,10 +294,11 @@ pub fn build_package(
             selected,
             drawing.map(|(_, rel_id)| rel_id),
             background_rel_id,
+            vml.map(|(_, rel_id)| rel_id),
             &mut bytes,
         )?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
-        if let Some(rels) = sheet_rels(sheet, drawing, image_index.zip(background_rel_id)) {
+        if let Some(rels) = sheet_rels(sheet, drawing, image_index.zip(background_rel_id), vml) {
             sheet_parts.push((
                 format!("xl/worksheets/_rels/sheet{}.bin.rels", index + 1),
                 rels.into_bytes(),
@@ -246,6 +314,7 @@ pub fn build_package(
 
     let has_strings = !sst.is_empty();
     let has_dynamic_arrays = sheets.iter().any(Worksheet::has_dynamic_arrays);
+    let has_vml = !vml_parts.is_empty();
     let has_custom_properties =
         properties.is_some_and(|properties| !properties.custom_properties.is_empty());
     let has_theme = settings.theme.is_some();
@@ -268,6 +337,7 @@ pub fn build_package(
                 vba_project.is_some(),
                 vba_project.is_some()
                     && vba_signature.is_some_and(|signature| !signature.is_empty()),
+                has_vml,
             )
             .into_bytes(),
         ),
@@ -317,6 +387,7 @@ pub fn build_package(
     parts.extend(sheet_parts);
     parts.extend(table_parts);
     parts.extend(drawing_parts);
+    parts.extend(vml_parts);
     parts.extend(media_parts);
 
     if has_strings {
@@ -666,6 +737,86 @@ fn push_defined_name(
     Ok(())
 }
 
+struct HeaderImageSave {
+    data_id: u32,
+    position: HeaderImagePosition,
+    is_header: bool,
+    rel_id: u32,
+    media_index: u32,
+    width: f64,
+    height: f64,
+    is_scaled: bool,
+    extension: &'static str,
+}
+
+fn vml_dpi_size(dimension: f64) -> f64 {
+    (dimension + 0.25).floor() * 72.0 / 96.0
+}
+
+fn vml_header_xml(data_id: u32, images: &[HeaderImageSave]) -> String {
+    let mut out = String::with_capacity(2048);
+    out.push_str(concat!(
+        r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">"#,
+        r#"<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data=""#,
+    ));
+    write!(out, "{data_id}").expect("writing to String cannot fail");
+    out.push_str(concat!(
+        r#"" /></o:shapelayout>"#,
+        r#"<v:shapetype id="_x0000_t75" coordsize="21600,21600" o:spt="75" o:preferrelative="t" path="m@4@5l@4@11@9@11@9@5xe" filled="f" stroked="f">"#,
+        r#"<v:stroke joinstyle="miter" /><v:formulas>"#,
+        r#"<v:f eqn="if lineDrawn pixelLineWidth 0" />"#,
+        r#"<v:f eqn="sum @0 1 0" />"#,
+        r#"<v:f eqn="sum 0 0 @1" />"#,
+        r#"<v:f eqn="prod @2 1 2" />"#,
+        r#"<v:f eqn="prod @3 21600 pixelWidth" />"#,
+        r#"<v:f eqn="prod @3 21600 pixelHeight" />"#,
+        r#"<v:f eqn="sum @0 0 1" />"#,
+        r#"<v:f eqn="prod @6 1 2" />"#,
+        r#"<v:f eqn="prod @7 21600 pixelWidth" />"#,
+        r#"<v:f eqn="sum @8 21600 0" />"#,
+        r#"<v:f eqn="prod @7 21600 pixelHeight" />"#,
+        r#"<v:f eqn="sum @10 21600 0" />"#,
+        r#"</v:formulas><v:path o:extrusionok="f" gradientshapeok="t" o:connecttype="rect" />"#,
+        r#"<o:lock v:ext="edit" aspectratio="t" /></v:shapetype>"#,
+    ));
+    for (index, image) in images.iter().enumerate() {
+        let width = vml_dpi_size(image.width);
+        let height = vml_dpi_size(image.height);
+        let z_index = index + 1;
+        let shape_id = 1025 + (image.data_id - 1) * 1024 + u32::try_from(index).expect("fits u32");
+        write!(
+            out,
+            r##"<v:shape id="{}" o:spid="_x0000_s{shape_id}" type="#_x0000_t75" style="position:absolute;margin-left:0;margin-top:0;width:{width}pt;height:{height}pt;z-index:{z_index}"><v:imagedata o:relid="rId{}" o:title="" /><o:lock v:ext="edit" rotation="t""##,
+            image.position.vml_name(image.is_header),
+            image.rel_id,
+        )
+        .expect("writing to String cannot fail");
+        if image.is_scaled {
+            out.push_str(r#" aspectratio="f""#);
+        }
+        out.push_str(" /></v:shape>");
+    }
+    out.push_str("</xml>");
+    out
+}
+
+fn vml_header_rels(images: &[HeaderImageSave]) -> String {
+    let mut out = String::from(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    ));
+    for image in images {
+        write!(
+            out,
+            r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image{}.{}"/>"#,
+            image.rel_id, image.media_index, image.extension
+        )
+        .expect("writing to String cannot fail");
+    }
+    out.push_str("</Relationships>");
+    out
+}
+
 fn next_sheet_rel_id(sheet: &Worksheet) -> Result<u32> {
     let mut rel_id = u32::try_from(sheet.tables().len())
         .map_err(|_| Error::ValueNotRepresentable("too many tables"))?;
@@ -685,11 +836,13 @@ fn sheet_rels(
     sheet: &Worksheet,
     drawing: Option<(u32, u32)>,
     background: Option<(usize, u32)>,
+    vml: Option<(u32, u32)>,
 ) -> Option<String> {
     if sheet.tables().is_empty()
         && sheet.hyperlinks().values().all(crate::Url::is_internal)
         && drawing.is_none()
         && background.is_none()
+        && vml.is_none()
     {
         return None;
     }
@@ -737,6 +890,13 @@ fn sheet_rels(
         )
         .expect("writing to String cannot fail");
     }
+    if let Some((vml_number, vml_rel_id)) = vml {
+        write!(
+            body,
+            r#"<Relationship Id="rId{vml_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing{vml_number}.vml"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
     body.push_str("</Relationships>");
     Some(body)
 }
@@ -757,6 +917,7 @@ fn content_types(
     has_metadata: bool,
     has_vba: bool,
     has_vba_signature: bool,
+    has_vml: bool,
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -806,6 +967,11 @@ fn content_types(
     if has_vba_signature {
         body.push_str(
             r#"<Override PartName="/xl/vbaProjectSignature.bin" ContentType="application/vnd.ms-office.vbaProjectSignature"/>"#,
+        );
+    }
+    if has_vml {
+        body.push_str(
+            r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#,
         );
     }
     if theme.is_some() {
@@ -1427,9 +1593,9 @@ mod tests {
         BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellMeta,
         BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing, BrtExternSheet,
         BrtFileSharing, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont,
-        BrtHLink, BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName, BrtRowHdr,
-        BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtWsProp,
-        BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+        BrtHLink, BrtLegacyDrawingHF, BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName,
+        BrtRowHdr, BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo,
+        BrtWsProp, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
         CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
         CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
         CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
@@ -4929,6 +5095,154 @@ mod tests {
         assert!(drawing.contains(
             "<xdr:to><xdr:col>0</xdr:col><xdr:colOff>857250</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>381000</xdr:rowOff></xdr:to>"
         ));
+    }
+
+    #[test]
+    fn header_and_footer_images_emit_vml_parts() {
+        let image = crate::Image::new_from_buffer(&png(100, 50)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_header("&C&G");
+        sheet.set_footer("&L&G");
+        sheet
+            .set_header_image(&image, crate::HeaderImagePosition::Center)
+            .expect("header image");
+        sheet
+            .set_footer_image(&image, crate::HeaderImagePosition::Left)
+            .expect("footer image");
+        let bytes = workbook.save_to_buffer().expect("saves");
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#
+        ));
+        let vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("vml"))
+                .expect("utf8");
+        assert!(vml.contains(r#"id="CH""#));
+        assert!(vml.contains(r#"id="LF""#));
+        assert_eq!(vml.matches("width:75pt;height:37.5pt").count(), 2);
+        assert!(vml.contains(r#"o:spid="_x0000_s1025""#));
+        assert!(vml.contains(r#"o:spid="_x0000_s1026""#));
+        assert!(vml.contains(r#"o:relid="rId1""#));
+        assert!(vml.contains(r#"o:relid="rId2""#));
+
+        let vml_rels = String::from_utf8(
+            part_bytes(&bytes, "xl/drawings/_rels/vmlDrawing1.vml.rels").expect("vml rels"),
+        )
+        .expect("utf8");
+        assert!(vml_rels.contains(
+            r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png""#
+        ));
+        assert!(vml_rels.contains(
+            r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png""#
+        ));
+        let sheet_rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("sheet rels"),
+        )
+        .expect("utf8");
+        assert!(sheet_rels.contains(
+            r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml""#
+        ));
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let legacy = records::<BrtLegacyDrawingHF>(&sheet_part);
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(
+            legacy[0].stRelID.to_optional_string().as_deref(),
+            Some("rId1")
+        );
+        assert_eq!(
+            part_bytes(&bytes, "xl/media/image1.png").expect("image"),
+            png(100, 50)
+        );
+        assert!(part_bytes(&bytes, "xl/media/image2.png").is_err());
+    }
+
+    #[test]
+    fn header_image_relationship_follows_drawing_and_background() {
+        let image = crate::Image::new_from_buffer(&png(10, 10)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.insert_background_image(&image);
+        sheet.insert_image(0, 0, &image).expect("image");
+        sheet.set_header("&C&G");
+        sheet
+            .set_header_image(&image, crate::HeaderImagePosition::Center)
+            .expect("header image");
+        let bytes = workbook.save_to_buffer().expect("saves");
+
+        let sheet_rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("sheet rels"),
+        )
+        .expect("utf8");
+        assert!(sheet_rels.contains(r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing""#));
+        assert!(sheet_rels.contains(r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image""#));
+        assert!(sheet_rels.contains(r#"Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing""#));
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let legacy = records::<BrtLegacyDrawingHF>(&sheet_part);
+        assert_eq!(
+            legacy[0].stRelID.to_optional_string().as_deref(),
+            Some("rId3")
+        );
+        let ids = record_ids(&sheet_part);
+        let position = |id| ids.iter().position(|known| *known == id).expect("record");
+        assert!(position(KnownID::BrtDrawing) < position(KnownID::BrtLegacyDrawingHF));
+        assert!(position(KnownID::BrtLegacyDrawingHF) < position(KnownID::BrtBkHim));
+    }
+
+    #[test]
+    fn header_images_use_per_part_shape_id_blocks() {
+        let image = crate::Image::new_from_buffer(&png(10, 10)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        for _ in 0..2 {
+            let sheet = workbook.add_worksheet();
+            sheet.set_header("&C&G");
+            sheet
+                .set_header_image(&image, crate::HeaderImagePosition::Center)
+                .expect("header image");
+        }
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let first = String::from_utf8(
+            part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("first vml"),
+        )
+        .expect("utf8");
+        let second = String::from_utf8(
+            part_bytes(&bytes, "xl/drawings/vmlDrawing2.vml").expect("second vml"),
+        )
+        .expect("utf8");
+        assert!(first.contains(r#"data="1""#));
+        assert!(first.contains(r#"o:spid="_x0000_s1025""#));
+        assert!(second.contains(r#"data="2""#));
+        assert!(second.contains(r#"o:spid="_x0000_s2049""#));
+        assert!(part_bytes(&bytes, "xl/media/image2.png").is_err());
+    }
+
+    #[test]
+    fn header_image_requires_a_matching_placeholder() {
+        let image = crate::Image::new_from_buffer(&png(10, 10)).expect("png");
+        let mut worksheet = crate::Worksheet::new();
+        assert!(matches!(
+            worksheet.set_header_image(&image, crate::HeaderImagePosition::Left),
+            Err(crate::Error::Parameter(_))
+        ));
+        worksheet.set_header("&C&G");
+        assert!(matches!(
+            worksheet.set_header_image(&image, crate::HeaderImagePosition::Left),
+            Err(crate::Error::Parameter(_))
+        ));
+        assert!(
+            worksheet
+                .set_header_image(&image, crate::HeaderImagePosition::Center)
+                .is_ok()
+        );
+        worksheet.set_header("&C&[Picture]");
+        assert!(
+            worksheet
+                .set_header_image(&image, crate::HeaderImagePosition::Center)
+                .is_ok()
+        );
     }
 
     #[test]

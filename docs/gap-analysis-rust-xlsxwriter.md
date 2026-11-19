@@ -37,9 +37,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    temporal and boolean matching, literal and formula-backed
    multi-range data validation, and structural sheet protection are present.
 4. **Rich objects** — worksheet background images, foreground images with
-   native or scaled sizing, pixel offsets, fit-to-cell placement, and
-   sparkline groups are supported; in-cell image embedding, charts, notes,
-   shapes, buttons, and checkboxes are missing.
+   native or scaled sizing, pixel offsets, fit-to-cell placement,
+   header/footer VML images, and sparkline groups are supported; in-cell image
+   embedding, charts, notes, shapes, buttons, and checkboxes are missing.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
    user-defined names, the Excel 2023 theme, custom theme files, VBA projects
    with detached signatures and code names are available; chartsheets are
@@ -75,7 +75,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 324 core + 444 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose image, sparkline, signed-macro read-back |
+| Verification | 326 core + 448 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose image, sparkline, signed-macro, and header-image read-back |
 
 ## 3. Capability Matrix
 
@@ -171,7 +171,7 @@ Status meanings:
 | `set_margins` | Supported | — |
 | `set_header`, `set_footer` | Supported | Text headers/footers |
 | `set_header_footer_scale_with_doc`, `set_header_footer_align_with_page` | Supported | Header/footer scaling/alignment |
-| `set_header_image`, `set_footer_image` | Missing | Header/footer images |
+| `set_header_image`, `set_footer_image` | Supported | VML header/footer shapes, media parts, and `BrtLegacyDrawingHF` |
 | `set_print_area`, `set_repeat_rows`, `set_repeat_columns` | Supported | Sheet-scoped defined names |
 | `set_print_scale`, `set_print_fit_to_pages` | Supported | — |
 | `set_print_center_horizontally`, `set_print_center_vertically` | Supported | — |
@@ -303,7 +303,7 @@ records or package parts that do not exist yet.
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, automatic worksheet and table row hiding; icon/top-10/dynamic filter records remain |
 | Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
 | Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
-| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground images use DrawingML pictures, two-cell anchors, DPI-aware scaled extents, fit-to-cell placement, drawing relationships, and media parts. In-cell embedding and charts remain |
+| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground images use DrawingML pictures, two-cell anchors, DPI-aware scaled extents, fit-to-cell placement, drawing relationships, and media parts; header/footer images use VML shapes, media relationships, and `BrtLegacyDrawingHF`. In-cell embedding and charts remain |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Sparklines | Shipped `BrtBeginSparklineGroup`/`BrtSparkline` FRT records, grouped rows/columns, and `Xti` data-range formulas |
 | Notes | Comment/note parts and VML/drawing linkage |
@@ -475,7 +475,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 324 core + 444 writer unit tests and 7 doctests in default
+- Test evidence: 326 core + 448 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
@@ -486,6 +486,11 @@ parts.
   code-name rejection, and the signed project parts and relationship. Aspose
   loads the generated signed XLSB, reports the VBA project and `Sheet1` code
   name, keeps the signature bytes on re-save, and re-serializes the project.
+  Header/footer image tests cover placeholder rejection, VML shape names and
+  point sizes, media relationships, worksheet relationship IDs after drawings
+  and backgrounds, the `BrtLegacyDrawingHF` payload, and image bytes. Aspose
+  loads the generated XLSB, reports the header/footer picture codes, and its
+  XLSX export preserves both VML shapes with a shared media image.
   Formula-driven rule tests cover `PtgRefN`/`PtgAreaN` offsets against the
   validation or conditional-format range, custom validation type 7, formula
   comparison types, and `CF_TEMPLATE_FMLA`. ExcelGen's `test-dataval.xlsb`

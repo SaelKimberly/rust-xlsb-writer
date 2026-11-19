@@ -70,6 +70,10 @@ impl Image {
         &self.data
     }
 
+    pub(crate) fn same_media(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data) || self.data == other.data
+    }
+
     pub(crate) const fn extension(&self) -> &'static str {
         self.kind.extension()
     }
@@ -212,6 +216,14 @@ impl Image {
             return Err(Error::ImageError("image DPI is invalid".to_owned()));
         }
         Ok(info)
+    }
+
+    #[expect(
+        clippy::float_cmp,
+        reason = "the default scale is exactly 1.0; non-default scales come from setters"
+    )]
+    pub(crate) fn is_scaled(&self) -> bool {
+        self.scale_width != 1.0 || self.scale_height != 1.0
     }
 
     pub(crate) fn scaled_size(&self) -> Result<(f64, f64)> {

@@ -25,6 +25,7 @@ mod brt_dval;
 mod brt_dxf;
 mod brt_extern_sheet;
 mod brt_frt;
+mod brt_legacy_drawing_hf;
 pub use brt_frt::{BrtFRTBegin, BrtFRTEnd};
 mod brt_file_sharing;
 mod brt_fill;
@@ -110,6 +111,7 @@ pub use brt_fmla::{
 pub use brt_fmt::BrtFmt;
 pub use brt_font::BrtFont;
 pub use brt_hlink::BrtHLink;
+pub use brt_legacy_drawing_hf::BrtLegacyDrawingHF;
 pub use brt_margins::BrtMargins;
 pub use brt_merge_cell::BrtMergeCell;
 pub use brt_metadata::{

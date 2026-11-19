@@ -24,11 +24,11 @@ pub use record::{
     BrtEndIconSet, BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndMetadata,
     BrtEndRwBrk, BrtEndSparklineGroup, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet,
     BrtFRTBegin, BrtFRTEnd, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError,
-    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListCCFmla, BrtListPart,
-    BrtListTrFmla, BrtMargins, BrtMdb, BrtMdtinfo, BrtMergeCell, BrtName, BrtPageSetup, BrtPane,
-    BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection,
-    BrtSparkline, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo,
-    BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
+    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtLegacyDrawingHF, BrtListCCFmla,
+    BrtListPart, BrtListTrFmla, BrtMargins, BrtMdb, BrtMdtinfo, BrtMergeCell, BrtName,
+    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
+    BrtSheetProtection, BrtSparkline, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp,
+    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
     CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS,
     CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
     CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
@@ -125,6 +125,7 @@ mod tests {
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
     #[case::brt_bk_him(|| checked_test::<BrtBkHim>(4))]
     #[case::brt_drawing(|| checked_test::<BrtDrawing>(4))]
+    #[case::brt_legacy_drawing_hf(|| checked_test::<BrtLegacyDrawingHF>(4))]
     #[case::brt_begin_metadata(|| checked_test::<BrtBeginMetadata>(0))]
     #[case::brt_end_metadata(|| checked_test::<BrtEndMetadata>(0))]
     #[case::brt_begin_esmdtinfo(|| checked_test::<BrtBeginEsmdtinfo>(4))]

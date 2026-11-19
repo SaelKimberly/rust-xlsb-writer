@@ -79,7 +79,7 @@ pub use sparkline::{ChartEmptyCells, Sparkline, SparklineRange, SparklineType};
 pub use table::{Table, TableColumn, TableFunction, TableStyle};
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};
-pub use worksheet::{ColNum, IgnoreError, RowNum, Worksheet};
+pub use worksheet::{ColNum, HeaderImagePosition, IgnoreError, RowNum, Worksheet};
 
 use mimalloc::MiMalloc;
 

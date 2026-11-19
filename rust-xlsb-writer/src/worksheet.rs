@@ -283,6 +283,38 @@ impl HeaderFooter {
     }
 }
 
+/// Position of a header or footer image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeaderImagePosition {
+    /// Left section.
+    Left,
+    /// Center section.
+    Center,
+    /// Right section.
+    Right,
+}
+
+impl HeaderImagePosition {
+    const fn index(self) -> usize {
+        match self {
+            Self::Left => 0,
+            Self::Center => 1,
+            Self::Right => 2,
+        }
+    }
+
+    pub(crate) const fn vml_name(self, is_header: bool) -> &'static str {
+        match (is_header, self) {
+            (true, Self::Left) => "LH",
+            (true, Self::Center) => "CH",
+            (true, Self::Right) => "RH",
+            (false, Self::Left) => "LF",
+            (false, Self::Center) => "CF",
+            (false, Self::Right) => "RF",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     #[default]
@@ -324,6 +356,8 @@ pub struct Worksheet {
     default_column_metrics: (u32, u32),
     page_setup: PageSetup,
     header_footer: HeaderFooter,
+    header_images: [Option<Image>; 3],
+    footer_images: [Option<Image>; 3],
     page_breaks: Vec<u32>,
     vertical_page_breaks: Vec<u32>,
     print_area: Option<(RowNum, ColNum, RowNum, ColNum)>,
@@ -404,6 +438,8 @@ impl Worksheet {
             default_column_metrics: (7, 5),
             page_setup: PageSetup::default(),
             header_footer: HeaderFooter::default(),
+            header_images: [None, None, None],
+            footer_images: [None, None, None],
             page_breaks: Vec::new(),
             vertical_page_breaks: Vec::new(),
             print_area: None,
@@ -2420,6 +2456,57 @@ impl Worksheet {
         self
     }
 
+    /// Inserts an image in a header section.
+    ///
+    /// The header string must contain `&G` or `&[Picture]` in the matching
+    /// left, center, or right section. Images use the `Image` scale and DPI
+    /// settings and are stored in a VML drawing part.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] when the header has no picture placeholder
+    /// in the requested section, or [`Error::ImageError`] when the image has no
+    /// usable dimensions.
+    pub fn set_header_image(
+        &mut self,
+        image: &Image,
+        position: HeaderImagePosition,
+    ) -> Result<&mut Self> {
+        if !header_section_has_picture(self.header_footer.header.as_deref(), position) {
+            return Err(Error::Parameter(format!(
+                "no &[Picture] or &G variable in header for {position:?}"
+            )));
+        }
+        image.scaled_size()?;
+        self.header_images[position.index()] = Some(image.clone());
+        Ok(self)
+    }
+
+    /// Inserts an image in a footer section.
+    ///
+    /// The footer string must contain `&G` or `&[Picture]` in the matching
+    /// section. See [`Self::set_header_image`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] when the footer has no picture placeholder
+    /// in the requested section, or [`Error::ImageError`] when the image has no
+    /// usable dimensions.
+    pub fn set_footer_image(
+        &mut self,
+        image: &Image,
+        position: HeaderImagePosition,
+    ) -> Result<&mut Self> {
+        if !header_section_has_picture(self.header_footer.footer.as_deref(), position) {
+            return Err(Error::Parameter(format!(
+                "no &[Picture] or &G variable in footer for {position:?}"
+            )));
+        }
+        image.scaled_size()?;
+        self.footer_images[position.index()] = Some(image.clone());
+        Ok(self)
+    }
+
     /// Scales headers and footers with the document when `enable` is true.
     ///
     /// Enabled by default.
@@ -3638,6 +3725,14 @@ impl Worksheet {
         self.background_image.as_ref()
     }
 
+    pub(crate) const fn header_images(&self) -> &[Option<Image>; 3] {
+        &self.header_images
+    }
+
+    pub(crate) const fn footer_images(&self) -> &[Option<Image>; 3] {
+        &self.footer_images
+    }
+
     pub(crate) const fn has_rich_strings(&self) -> bool {
         self.has_rich_strings
     }
@@ -3830,6 +3925,28 @@ const fn ranges_overlap(left: MergeRange, right: MergeRange) -> bool {
         && right.first_row <= left.last_row
         && left.first_col <= right.last_col
         && right.first_col <= left.last_col
+}
+
+fn header_section_has_picture(text: Option<&str>, position: HeaderImagePosition) -> bool {
+    let Some(text) = text else {
+        return false;
+    };
+    let marker = match position {
+        HeaderImagePosition::Left => "&L",
+        HeaderImagePosition::Center => "&C",
+        HeaderImagePosition::Right => "&R",
+    };
+    let Some((_, rest)) = text.split_once(marker) else {
+        return false;
+    };
+    let end = ["&L", "&C", "&R"]
+        .into_iter()
+        .filter(|other| *other != marker)
+        .filter_map(|other| rest.find(other))
+        .min()
+        .unwrap_or(rest.len());
+    let section = &rest[..end];
+    section.contains("&[Picture]") || section.contains("&G")
 }
 
 fn normalize_header_footer(text: String) -> Option<String> {
