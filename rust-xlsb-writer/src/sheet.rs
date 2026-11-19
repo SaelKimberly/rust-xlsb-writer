@@ -6,18 +6,18 @@ use rust_xlsb_core::prelude::{
     BrtArrFmla, BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginDVals, BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk,
     BrtBeginSheet, BrtBeginSheetData, BrtBeginSparklineGroup, BrtBeginSparklineGroups,
-    BrtBeginSparklines, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtColInfo,
-    BrtColSpan, BrtColor, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs, BrtEndColBrk,
-    BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals, BrtEndHeaderFooter, BrtEndListParts,
-    BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndSparklineGroup,
-    BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView, BrtEndWsViews, BrtFRTBegin, BrtFRTEnd,
-    BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart,
-    BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel,
-    BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, FrtFormula,
-    FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref, FrtSqrefs, HeaderFooterString, RichStr,
-    StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString,
-    Xnum, conditional_format_block_ranges,
+    BrtBeginSparklines, BrtBeginWsView, BrtBeginWsViews, BrtBkHim, BrtBrk, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal,
+    BrtCellRk, BrtColInfo, BrtColSpan, BrtColor, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs,
+    BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals, BrtEndHeaderFooter,
+    BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData,
+    BrtEndSparklineGroup, BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView, BrtEndWsViews,
+    BrtFRTBegin, BrtFRTEnd, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont,
+    BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRowHdr, BrtSel, BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula,
+    FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref, FrtSqrefs, HeaderFooterString,
+    RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
+    XlWideString, Xnum, conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -60,6 +60,7 @@ pub fn write_sheet(
         &[],
         &[],
         selected,
+        None,
         out,
     )
 }
@@ -76,6 +77,7 @@ pub(crate) fn write_sheet_with_fonts(
     conditional_dxf_ids: &[Option<u32>],
     sparkline_groups: &[SparklineSaveGroup<'_>],
     selected: bool,
+    background_rel_id: Option<u32>,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     let ctx = SaveContext { sst, rich_fonts };
@@ -203,6 +205,7 @@ pub(crate) fn write_sheet_with_fonts(
     write_header_footer(sheet, out)?;
     write_page_breaks(sheet, out)?;
     write_ignored_errors(sheet, out)?;
+    write_background_image(background_rel_id, out)?;
     write_list_parts(sheet, out)?;
     write_sparklines(sparkline_groups, out)?;
 
@@ -611,6 +614,18 @@ fn write_hyperlinks(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
                 location: XlWideString::construct(Some(link.location.as_str())),
                 tooltip: XlWideString::construct(Some(link.tooltip.as_str())),
                 display: XlWideString::construct(Some(display)),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn write_background_image(rel_id: Option<u32>, out: &mut Vec<u8>) -> Result<()> {
+    if let Some(rel_id) = rel_id {
+        push(
+            out,
+            &BrtBkHim {
+                rgb: XlNullableWideString::construct(Some(format!("rId{rel_id}").as_str())),
             },
         )?;
     }

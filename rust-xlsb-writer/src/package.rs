@@ -151,8 +151,25 @@ pub fn build_package(
     let mut sheet_parts = Vec::with_capacity(sheets.len());
     let mut table_parts = Vec::new();
     let mut table_ids = Vec::new();
+    let mut media_parts = Vec::new();
+    let mut image_types = Vec::new();
     let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
+        let image_index = sheet.background_image().map(|image| {
+            let image_index = media_parts.len() + 1;
+            let extension = image.extension();
+            media_parts.push((
+                format!("xl/media/image{image_index}.{extension}"),
+                image.data().to_vec(),
+            ));
+            if !image_types.iter().any(|(known, _)| *known == extension) {
+                image_types.push((extension, image.content_type()));
+            }
+            image_index
+        });
+        let background_rel_id = image_index
+            .map(|_| background_image_rel_id(sheet))
+            .transpose()?;
         let mut bytes = Vec::new();
         let selected = index == view.active && (view.explicit_active || view.active != 0);
         crate::sheet::write_sheet_with_fonts(
@@ -163,10 +180,11 @@ pub fn build_package(
             &conditional_dxf_ids[index],
             &sheet_sparklines[index],
             selected,
+            background_rel_id,
             &mut bytes,
         )?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
-        if let Some(rels) = sheet_rels(sheet) {
+        if let Some(rels) = sheet_rels(sheet, image_index.zip(background_rel_id)) {
             sheet_parts.push((
                 format!("xl/worksheets/_rels/sheet{}.bin.rels", index + 1),
                 rels.into_bytes(),
@@ -197,6 +215,7 @@ pub fn build_package(
                 has_custom_properties,
                 settings.theme.as_ref(),
                 &table_ids,
+                &image_types,
             )
             .into_bytes(),
         ),
@@ -238,6 +257,7 @@ pub fn build_package(
     }
     parts.extend(sheet_parts);
     parts.extend(table_parts);
+    parts.extend(media_parts);
 
     if has_strings {
         let mut shared_strings = Vec::new();
@@ -565,8 +585,26 @@ fn push_defined_name(
     Ok(())
 }
 
-fn sheet_rels(sheet: &Worksheet) -> Option<String> {
-    if sheet.tables().is_empty() && sheet.hyperlinks().values().all(crate::Url::is_internal) {
+fn background_image_rel_id(sheet: &Worksheet) -> Result<u32> {
+    let mut rel_id = u32::try_from(sheet.tables().len())
+        .map_err(|_| Error::ValueNotRepresentable("too many tables"))?;
+    for link in sheet.hyperlinks().values() {
+        if !link.is_internal() {
+            rel_id = rel_id
+                .checked_add(1)
+                .ok_or(Error::ValueNotRepresentable("too many hyperlinks"))?;
+        }
+    }
+    rel_id.checked_add(1).ok_or(Error::ValueNotRepresentable(
+        "too many worksheet relationships",
+    ))
+}
+
+fn sheet_rels(sheet: &Worksheet, background: Option<(usize, u32)>) -> Option<String> {
+    if sheet.tables().is_empty()
+        && sheet.hyperlinks().values().all(crate::Url::is_internal)
+        && background.is_none()
+    {
         return None;
     }
 
@@ -596,6 +634,16 @@ fn sheet_rels(sheet: &Worksheet) -> Option<String> {
         )
         .expect("writing to String cannot fail");
     }
+    if let Some((image_index, image_rel_id)) = background {
+        let extension = sheet
+            .background_image()
+            .map_or("png", crate::Image::extension);
+        write!(
+            body,
+            r#"<Relationship Id="rId{image_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image{image_index}.{extension}"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
     body.push_str("</Relationships>");
     Some(body)
 }
@@ -607,12 +655,28 @@ fn content_types(
     has_custom_properties: bool,
     theme: Option<&crate::theme::Theme>,
     table_ids: &[u32],
+    image_types: &[(&str, &str)],
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
         r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#,
         r#"<Default Extension="xml" ContentType="application/xml"/>"#,
+    ));
+    for (index, (extension, content_type)) in image_types.iter().enumerate() {
+        if image_types[..index]
+            .iter()
+            .any(|(known, _)| known == extension)
+        {
+            continue;
+        }
+        write!(
+            body,
+            r#"<Default Extension="{extension}" ContentType="{content_type}"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
+    body.push_str(concat!(
         r#"<Override PartName="/xl/workbook.bin" ContentType="application/vnd.ms-excel.sheet.binary.macroEnabled.main"/>"#,
         r#"<Override PartName="/xl/styles.bin" ContentType="application/vnd.ms-excel.styles"/>"#,
     ));
@@ -1167,17 +1231,18 @@ mod tests {
         Bold, BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
         BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
-        BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
-        BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFmlaBool,
-        BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtListTrFmla,
-        BrtName, BrtRowHdr, BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp,
-        BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
-        CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
-        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
-        CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
-        CF_TEMPLATE_TIME_PERIOD_TODAY, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS,
-        CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
-        CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
+        BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString,
+        BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter,
+        BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart,
+        BrtListTrFmla, BrtName, BrtRowHdr, BrtSheetProtection, BrtSparkline, BrtTableStyleClient,
+        BrtWbProp, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS,
+        CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
+        CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER,
+        CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+        CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
+        CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
+        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
+        CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -4345,6 +4410,64 @@ mod tests {
 
         let bytes = workbook.save_to_buffer().expect("saves");
         assert_eq!(read_u16(&bytes, 8).expect("method"), 0);
+    }
+
+    #[test]
+    fn background_image_emits_media_part_and_relationship() {
+        const PNG: &[u8] = b"\x89PNG\r\n\x1a\nbackground";
+        const JPEG: &[u8] = b"\xFF\xD8\xFF\xE0background";
+        let image = crate::Image::new_from_buffer(PNG).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.add_table(2, 0, 4, 0, &Table::new()).expect("table");
+        sheet
+            .write_url(0, 0, "https://example.com")
+            .expect("hyperlink");
+        sheet.insert_background_image(&image);
+
+        let jpeg = crate::Image::new_from_buffer(JPEG).expect("jpeg");
+        workbook.add_worksheet().insert_background_image(&jpeg);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert_eq!(
+            part_bytes(&bytes, "xl/media/image1.png").expect("media part"),
+            PNG
+        );
+        assert_eq!(
+            part_bytes(&bytes, "xl/media/image2.jpg").expect("jpeg media part"),
+            JPEG
+        );
+
+        let sheet_bytes = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("worksheet part");
+        let background = records::<BrtBkHim>(&sheet_bytes);
+        assert_eq!(background.len(), 1);
+        assert_eq!(
+            background[0].rgb.to_optional_string().as_deref(),
+            Some("rId3")
+        );
+        let ids = record_ids(&sheet_bytes);
+        let background_index = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBkHim)
+            .expect("background record");
+        let list_index = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBeginListParts)
+            .expect("list part record");
+        assert!(background_index < list_index);
+
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(r#"Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png""#));
+        assert_eq!(rels.matches(r#"Id="rId3""#).count(), 1);
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(r#"<Default Extension="png" ContentType="image/png"/>"#));
+        assert!(content_types.contains(r#"<Default Extension="jpg" ContentType="image/jpeg"/>"#));
     }
 
     #[test]

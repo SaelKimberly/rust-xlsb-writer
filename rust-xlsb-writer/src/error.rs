@@ -112,6 +112,10 @@ pub enum Error {
     /// A sparkline definition or range is invalid.
     #[error("sparkline error: {0}")]
     SparklineError(String),
+
+    /// An image is unsupported or cannot be read.
+    #[error("image error: {0}")]
+    ImageError(String),
 }
 
 /// Writer result type.

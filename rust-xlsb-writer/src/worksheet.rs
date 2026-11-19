@@ -17,7 +17,7 @@ use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, ha
 use crate::range_list::RangeList;
 use crate::sparkline::{Sparkline, SparklineCell, SparklineGroup, SparklineRange};
 use crate::table::{Table, TableFunction, TableRange};
-use crate::{Color, Error, Format, Result, Url};
+use crate::{Color, Error, Format, Image, Result, Url};
 
 pub const MAX_ROW: u32 = 1_048_575;
 pub const MAX_COL: u16 = 16_383;
@@ -341,6 +341,7 @@ pub struct Worksheet {
     data_validations: Vec<DataValidationRange>,
     tables: Vec<TableRange>,
     sparkline_groups: Vec<SparklineGroup>,
+    background_image: Option<Image>,
     max_autofit_row: RowNum,
     max_autofit_width: u32,
 }
@@ -416,6 +417,7 @@ impl Worksheet {
             data_validations: Vec::new(),
             tables: Vec::new(),
             sparkline_groups: Vec::new(),
+            background_image: None,
             max_autofit_row: MAX_ROW,
             max_autofit_width: MAX_AUTOFIT_WIDTH_PIXELS,
         }
@@ -3247,6 +3249,16 @@ impl Worksheet {
         }
     }
 
+    /// Sets the worksheet background image.
+    ///
+    /// The image is written to the package as `xl/media/imageN.<ext>` and
+    /// referenced from the worksheet. Replacing it before saving keeps only the
+    /// last image.
+    pub fn insert_background_image(&mut self, image: &Image) -> &mut Self {
+        self.background_image = Some(image.clone());
+        self
+    }
+
     /// Merges a rectangular range and writes a string into its top-left cell.
     ///
     /// The rest of the range becomes formatted blanks. Overlapping ranges and
@@ -3394,6 +3406,10 @@ impl Worksheet {
 
     pub(crate) fn conditional_formats(&self) -> &[ConditionalFormatRange] {
         &self.conditional_formats
+    }
+
+    pub(crate) const fn background_image(&self) -> Option<&Image> {
+        self.background_image.as_ref()
     }
 
     pub(crate) const fn has_rich_strings(&self) -> bool {

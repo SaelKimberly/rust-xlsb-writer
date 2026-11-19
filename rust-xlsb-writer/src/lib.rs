@@ -34,6 +34,7 @@ mod error;
 mod filter;
 mod format;
 mod formula;
+mod image;
 mod package;
 mod properties;
 mod protection;
@@ -70,6 +71,7 @@ pub use format::{
     FormatScript, FormatUnderline,
 };
 pub use formula::Formula;
+pub use image::Image;
 pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
 pub use sparkline::{ChartEmptyCells, Sparkline, SparklineRange, SparklineType};

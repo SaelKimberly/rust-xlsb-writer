@@ -13,10 +13,10 @@ pub use record::{
     BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar,
     BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginIconSet, BrtBeginList,
     BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginRwBrk, BrtBeginSparklineGroup,
-    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh,
-    BrtCFVO, BrtCalcProp, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
-    BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter,
-    BrtDVal, BrtDXF, BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale,
+    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBkHim, BrtBookView, BrtBorder, BrtBrk,
+    BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC,
+    BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor,
+    BrtCustomFilter, BrtDVal, BrtDXF, BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale,
     BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar,
     BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
     BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSparklineGroup, BrtEndSst,
@@ -120,6 +120,7 @@ mod tests {
     #[case::xti(|| checked_test::<Xti>(12))]
     #[case::brt_sup_self(|| checked_test::<BrtSupSelf>(0))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
+    #[case::brt_bk_him(|| checked_test::<BrtBkHim>(4))]
     #[case::xf_prop(|| checked_test::<XFProp>(4))]
     #[case::xf_props(|| checked_test::<XFProps>(4))]
     #[case::brt_dxf(|| checked_test::<BrtDXF>(6))]

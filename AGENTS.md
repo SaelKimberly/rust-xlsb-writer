@@ -23,8 +23,8 @@ data validation with multi-range, list, whole-number, decimal, date, time, and
 text-length rules, worksheet tables with header rows, built-in styles, table
 AutoFilters, total rows, subtotal/label columns, data/header formats,
 calculated-column formulas, table filter conditions, sparkline groups with
-line/column/win-loss styles and cross-sheet data ranges, rich strings with
-per-run fonts, core/app/custom document properties with explicit creation
+line/column/win-loss styles and cross-sheet data ranges, worksheet background
+images, rich strings with per-run fonts, core/app/custom document properties with explicit creation
 timestamps,
 user-defined names for literals, A1 references, and expression formulas with
 same-workbook sheet and worksheet-range references, and
@@ -216,9 +216,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 711 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 718 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 715 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 722 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -313,6 +313,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/structure/rich_str.rs` | `RichStr`, `StrRun`, `PhRun`, and run validation |
 | `rust-xlsb-core/src/prelude/structure/frt.rs` | Future-record header, sqref, formula, and product-version payloads |
 | `rust-xlsb-core/src/prelude/record/brt_sparkline.rs` | Sparkline group and per-sparkline FRT records |
+| `rust-xlsb-core/src/prelude/record/brt_bk_him.rs` | Background-image relationship record |
 | `rust-xlsb-core/src/prelude/record/brt_frt.rs` | `BrtFRTBegin`/`BrtFRTEnd` future-record wrappers |
 | `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, defined names, document properties, theme/default-format selection, save entry points |
 | `rust-xlsb-writer/src/theme.rs` | Excel 2023 and custom theme selection, `.thmx`/`.xlsx` theme extraction, and `theme_2023.xml` asset |
@@ -329,9 +330,10 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/data_validation.rs` | Data-validation rules, prompt/error options, and `BrtDVal` encoding |
 | `rust-xlsb-writer/src/table.rs` | `Table`/`TableColumn`/`TableFunction`/`TableStyle`, total-row, calculated-formula, and format handling, validation, and Table part serialization |
 | `rust-xlsb-writer/src/conditional_format.rs` | Conditional-format trait, cell/top-bottom/average/duplicate/color-scale/data-bar/icon-set/text/blank/error/date rules, values, formula tokens, and range storage |
-| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, rich cells, autofilter, conditional-format/filter/validation/list-part/sparkline records, print records |
+| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, rich cells, autofilter, conditional-format/filter/validation/list-part/sparkline/background records, print records |
 | `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, Xti allocation, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
 | `rust-xlsb-writer/src/sparkline.rs` | Sparkline values, range validation, and grouped range expansion |
+| `rust-xlsb-writer/src/image.rs` | Background-image input, magic-byte type detection, and shared image bytes |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
 | `rust-xlsb-writer/examples/showcase.rs` | Public-API showcase with row bands, fills, alignment, borders, temporal formats |
@@ -371,9 +373,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 711 unit tests and 7 doctests in default builds: 302 in core, 409 in writer.
+- 718 unit tests and 7 doctests in default builds: 304 in core, 414 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 715 total. Most core
+  `rust_decimal` adapters, for 722 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

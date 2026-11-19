@@ -35,8 +35,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    conditions, `AutoFilter` ranges, list/custom filter conditions with
    temporal and boolean matching, literal and formula-backed
    multi-range data validation, and structural sheet protection are present.
-4. **Rich objects** — no images, charts, notes, shapes, buttons, or checkboxes;
-   sparkline groups are supported.
+4. **Rich objects** — worksheet background images and sparkline groups are
+   supported; foreground images, charts, notes, shapes, buttons, and
+   checkboxes are missing.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
    user-defined names, the Excel 2023 theme, and custom theme files are
    available, but chartsheets and VBA are missing; core/app/custom document
@@ -72,7 +73,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 302 core + 409 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose sparkline read-back |
+| Verification | 304 core + 414 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose sparkline read-back |
 
 ## 3. Capability Matrix
 
@@ -197,7 +198,7 @@ Status meanings:
 |---|---|---|
 | `merge_range` | Supported | — |
 | `insert_image`, `embed_image`, image offsets/fit-to-cell | Missing | Drawing/image parts |
-| `insert_background_image` | Missing | Worksheet background |
+| `insert_background_image` | Supported | PNG/JPEG/GIF/24-bit BMP media part and worksheet relationship |
 | `insert_chart`, `insert_chart_with_offset` | Missing | Chart parts |
 | `insert_note` | Missing | Comments/notes |
 | `insert_shape`, `insert_shape_with_offset` | Missing | Drawing shapes |
@@ -296,7 +297,7 @@ records or package parts that do not exist yet.
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, automatic worksheet and table row hiding; icon/top-10/dynamic filter records remain |
 | Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
 | Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
-| Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
+| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground drawings still need drawing parts, anchors, and chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Sparklines | Shipped `BrtBeginSparklineGroup`/`BrtSparkline` FRT records, grouped rows/columns, and `Xti` data-range formulas |
 | Notes | Comment/note parts and VML/drawing linkage |
@@ -390,7 +391,7 @@ page layout; record-level tests cover print/view records.
 | Shapes/textboxes, buttons, checkboxes | Form-like sheets | L |
 | Charts | Dashboards | XL |
 | Sparklines ✅ | Compact trend display | M |
-| Background image | Presentation | M |
+| Background image ✅ | Presentation | M |
 
 **Exit criteria:** each object opens in LibreOffice/Excel; relationships and
 media parts are present; no orphaned parts; visual render reviewed.
@@ -452,7 +453,7 @@ dynamic-array support, which needs a metadata part and spill-state design:
 3. Shared-formula state if the reference API requires it.
 
 If formulas are deferred, the next bounded gaps are rich objects: notes,
-shapes, buttons, checkboxes, images, and charts. Hyperlinks,
+shapes, buttons, checkboxes, foreground images, and charts. Hyperlinks,
 worksheet state, page setup, text headers/footers, manual page breaks, outline
 groups, print areas, repeat titles, and approximate autofit are shipped.
 
@@ -466,7 +467,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 302 core + 409 writer unit tests and 7 doctests in default
+- Test evidence: 304 core + 414 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
