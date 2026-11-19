@@ -93,6 +93,30 @@ fn formulas_roundtrip_cached_results() {
 }
 
 #[test]
+fn array_formula_cached_result_roundtrips() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write(0, 1, 500).expect("number");
+    sheet.write(0, 2, 300).expect("number");
+    sheet.write(1, 1, 10).expect("number");
+    sheet.write(1, 2, 15).expect("number");
+    sheet
+        .write_array_formula(
+            0,
+            0,
+            1,
+            0,
+            Formula::new("{=SUM(B1:C1*B2:C2)}").set_result("9500"),
+        )
+        .expect("array formula");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::Float(9500.0)));
+    assert_eq!(range.get((1, 0)), Some(&Data::Int(0)));
+}
+
+#[test]
 fn compressed_workbook_roundtrips() {
     let mut workbook = Workbook::new();
     workbook.set_zip_compression_level(6);

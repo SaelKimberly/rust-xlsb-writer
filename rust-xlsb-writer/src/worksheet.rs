@@ -6,7 +6,8 @@ use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::conditional_format::{ConditionalFormat, ConditionalFormatRange};
 use crate::data::{
-    CellData, FormulaCell, FormulaResult, IntoExcelData, IntoExcelDateTime, RichRun, RichString,
+    ArrayFormulaCell, CellData, FormulaCell, FormulaResult, IntoExcelData, IntoExcelDateTime,
+    RichRun, RichString,
 };
 use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
@@ -911,9 +912,63 @@ impl Worksheet {
         self.store_formula(row, col, formula.into(), Some(format))
     }
 
+    /// Writes a static array formula to a range.
+    ///
+    /// The range must contain the cells that receive the array result. The
+    /// top-left cell stores the cached result; the remaining cells are filled
+    /// with numeric zero. A leading `=` and surrounding `{}` are optional.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when a range endpoint is out of
+    /// range, [`Error::RowColumnOrder`] when the first endpoint follows the
+    /// last, or [`Error::FormulaError`] when the formula is malformed.
+    pub fn write_array_formula(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        formula: impl Into<Formula>,
+    ) -> Result<&mut Self> {
+        self.store_array_formula(
+            first_row,
+            first_col,
+            last_row,
+            last_col,
+            formula.into(),
+            None,
+        )
+    }
+
+    /// Writes a formatted static array formula to a range.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_array_formula`].
+    pub fn write_array_formula_with_format(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        formula: impl Into<Formula>,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        self.store_array_formula(
+            first_row,
+            first_col,
+            last_row,
+            last_col,
+            formula.into(),
+            Some(format),
+        )
+    }
+
     /// Replaces the cached result of an existing formula cell.
     ///
-    /// Non-formula cells and empty cells are ignored.
+    /// Scalar and array formulas are updated; non-formula cells and empty
+    /// cells are ignored.
     pub fn set_formula_result(
         &mut self,
         row: RowNum,
@@ -924,9 +979,10 @@ impl Worksheet {
             .cells
             .get_mut(&row)
             .and_then(|cells| cells.get_mut(&col))
-            && let CellData::Formula(formula) = &mut cell.data
+            && let CellData::Formula(FormulaCell { result: cached, .. })
+            | CellData::ArrayFormula(ArrayFormulaCell { result: cached, .. }) = &mut cell.data
         {
-            formula.result = cached_result(&result.into());
+            *cached = cached_result(&result.into());
         }
         self
     }
@@ -963,6 +1019,65 @@ impl Worksheet {
             CellData::Formula(FormulaCell { formula, result }),
             format,
         )?;
+        Ok(self)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the public range API mirrors the reference signature"
+    )]
+    pub(crate) fn store_array_formula(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        formula: Formula,
+        format: Option<&Format>,
+    ) -> Result<&mut Self> {
+        Self::check_row(first_row)?;
+        Self::check_col(first_col)?;
+        Self::check_row(last_row)?;
+        Self::check_col(last_col)?;
+        if first_row > last_row || first_col > last_col {
+            return Err(Error::RowColumnOrder);
+        }
+
+        let (text, result) = formula.into_parts();
+        let result = result.as_deref().map_or_else(
+            || cached_result(&self.default_formula_result),
+            cached_result,
+        );
+        if result_is_too_long(&result) {
+            return Err(Error::StringTooLong);
+        }
+
+        let formula = compile(&text)?;
+        let format = format.map(|format| self.intern_format(format));
+        self.store_with_index(
+            first_row,
+            first_col,
+            CellData::ArrayFormula(ArrayFormulaCell {
+                formula,
+                range: UncheckedRfX {
+                    rwFirst: first_row,
+                    rwLast: last_row,
+                    colFirst: u32::from(first_col),
+                    colLast: u32::from(last_col),
+                },
+                result,
+            }),
+            format,
+        )?;
+
+        for row in first_row..=last_row {
+            for col in first_col..=last_col {
+                if row == first_row && col == first_col {
+                    continue;
+                }
+                self.store_with_index(row, col, CellData::Number(0.0), format)?;
+            }
+        }
         Ok(self)
     }
 
@@ -3021,7 +3136,7 @@ impl Worksheet {
     pub(crate) fn has_formulas(&self) -> bool {
         self.cells.values().any(|row| {
             row.values()
-                .any(|cell| matches!(&cell.data, CellData::Formula(_)))
+                .any(|cell| matches!(&cell.data, CellData::Formula(_) | CellData::ArrayFormula(_)))
         })
     }
 
@@ -3300,19 +3415,24 @@ pub(crate) fn pixels_to_width(pixels: u32) -> f64 {
     }
 }
 
+fn formula_result_width(result: &FormulaResult) -> u32 {
+    match result {
+        FormulaResult::Number(value) => 7 * display_len(*value),
+        FormulaResult::String(text) => text.lines().map(pixel_width).max().unwrap_or(0),
+        FormulaResult::Bool(true) => 31,
+        FormulaResult::Bool(false) => 36,
+        FormulaResult::Error(_) => 0,
+    }
+}
+
 fn autofit_cell_width(data: &CellData) -> u32 {
     match data {
         CellData::String(text) => text.lines().map(pixel_width).max().unwrap_or(0),
         CellData::RichString(rich) => rich.text.lines().map(pixel_width).max().unwrap_or(0),
         CellData::Integer(value) => 7 * integer_digits(*value) + if *value < 0 { 7 } else { 0 },
         CellData::Number(value) => 7 * display_len(*value),
-        CellData::Formula(formula) => match &formula.result {
-            FormulaResult::Number(value) => 7 * display_len(*value),
-            FormulaResult::String(text) => text.lines().map(pixel_width).max().unwrap_or(0),
-            FormulaResult::Bool(true) => 31,
-            FormulaResult::Bool(false) => 36,
-            FormulaResult::Error(_) => 0,
-        },
+        CellData::Formula(formula) => formula_result_width(&formula.result),
+        CellData::ArrayFormula(formula) => formula_result_width(&formula.result),
         CellData::Bool(true) => 31,
         CellData::Bool(false) => 36,
         CellData::Date(_)
@@ -3460,6 +3580,120 @@ mod tests {
                 .map(|cell| (&cell.data, cell.format)),
             Some((&CellData::String("hello".to_owned()), Some(0)))
         );
+    }
+
+    #[test]
+    fn array_formula_owns_the_range_and_fills_zero_cells() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .write_array_formula(1, 1, 2, 2, "{=SUM(A1:B2)}")
+            .expect("array formula");
+
+        let cell = worksheet
+            .cells()
+            .get(&1)
+            .and_then(|row| row.get(&1))
+            .expect("top-left cell");
+        let CellData::ArrayFormula(formula) = &cell.data else {
+            panic!("array formula cell");
+        };
+        assert_eq!(formula.range.rwFirst, 1);
+        assert_eq!(formula.range.rwLast, 2);
+        assert_eq!(formula.range.colFirst, 1);
+        assert_eq!(formula.range.colLast, 2);
+        assert_eq!(formula.result, FormulaResult::Number(0.0));
+        assert_eq!(
+            formula.formula.rgce,
+            [
+                0x45, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0xC0, 1, 0xC0, 0x42, 1, 4, 0
+            ]
+        );
+
+        for row in 1..=2 {
+            for col in 1..=2 {
+                if row == 1 && col == 1 {
+                    continue;
+                }
+                assert_eq!(
+                    worksheet
+                        .cells()
+                        .get(&row)
+                        .and_then(|cells| cells.get(&col))
+                        .map(|cell| &cell.data),
+                    Some(&CellData::Number(0.0))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn array_formula_applies_the_range_format() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .write_array_formula_with_format(
+                0,
+                0,
+                0,
+                1,
+                Formula::new("=1+1").set_result("2"),
+                &Format::new().set_bold(),
+            )
+            .expect("array formula");
+
+        let top_left = worksheet
+            .cells()
+            .get(&0)
+            .and_then(|row| row.get(&0))
+            .expect("top-left");
+        let CellData::ArrayFormula(formula) = &top_left.data else {
+            panic!("array formula cell");
+        };
+        assert_eq!(formula.result, FormulaResult::Number(2.0));
+        assert_eq!(top_left.format, Some(0));
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&1))
+                .and_then(|cell| cell.format),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn array_formula_cached_result_can_be_replaced() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet
+            .write_array_formula(0, 0, 1, 0, "=1+1")
+            .expect("array formula")
+            .set_formula_result(0, 0, "2");
+
+        let cell = worksheet
+            .cells()
+            .get(&0)
+            .and_then(|row| row.get(&0))
+            .expect("top-left");
+        let CellData::ArrayFormula(formula) = &cell.data else {
+            panic!("array formula cell");
+        };
+        assert_eq!(formula.result, FormulaResult::Number(2.0));
+    }
+
+    #[test]
+    fn array_formula_rejects_inverted_and_malformed_ranges() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.write_array_formula(1, 0, 0, 1, "=1+1"),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.write_array_formula(0, 1, 1, 0, "=1+1"),
+            Err(Error::RowColumnOrder)
+        ));
+        assert!(matches!(
+            worksheet.write_array_formula(0, 0, 0, 0, "=NOPE(1)"),
+            Err(Error::FormulaError(_))
+        ));
     }
 
     #[test]

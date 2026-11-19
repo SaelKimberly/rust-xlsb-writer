@@ -9,7 +9,7 @@ use super::{Checked, Unchecked};
 
 pub use collection::*;
 pub use record::{
-    BrtBeginAFilter, BrtBeginCFRule, BrtBeginColBrk, BrtBeginColorScale,
+    BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginColBrk, BrtBeginColorScale,
     BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar,
     BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginIconSet, BrtBeginList,
     BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst,
@@ -159,6 +159,7 @@ mod tests {
     #[case::brt_end_fmts(|| checked_test::<BrtEndFmts>(0))]
     #[case::brt_cell_isst(|| checked_test::<BrtCellIsst>(12))]
     #[case::cell_parsed_formula(|| checked_test::<CellParsedFormula>(11))]
+    #[case::brt_arr_fmla(|| checked_test::<BrtArrFmla>(28))]
     #[case::brt_fmla_bool(|| checked_test::<BrtFmlaBool>(22))]
     #[case::brt_fmla_error(|| checked_test::<BrtFmlaError>(22))]
     #[case::brt_fmla_num(|| checked_test::<BrtFmlaNum>(29))]

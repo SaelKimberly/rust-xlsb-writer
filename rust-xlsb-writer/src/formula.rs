@@ -5,6 +5,7 @@ use rust_xlsb_core::prelude::{BErr, CellParsedFormula};
 use crate::data::{FormulaResult, IntoExcelData};
 use crate::{Error, Format, Result, Worksheet};
 
+const PTG_EXP: u8 = 0x01;
 const PTG_ADD: u8 = 0x03;
 const PTG_SUB: u8 = 0x04;
 const PTG_MUL: u8 = 0x05;
@@ -42,8 +43,9 @@ const MAX_STRING_UTF16: usize = 32_767;
 /// The formula is parsed when it is written. Strings use US-English Excel
 /// syntax and a comma argument separator. A leading `=` and surrounding array
 /// braces are optional. Supported references are same-sheet A1 cells and
-/// ranges; cross-sheet references, defined names, array formulas, and dynamic
-/// array functions are rejected.
+/// ranges. Scalar writes reject cross-sheet references, defined names, and
+/// dynamic-array functions; static array formulas use
+/// [`Worksheet::write_array_formula`].
 #[derive(Clone, PartialEq, Eq)]
 pub struct Formula {
     formula: Box<str>,
@@ -160,6 +162,20 @@ pub fn compile(formula: &str) -> Result<CellParsedFormula> {
         cb: 0,
         rgcb: Vec::new(),
     })
+}
+
+/// Builds the top-left cell formula that points at an array formula record.
+pub fn array_expansion(row: u32, col: u16) -> CellParsedFormula {
+    let mut rgce = Vec::with_capacity(5);
+    rgce.push(PTG_EXP);
+    rgce.extend_from_slice(&row.to_le_bytes());
+
+    CellParsedFormula {
+        cce: 5,
+        rgce,
+        cb: 4,
+        rgcb: u32::from(col).to_le_bytes().to_vec(),
+    }
 }
 
 pub fn cached_result(value: &str) -> FormulaResult {
@@ -843,6 +859,15 @@ mod tests {
 
     fn tokens(formula: &str) -> Vec<u8> {
         compile(formula).expect("formula compiles").rgce
+    }
+
+    #[test]
+    fn array_expansion_uses_the_top_left_cell() {
+        let formula = array_expansion(7, 3);
+        assert_eq!(formula.cce, 5);
+        assert_eq!(formula.rgce, [PTG_EXP, 7, 0, 0, 0]);
+        assert_eq!(formula.cb, 4);
+        assert_eq!(formula.rgcb, 3_u32.to_le_bytes());
     }
 
     #[test]

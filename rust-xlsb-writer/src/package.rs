@@ -1078,7 +1078,7 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        Bold, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
+        Bold, BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
         BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
         BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
@@ -3189,6 +3189,62 @@ mod tests {
         assert_eq!(calc[0].fAutoRecalc, 1);
         assert!(calc[0].fFullCalcOnLoad);
         assert!(calc[0].fSaveRecalc);
+    }
+
+    #[test]
+    fn array_formulas_emit_an_expansion_formula_and_range_record() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write(0, 1, 500).expect("number");
+        worksheet.write(0, 2, 300).expect("number");
+        worksheet.write(1, 1, 10).expect("number");
+        worksheet.write(1, 2, 15).expect("number");
+        worksheet
+            .write_array_formula(
+                0,
+                0,
+                1,
+                0,
+                crate::Formula::new("{=SUM(B1:C1*B2:C2)}").set_result("9500"),
+            )
+            .expect("array formula");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let arrays = records::<BrtArrFmla>(&sheet);
+        assert_eq!(arrays.len(), 1);
+        assert_eq!(
+            arrays[0].rfx,
+            rust_xlsb_core::prelude::UncheckedRfX {
+                rwFirst: 0,
+                rwLast: 1,
+                colFirst: 0,
+                colLast: 0,
+            }
+        );
+        assert!(arrays[0].fAlwaysCalc);
+        assert_eq!(arrays[0].formula.cce, 31);
+
+        let numbers = records::<BrtFmlaNum>(&sheet);
+        assert_eq!(numbers.len(), 1);
+        assert_eq!(*numbers[0].xnum, 9500.0);
+        assert_eq!(numbers[0].formula.rgce, [0x01, 0, 0, 0, 0]);
+        assert_eq!(numbers[0].formula.rgcb, [0, 0, 0, 0]);
+
+        let mut reader = BufReader::new(sheet.as_slice());
+        let mut previous = None;
+        let mut followed_by_array = false;
+        while let Ok((head, _)) = BiffHead::read_from_with_data(&mut reader) {
+            if head.known_id() == Some(KnownID::BrtArrFmla) && previous == Some(KnownID::BrtFmlaNum)
+            {
+                followed_by_array = true;
+            }
+            previous = head.known_id();
+        }
+        assert!(followed_by_array);
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        assert_eq!(records::<BrtCalcProp>(&workbook_part).len(), 1);
     }
 
     #[test]

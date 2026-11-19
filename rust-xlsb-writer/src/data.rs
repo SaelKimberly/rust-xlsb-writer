@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 #[cfg(feature = "rust_decimal")]
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-use rust_xlsb_core::prelude::{BErr, BrtFont, CellParsedFormula};
+use rust_xlsb_core::prelude::{BErr, BrtFont, CellParsedFormula, UncheckedRfX};
 
 use crate::{Error, ExcelDateTime, Format, Result, Worksheet};
 
@@ -34,6 +34,15 @@ pub struct FormulaCell {
     pub(crate) result: FormulaResult,
 }
 
+/// A static array formula and the range it owns.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayFormulaCell {
+    pub(crate) formula: CellParsedFormula,
+    pub(crate) range: UncheckedRfX,
+    pub(crate) result: FormulaResult,
+}
+
 /// Cached value stored with a formula cell.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +60,7 @@ pub enum CellData {
     Bool(bool),
     Error(BErr),
     Formula(FormulaCell),
+    ArrayFormula(ArrayFormulaCell),
     Integer(i64),
     Number(f64),
     String(String),

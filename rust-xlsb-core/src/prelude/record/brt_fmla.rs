@@ -7,7 +7,7 @@ use deku::{DekuRead, DekuWrite};
 
 use crate::Checked;
 use crate::assign_id;
-use crate::prelude::{BErr, Cell, XlWideString, Xnum};
+use crate::prelude::{BErr, Cell, UncheckedRfX, XlWideString, Xnum};
 
 /// `2.5.98.4`
 #[derive(DekuRead, DekuWrite, Clone, Debug, PartialEq, Eq, Hash)]
@@ -46,6 +46,30 @@ impl Checked for CellParsedFormula {
         Ok(())
     }
 }
+
+/// `2.5.98.1`
+///
+/// The array formula payload has the same layout as [`CellParsedFormula`] but
+/// must not contain `PtgExp`, `PtgRefN`, `PtgAreaN`, or `PtgSxName`.
+pub type ArrayParsedFormula = CellParsedFormula;
+
+/// `2.4.6`
+#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
+pub struct BrtArrFmla {
+    pub rfx: UncheckedRfX,
+    #[deku(bit_order = "lsb", bits = 1, pad_bits_after = "7")]
+    pub fAlwaysCalc: bool,
+    pub formula: ArrayParsedFormula,
+}
+
+impl Checked for BrtArrFmla {
+    fn check(&self) -> Result<(), &'static str> {
+        self.rfx.check()?;
+        self.formula.check()
+    }
+}
+
+assign_id!(BrtArrFmla);
 
 fn check_cell_formula(cell: &Cell, formula: &CellParsedFormula) -> Result<(), &'static str> {
     cell.check_range()?;
@@ -198,8 +222,43 @@ mod tests {
             cell: Cell::default(),
             bError: BErr::Div0,
             grbitFlags: 0,
+            formula: formula.clone(),
+        });
+        roundtrip(&BrtArrFmla {
+            rfx: UncheckedRfX {
+                rwFirst: 0,
+                rwLast: 1,
+                colFirst: 0,
+                colLast: 1,
+            },
+            fAlwaysCalc: true,
             formula,
         });
+    }
+
+    #[test]
+    fn array_formula_flag_is_the_low_bit_after_the_range() {
+        let bytes = BrtArrFmla {
+            fAlwaysCalc: true,
+            ..BrtArrFmla::default()
+        }
+        .to_bytes()
+        .expect("serializes");
+        assert_eq!(bytes[16], 0x01);
+        assert_eq!(bytes.len(), 28);
+    }
+
+    #[test]
+    fn array_formula_rejects_an_inverted_range() {
+        let record = BrtArrFmla {
+            rfx: UncheckedRfX {
+                rwFirst: 2,
+                rwLast: 1,
+                ..UncheckedRfX::default()
+            },
+            ..BrtArrFmla::default()
+        };
+        assert!(record.check().is_err());
     }
 
     #[test]

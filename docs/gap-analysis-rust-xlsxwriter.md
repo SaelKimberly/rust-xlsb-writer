@@ -19,9 +19,9 @@ document properties with explicit creation timestamps.
 
 It is not a feature-equivalent replacement. The largest gaps are:
 
-1. **Formulas** — scalar formulas, cached results, and same-sheet references
-   are supported; array, dynamic-array, shared, table, external, cross-sheet,
-   and named-range formulas are missing.
+1. **Formulas** — scalar and static array formulas, cached results, and
+   same-sheet references are supported; dynamic-array, shared, table, external,
+   cross-sheet, and named-range formulas are missing.
 2. **Worksheet layout and view** — user-defined names support literals and
    absolute A1 references only; arbitrary formulas are missing.
 3. **Analysis features** — conditional formats cover cell-value comparisons,
@@ -68,7 +68,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, and formula errors |
-| Verification | 281 core + 323 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 284 core + 330 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -116,8 +116,9 @@ Status meanings:
 | `write_string`, `write_number`, `write_boolean`, `write_blank` | Supported | — |
 | `write_datetime`, `write_date_with_format`, `write_time_with_format` | Supported | Unformatted `write_date`/`write_time` are additive extensions |
 | `write_date`, `write_time` (unformatted) | Supported extension | Not present in `rust_xlsxwriter` |
-| `write_formula`, `write_formula_with_format` | Supported | Same-sheet A1 references, ranges, operators, and classic functions; cross-sheet/named/array syntax rejected |
-| `write_array_formula`, `write_dynamic_array_formula` | Missing | Array/dynamic formula records |
+| `write_formula`, `write_formula_with_format` | Supported | Same-sheet A1 references, ranges, operators, and classic functions; cross-sheet/named syntax rejected |
+| `write_array_formula`, `write_array_formula_with_format` | Supported | Static same-sheet array formula records and range zero-fill |
+| `write_dynamic_array_formula`, `write_dynamic_array_formula_with_format` | Missing | Dynamic-array metadata part |
 | `write_dynamic_formula` | Missing | Dynamic formula records |
 | `write_rich_string` | Supported | `BrtCellRString` plus font-run indexes |
 | `write_url`, `write_url_with_text`, `write_url_with_options` | Supported | `BrtHLink` plus worksheet relationships |
@@ -271,7 +272,7 @@ These are not necessarily missing features, but they matter for ports.
 | `IntoExcelDateTime` | `to_excel_serial_date(&self) -> f64` | `into_cell_data(self) -> Result<CellData>` |
 | `CellData` | internal | public but `#[doc(hidden)]` because it appears in a public trait signature |
 | Rich strings | supported | supported; run fonts only |
-| Formulas | supported | scalar supported; arrays, shared, dynamic, cross-sheet, and names missing |
+| Formulas | supported | scalar and static arrays supported; shared, dynamic, cross-sheet, and names missing |
 | Row/column writes | formatted and unformatted variants | both variants |
 | Worksheet collection | full mutable/immutable access | index, exact-name, and collection access |
 | Memory modes | constant/low-memory | cell-retaining in-memory model |
@@ -284,7 +285,7 @@ records or package parts that do not exist yet.
 
 | Feature area | Missing implementation |
 |---|---|
-| Formulas | Shipped scalar token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError` records, cached results, and recalculation-on-load; array/shared/dynamic state remains |
+| Formulas | Shipped scalar token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError` records, cached results, recalculation-on-load, and static `BrtArrFmla` with `PtgExp` expansion; shared/dynamic state remains |
 | Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
 | Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
 | Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, and table AutoFilter ranges; totals, calculated columns, and per-column formats remain |
@@ -323,18 +324,19 @@ objects.
 | Default row height, sheet visibility, tab color | Open | Basic worksheet state | S–M |
 | `set_freeze_panes`, `set_selection`, `set_top_left_cell` | ✅ | Basic view usability | S–M |
 | `set_cell_format`, `set_range_format`, `clear_cell`, `clear_cell_format` | ✅ P0a | Format-only edits without rewriting values | S–M |
-| `write_formula` + `set_formula_result` | ✅ Partial | Scalar formulas, cached results, and same-sheet references; cross-sheet/named/array syntax rejected | L |
-| `write_array_formula` / dynamic formulas | Open | Common Excel 365 reporting | L |
+| `write_formula` + `set_formula_result` | ✅ Partial | Scalar formulas, cached results, and same-sheet references; cross-sheet/named syntax rejected | L |
+| `write_array_formula` | ✅ Partial | Static same-sheet array ranges and cached results; dynamic arrays remain | L |
+| Dynamic formulas | Open | Dynamic-array metadata and spill support | L |
 
 **P0a status:** shipped `Result<T,E>`, formatted row/column writes, row/column
 matrices, cell/range format edits, clear operations, hidden rows/columns, and
 the format-only parity setters. **Merge status:** `merge_range` and the three
 MS-XLSB merge records are shipped. **View status:** freeze panes, frozen-pane top cell, selection,
 top-left cell, zoom, display flags, pixel-unit layout setters, and the
-`WSVIEWS2` records are shipped. **P0b status:** scalar formulas, cached
-results, same-sheet references, and recalculation-on-load are shipped; array,
-dynamic, shared, cross-sheet, and named formulas remain. Hyperlinks and
-worksheet state are shipped.
+`WSVIEWS2` records are shipped. **P0b status:** scalar and static array
+formulas, cached results, same-sheet references, and recalculation-on-load are
+shipped; dynamic, shared, cross-sheet, and named formulas remain. Hyperlinks
+and worksheet state are shipped.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
 cached results where supported; record-level tests assert formula/merge/link
@@ -437,12 +439,11 @@ still deterministic; no cell data loss under streaming.
 
 ## 8. Immediate Recommendation
 
-**P0a and scalar P0b are shipped.** The next formula milestone is array and
-dynamic-array formulas, which need a dedicated range-cell and formula-state
-design:
+**P0a and scalar/static-array P0b are shipped.** The next formula milestone is
+dynamic-array support, which needs a metadata part and spill-state design:
 
-1. Array formula records and range ownership.
-2. Dynamic-array spill metadata.
+1. Dynamic-array metadata records and content types.
+2. Dynamic-array spill metadata and recalculation state.
 3. Shared-formula state if the reference API requires it.
 
 If formulas are deferred, the next bounded gaps are rich objects: notes,
@@ -460,10 +461,12 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 281 core + 323 writer unit tests and 7 doctests in default
+- Test evidence: 284 core + 330 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
-  `rust-xlsb-writer/examples/showcase.rs`.
+  `rust-xlsb-writer/examples/showcase.rs`. LibreOffice imports static array
+  formulas from XLSB, preserves their `ref` ranges, and recalculates the
+  cached results; calamine reads the top-left cached value.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
   rendered freeze. It preserves orientation, page order, margins, print

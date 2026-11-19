@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::{
-    BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
+    BrtArrFmla, BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
     BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet,
     BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
@@ -14,8 +14,8 @@ use rust_xlsb_core::prelude::{
     BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtFmlaBool,
     BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtMargins,
     BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim,
-    BrtWsFmtInfo, BrtWsProp, Cell, HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX,
-    UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, HeaderFooterString, RichStr, StrRun, StrRuns,
+    UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
     conditional_format_block,
 };
 use rust_xlsb_core::{
@@ -24,6 +24,7 @@ use rust_xlsb_core::{
 
 use crate::data::{CellData, FormulaResult};
 use crate::filter::{FilterCriteria, FilterData};
+use crate::formula::array_expansion;
 use crate::worksheet::{ColumnOptions, IgnoreError, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
 
@@ -885,6 +886,57 @@ fn custom_filter(data: &FilterData) -> BrtCustomFilter {
     }
 }
 
+fn push_formula_record(
+    out: &mut Vec<u8>,
+    cell: Cell,
+    formula: &CellParsedFormula,
+    result: &FormulaResult,
+) -> Result<()> {
+    match result {
+        FormulaResult::Number(value) => push(
+            out,
+            &BrtFmlaNum {
+                cell,
+                xnum: Xnum::from(*value),
+                grbitFlags: 0,
+                formula: formula.clone(),
+            },
+        ),
+        FormulaResult::String(text) => {
+            if text.encode_utf16().count() > 32_767 {
+                return Err(Error::StringTooLong);
+            }
+            push(
+                out,
+                &BrtFmlaString {
+                    cell,
+                    value: XlWideString::construct(Some(text.as_ref())),
+                    grbitFlags: 0,
+                    formula: formula.clone(),
+                },
+            )
+        }
+        FormulaResult::Bool(value) => push(
+            out,
+            &BrtFmlaBool {
+                cell,
+                bBool: *value,
+                grbitFlags: 0,
+                formula: formula.clone(),
+            },
+        ),
+        FormulaResult::Error(value) => push(
+            out,
+            &BrtFmlaError {
+                cell,
+                bError: *value,
+                grbitFlags: 0,
+                formula: formula.clone(),
+            },
+        ),
+    }
+}
+
 fn push_cell(
     out: &mut Vec<u8>,
     ctx: &SaveContext<'_>,
@@ -914,49 +966,25 @@ fn push_cell(
                 bError: *value,
             },
         ),
-        CellData::Formula(formula) => match &formula.result {
-            FormulaResult::Number(value) => push(
+        CellData::Formula(formula) => {
+            push_formula_record(out, cell, &formula.formula, &formula.result)
+        }
+        CellData::ArrayFormula(formula) => {
+            let expansion = array_expansion(
+                formula.range.rwFirst,
+                u16::try_from(formula.range.colFirst)
+                    .expect("array formula columns are validated on write"),
+            );
+            push_formula_record(out, cell, &expansion, &formula.result)?;
+            push(
                 out,
-                &BrtFmlaNum {
-                    cell,
-                    xnum: Xnum::from(*value),
-                    grbitFlags: 0,
+                &BrtArrFmla {
+                    rfx: formula.range,
+                    fAlwaysCalc: true,
                     formula: formula.formula.clone(),
                 },
-            ),
-            FormulaResult::String(text) => {
-                if text.encode_utf16().count() > 32_767 {
-                    return Err(Error::StringTooLong);
-                }
-                push(
-                    out,
-                    &BrtFmlaString {
-                        cell,
-                        value: XlWideString::construct(Some(text.as_ref())),
-                        grbitFlags: 0,
-                        formula: formula.formula.clone(),
-                    },
-                )
-            }
-            FormulaResult::Bool(value) => push(
-                out,
-                &BrtFmlaBool {
-                    cell,
-                    bBool: *value,
-                    grbitFlags: 0,
-                    formula: formula.formula.clone(),
-                },
-            ),
-            FormulaResult::Error(value) => push(
-                out,
-                &BrtFmlaError {
-                    cell,
-                    bError: *value,
-                    grbitFlags: 0,
-                    formula: formula.formula.clone(),
-                },
-            ),
-        },
+            )
+        }
         CellData::String(text) => push(
             out,
             &BrtCellIsst {

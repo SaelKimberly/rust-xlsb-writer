@@ -95,7 +95,10 @@ pub use brt_filter::{
     BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters, BrtCustomFilter,
     BrtEndCustomFilters, BrtEndFilterColumn, BrtEndFilters, BrtFilter,
 };
-pub use brt_fmla::{BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, CellParsedFormula};
+pub use brt_fmla::{
+    ArrayParsedFormula, BrtArrFmla, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString,
+    CellParsedFormula,
+};
 pub use brt_fmt::BrtFmt;
 pub use brt_font::BrtFont;
 pub use brt_hlink::BrtHLink;
