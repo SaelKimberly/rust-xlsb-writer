@@ -176,6 +176,12 @@ It found one source-compatibility defect and one test gap:
    record-stream assertion that the array record immediately follows
    `BrtFmlaNum`.
 
+The ABNF question was checked against Excel-generated fixtures because the
+spec dump omits the §2.1.8 `CELLTABLE` production. `xlsb_samples/bug66682.xlsb`
+contains `BrtFmlaError` immediately followed by `BrtArrFmla`, and
+`goal.xlsb` has the same `BrtFmla*`/`BrtArrFmla` adjacency. The emitted sequence
+matches those files and §2.4.6.
+
 ## Risks
 
 - The array form is validated against the spec and LibreOffice, not native
