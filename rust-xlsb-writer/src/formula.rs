@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use rust_xlsb_core::prelude::{BErr, CellParsedFormula};
 
 use crate::data::{FormulaResult, IntoExcelData};
-use crate::defined_name::{XtiCollector, sheet_index};
+use crate::defined_name::{NameTable, XtiCollector, is_name_char, sheet_index};
 use crate::{Error, Format, Result, Worksheet};
 
 const PTG_EXP: u8 = 0x01;
@@ -33,6 +33,7 @@ const PTG_ERR: u8 = 0x1C;
 const PTG_BOOL: u8 = 0x1D;
 const PTG_INT: u8 = 0x1E;
 const PTG_NUM: u8 = 0x1F;
+const PTG_NAME: u8 = 0x23;
 const PTG_REF3D: u8 = 0x3A;
 const PTG_AREA3D: u8 = 0x3B;
 const PTG_FUNC: u8 = 0x41;
@@ -162,16 +163,20 @@ pub fn compile_relative(formula: &str, base_row: u32, base_col: u16) -> Result<C
     compile_with_base(formula, Some((base_row, base_col)), None)
 }
 
-struct NameContext<'a> {
-    sheets: &'a [Worksheet],
-    xti: &'a mut XtiCollector,
+struct NameContext<'s, 'n> {
+    sheets: &'s [Worksheet],
+    xti: &'s mut XtiCollector,
     default_sheet: Option<usize>,
+    names: Option<&'s NameTable<'n>>,
 }
 
-/// Compiles a defined-name formula with same-workbook sheet references.
+/// Compiles a defined-name formula with same-workbook sheet and name
+/// references.
 ///
 /// `default_sheet` resolves unqualified references in a worksheet-scoped name.
-/// Global names pass `None`, so unqualified references are rejected.
+/// Global names pass `None`, so unqualified references are rejected. `names`
+/// supplies the ordered `BrtName` table; passing `None` keeps name references
+/// rejected.
 #[expect(
     clippy::redundant_pub_crate,
     reason = "shared with the defined-name encoder"
@@ -181,6 +186,7 @@ pub(crate) fn compile_name_formula(
     sheets: &[Worksheet],
     xti: &mut XtiCollector,
     default_sheet: Option<usize>,
+    names: Option<&NameTable<'_>>,
 ) -> Result<CellParsedFormula> {
     compile_with_context(
         formula,
@@ -190,6 +196,7 @@ pub(crate) fn compile_name_formula(
             sheets,
             xti,
             default_sheet,
+            names,
         }),
     )
 }
@@ -231,7 +238,7 @@ fn compile_with_context<'t>(
     formula: &str,
     base: Option<(u32, u16)>,
     tables: Option<&'t [TableInfo<'t>]>,
-    name_context: Option<NameContext<'_>>,
+    name_context: Option<NameContext<'_, '_>>,
 ) -> Result<CellParsedFormula> {
     let formula = formula.strip_prefix('=').unwrap_or(formula);
     let mut parser = Parser {
@@ -348,7 +355,7 @@ struct CellRef {
     end: usize,
 }
 
-struct Parser<'a, 't, 'c> {
+struct Parser<'a, 't, 's, 'n> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
@@ -356,11 +363,11 @@ struct Parser<'a, 't, 'c> {
     unary_depth: u32,
     base: Option<(u32, u16)>,
     tables: Option<&'t [TableInfo<'t>]>,
-    name_context: Option<NameContext<'c>>,
+    name_context: Option<NameContext<'s, 'n>>,
     out: Vec<u8>,
 }
 
-impl<'a> Parser<'a, '_, '_> {
+impl<'a> Parser<'a, '_, '_, '_> {
     fn parse_expression(&mut self) -> Result<()> {
         self.depth += 1;
         if self.depth > MAX_FORMULA_DEPTH {
@@ -500,7 +507,15 @@ impl<'a> Parser<'a, '_, '_> {
             Some(b'\'') if self.name_context.is_some() => self.parse_sheet_reference(),
             Some(b'#') => self.parse_error(),
             Some(b'0'..=b'9' | b'.') => self.parse_number(),
-            Some(b'$' | b'A'..=b'Z' | b'a'..=b'z') => self.parse_name_or_ref(),
+            Some(byte)
+                if byte == b'$'
+                    || byte == b'_'
+                    || byte == b'\\'
+                    || byte.is_ascii_alphabetic()
+                    || byte >= 0x80 =>
+            {
+                self.parse_name_or_ref()
+            }
             _ => Err(formula_error("expected a formula value")),
         }
     }
@@ -527,7 +542,9 @@ impl<'a> Parser<'a, '_, '_> {
                 return self.parse_table_reference(name);
             }
         }
-        if let Some(reference) = self.cell_ref_at(self.pos) {
+        if let Some(reference) = self.cell_ref_at(self.pos)
+            && !self.next_is_name_char(reference.end)
+        {
             let mut after = reference.end;
             while self
                 .bytes
@@ -559,10 +576,9 @@ impl<'a> Parser<'a, '_, '_> {
         }
 
         let start = self.pos;
-        self.pos += 1;
-        while let Some(byte) = self.peek() {
-            if is_identifier_byte(byte) {
-                self.pos += 1;
+        while let Some(ch) = self.input[self.pos..].chars().next() {
+            if is_name_char(ch) {
+                self.pos += ch.len_utf8();
             } else {
                 break;
             }
@@ -591,7 +607,34 @@ impl<'a> Parser<'a, '_, '_> {
             self.out.extend_from_slice(&[PTG_BOOL, 0]);
             return Ok(());
         }
+        if self
+            .name_context
+            .as_ref()
+            .is_some_and(|context| context.names.is_some())
+        {
+            let scope = self
+                .name_context
+                .as_ref()
+                .and_then(|context| context.default_sheet);
+            return self.push_defined_name(name, scope);
+        }
         Err(formula_error("named ranges are not supported"))
+    }
+
+    fn push_defined_name(&mut self, name: &str, scope: Option<usize>) -> Result<()> {
+        let index = {
+            let context = self
+                .name_context
+                .as_ref()
+                .expect("defined names require a name context");
+            let Some(names) = context.names else {
+                return Err(formula_error("named ranges are not supported"));
+            };
+            names.lookup(name, scope)?
+        };
+        self.out.push(PTG_NAME);
+        self.out.extend_from_slice(&index.to_le_bytes());
+        Ok(())
     }
 
     fn parse_table_reference(&mut self, name: &str) -> Result<()> {
@@ -1013,6 +1056,23 @@ impl<'a> Parser<'a, '_, '_> {
         Ok(Cow::Borrowed(&self.input[start..self.pos]))
     }
 
+    fn read_defined_name(&mut self) -> Result<&'a str> {
+        let start = self.pos;
+        while let Some(ch) = self.input[self.pos..].chars().next() {
+            if is_name_char(ch) {
+                self.pos += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if self.pos == start {
+            return Err(formula_error(
+                "defined-name sheet references require a cell, range, or name",
+            ));
+        }
+        Ok(&self.input[start..self.pos])
+    }
+
     fn read_quoted_sheet(&mut self) -> Result<Cow<'a, str>> {
         self.pos += 1;
         let start = self.pos;
@@ -1048,10 +1108,17 @@ impl<'a> Parser<'a, '_, '_> {
             };
             (first, last)
         };
-        let Some(first_cell) = self.cell_ref_at(self.pos) else {
-            return Err(formula_error(
-                "defined-name sheet references require a cell or range",
-            ));
+        let first_cell = self
+            .cell_ref_at(self.pos)
+            .filter(|cell| !self.next_is_name_char(cell.end));
+        let Some(first_cell) = first_cell else {
+            if first != last {
+                return Err(formula_error(
+                    "defined-name sheet ranges require a cell or range",
+                ));
+            }
+            let name = self.read_defined_name()?;
+            return self.push_defined_name(name, Some(first));
         };
         self.pos = first_cell.end;
         check_absolute_name_ref(&first_cell)?;
@@ -1081,6 +1148,10 @@ impl<'a> Parser<'a, '_, '_> {
             self.push_ref3d(ixti, &first_cell);
         }
         Ok(())
+    }
+
+    fn next_is_name_char(&self, at: usize) -> bool {
+        self.input[at..].chars().next().is_some_and(is_name_char)
     }
 
     fn cell_ref_at(&self, start: usize) -> Option<CellRef> {

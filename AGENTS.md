@@ -108,8 +108,9 @@ references keep their fast paths; other expressions use the same parser with a
 name-only sheet context, emit `PtgRef3d`/`PtgArea3d`, and register their sheets
 in `BrtExternSheet`. One `Xti` spans a worksheet range such as
 `Sheet1:Sheet3!$A$1`. Unqualified references in a worksheet-scoped name resolve
-to that sheet. External-workbook, name-to-name, and future/`_xlfn` formulas are
-rejected.
+to that sheet. Other defined names encode as `PtgName` using one ordered
+`NameTable`, so forward references work and local names shadow globals.
+External-workbook and future/`_xlfn` formulas are rejected.
 
 Conditional formats are stored on the worksheet as one or more ranges, a boxed
 `ConditionalFormat` rule, and an optional differential format. Cell-value,
@@ -213,9 +214,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 681 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 691 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 685 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 695 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -364,9 +365,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 681 unit tests and 7 doctests in default builds: 290 in core, 391 in writer.
+- 691 unit tests and 7 doctests in default builds: 290 in core, 401 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 692 total. Most core
+  `rust_decimal` adapters, for 695 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

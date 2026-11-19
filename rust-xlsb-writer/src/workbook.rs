@@ -172,9 +172,10 @@ impl Workbook {
     /// sheet-qualified absolute A1 cells/ranges, and the supported function set.
     /// A sheet range such as `Sheet1:Sheet3!$A$1` spans the worksheets between
     /// its endpoints. Global references must include a sheet name; local
-    /// references resolve against the name's worksheet. External-workbook
-    /// references, defined-name references, and future/`_xlfn` functions are
-    /// not supported.
+    /// references resolve against the name's worksheet. Expressions may also
+    /// refer to other defined names, including forward references and
+    /// sheet-qualified local names. External-workbook references and
+    /// future/`_xlfn` functions are not supported.
     ///
     /// # Errors
     ///

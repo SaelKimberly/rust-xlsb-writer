@@ -42,8 +42,19 @@ impl DefinedName {
         })
     }
 
-    pub(crate) fn encode(&self, sheets: &[Worksheet], xti: &mut XtiCollector) -> Result<Vec<u8>> {
-        encode_formula(&self.formula, self.scope.as_deref(), sheets, xti)
+    pub(crate) fn encode(
+        &self,
+        sheets: &[Worksheet],
+        xti: &mut XtiCollector,
+        names: &NameTable<'_>,
+    ) -> Result<Vec<u8>> {
+        encode_formula_with_names(
+            &self.formula,
+            self.scope.as_deref(),
+            sheets,
+            xti,
+            Some(names),
+        )
     }
 }
 
@@ -102,11 +113,100 @@ impl XtiCollector {
     }
 }
 
+/// One user-defined name in `BrtName` collection order.
+#[derive(Clone, Copy)]
+pub struct NameEntry<'a> {
+    pub(crate) defined: &'a DefinedName,
+    pub(crate) scope: Option<usize>,
+    pub(crate) index: u32,
+}
+
+/// The ordered user-name table used by `PtgName` and `BrtName`.
+pub struct NameTable<'a> {
+    entries: Vec<NameEntry<'a>>,
+}
+
+impl<'a> NameTable<'a> {
+    pub(crate) fn new(
+        sheets: &[Worksheet],
+        defined_names: &'a [DefinedName],
+        builtin_count: usize,
+    ) -> Result<Self> {
+        let mut entries = Vec::with_capacity(defined_names.len());
+        for name in defined_names {
+            let scope = name
+                .scope
+                .as_deref()
+                .map(|scope| sheet_index(sheets, scope))
+                .transpose()?;
+            entries.push(NameEntry {
+                defined: name,
+                scope,
+                index: 0,
+            });
+        }
+        entries.sort_by(|left, right| left.defined.sort_name.cmp(&right.defined.sort_name));
+
+        for (offset, entry) in entries.iter_mut().enumerate() {
+            entry.index = u32::try_from(builtin_count + offset + 1)
+                .map_err(|_| Error::ValueNotRepresentable("too many defined names"))?;
+        }
+        Ok(Self { entries })
+    }
+
+    pub(crate) fn entries(&self) -> &[NameEntry<'a>] {
+        &self.entries
+    }
+
+    /// Resolves a name against the requested sheet, then the global scope.
+    pub(crate) fn lookup(&self, name: &str, scope: Option<usize>) -> Result<u32> {
+        let folded = (!name.is_ascii()).then(|| name.to_lowercase());
+        let mut global = None;
+        let mut has_local = false;
+        for entry in &self.entries {
+            let matches = entry.defined.name.eq_ignore_ascii_case(name)
+                || folded
+                    .as_deref()
+                    .is_some_and(|folded| entry.defined.sort_name == folded);
+            if !matches {
+                continue;
+            }
+            if entry.scope.is_none() {
+                global = Some(entry.index);
+            } else if entry.scope == scope {
+                return Ok(entry.index);
+            } else {
+                has_local = true;
+            }
+        }
+        if let Some(index) = global {
+            return Ok(index);
+        }
+        if scope.is_none() && has_local {
+            return Err(Error::FormulaError(
+                "worksheet-scoped defined names must be sheet-qualified".to_owned(),
+            ));
+        }
+        Err(Error::FormulaError(format!("unknown defined name: {name}")))
+    }
+}
+
+#[cfg(test)]
 fn encode_formula(
     formula: &str,
     scope: Option<&str>,
     sheets: &[Worksheet],
     xti: &mut XtiCollector,
+) -> Result<Vec<u8>> {
+    encode_formula_with_names(formula, scope, sheets, xti, None)
+}
+
+fn encode_formula_with_names(
+    formula: &str,
+    scope: Option<&str>,
+    sheets: &[Worksheet],
+    xti: &mut XtiCollector,
+    names: Option<&NameTable<'_>>,
 ) -> Result<Vec<u8>> {
     let formula = formula.trim();
     let formula = formula.strip_prefix('=').unwrap_or(formula).trim();
@@ -178,7 +278,8 @@ fn encode_formula(
     }
 
     let default_sheet = scope.map(|scope| sheet_index(sheets, scope)).transpose()?;
-    let compiled = crate::formula::compile_name_formula(formula, sheets, xti, default_sheet)?;
+    let compiled =
+        crate::formula::compile_name_formula(formula, sheets, xti, default_sheet, names)?;
     debug_assert_eq!(compiled.cb, 0);
     Ok(compiled.rgce)
 }
@@ -387,6 +488,10 @@ const INVALID_NAME_CHARS: [char; 29] = [
     '>', '@', '[', ']', '^', '`', '{', '|', '}', '~',
 ];
 
+pub fn is_name_char(ch: char) -> bool {
+    !INVALID_NAME_CHARS.contains(&ch) && !ch.is_control()
+}
+
 #[expect(
     clippy::redundant_pub_crate,
     reason = "shared with the table name validator"
@@ -399,10 +504,7 @@ pub(crate) fn check_name(name: &str) -> Result<()> {
         return Err(name_error(name, "name exceeds Excel's 255-character limit"));
     }
 
-    if let Some(ch) = name
-        .chars()
-        .find(|ch| INVALID_NAME_CHARS.contains(ch) || ch.is_control())
-    {
+    if let Some(ch) = name.chars().find(|ch| !is_name_char(*ch)) {
         return Err(name_error(
             name,
             &format!("name contains a character that Excel disallows: {ch:?}"),
@@ -763,6 +865,185 @@ mod tests {
             [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 1, 0x04, 0]
         );
         assert_eq!(xti.ranges(), &[(1, 1)]);
+    }
+
+    #[test]
+    fn name_references_encode_the_target_name_index() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [
+            DefinedName::new("Base", "=Sheet1!$A$1").expect("base"),
+            DefinedName::new("Double", "=Base*2").expect("double"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let mut xti = XtiCollector::new(1);
+        assert_eq!(
+            definitions[1]
+                .encode(&sheets, &mut xti, &names)
+                .expect("name reference"),
+            [0x23, 1, 0, 0, 0, 0x1E, 2, 0, 0x05]
+        );
+    }
+
+    #[test]
+    fn forward_name_references_use_the_complete_table() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [
+            DefinedName::new("Aaa", "=Zzz*2").expect("forward"),
+            DefinedName::new("Zzz", "=1").expect("target"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let mut xti = XtiCollector::new(1);
+        assert_eq!(
+            definitions[0]
+                .encode(&sheets, &mut xti, &names)
+                .expect("forward reference"),
+            [0x23, 2, 0, 0, 0, 0x1E, 2, 0, 0x05]
+        );
+    }
+
+    #[test]
+    fn local_names_shadow_global_names() {
+        let sheets = vec![
+            Worksheet::new_named("Sheet1".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+        ];
+        let definitions = [
+            DefinedName::new("Rate", "=0.1").expect("global rate"),
+            DefinedName::new("Sheet1!Rate", "=0.2").expect("local rate"),
+            DefinedName::new("UseGlobal", "=Rate").expect("global use"),
+            DefinedName::new("UseLocal", "=Sheet1!Rate").expect("qualified use"),
+            DefinedName::new("Sheet1!UseLocal", "=Rate").expect("local use"),
+            DefinedName::new("Sheet2!OnlyLocal", "=0.3").expect("other local"),
+            DefinedName::new("BadLocal", "=OnlyLocal").expect("bad global use"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let global = names.lookup("Rate", None).expect("global rate");
+        let local = names.lookup("Rate", Some(0)).expect("local rate");
+        assert_ne!(global, local);
+        assert_eq!(
+            names.lookup("Rate", Some(1)).expect("global fallback"),
+            global
+        );
+
+        let mut xti = XtiCollector::new(2);
+        for (index, expected) in [(2, global), (3, local), (4, local)] {
+            let mut token = vec![0x23];
+            token.extend_from_slice(&expected.to_le_bytes());
+            assert_eq!(
+                definitions[index]
+                    .encode(&sheets, &mut xti, &names)
+                    .expect("name reference"),
+                token
+            );
+        }
+        assert!(definitions[6].encode(&sheets, &mut xti, &names).is_err());
+    }
+
+    #[test]
+    fn unicode_names_resolve_in_expressions() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [
+            DefinedName::new("Résumé", "=Sheet1!$A$1").expect("unicode name"),
+            DefinedName::new("Use", "=RÉSUMÉ*2").expect("unicode reference"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let mut xti = XtiCollector::new(1);
+        assert_eq!(
+            definitions[1]
+                .encode(&sheets, &mut xti, &names)
+                .expect("unicode reference"),
+            [0x23, 1, 0, 0, 0, 0x1E, 2, 0, 0x05]
+        );
+    }
+
+    #[test]
+    fn underscore_and_backslash_names_resolve() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [
+            DefinedName::new("_Rate", "=1").expect("underscore name"),
+            DefinedName::new("\\Rate", "=2").expect("backslash name"),
+            DefinedName::new("Use", "=_Rate+\\Rate").expect("references"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let mut xti = XtiCollector::new(1);
+        let underscore = names.lookup("_Rate", None).expect("underscore index");
+        let backslash = names.lookup("\\Rate", None).expect("backslash index");
+        let mut expected = vec![0x23];
+        expected.extend_from_slice(&underscore.to_le_bytes());
+        expected.extend_from_slice(&[0x23]);
+        expected.extend_from_slice(&backslash.to_le_bytes());
+        expected.push(0x03);
+        assert_eq!(
+            definitions[2]
+                .encode(&sheets, &mut xti, &names)
+                .expect("name references"),
+            expected
+        );
+    }
+
+    #[test]
+    fn cell_lookalike_names_win_over_cell_prefixes() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [
+            DefinedName::new("Q1Sales", "=1").expect("lookalike"),
+            DefinedName::new("Use", "=Q1Sales*2").expect("plain reference"),
+            DefinedName::new("Qualified", "=Sheet1!Q1Sales*2").expect("qualified"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let index = names.lookup("Q1Sales", None).expect("lookalike index");
+        let mut expected = vec![0x23];
+        expected.extend_from_slice(&index.to_le_bytes());
+        expected.extend_from_slice(&[0x1E, 2, 0, 0x05]);
+        let mut xti = XtiCollector::new(1);
+        for definition in &definitions[1..] {
+            assert_eq!(
+                definition
+                    .encode(&sheets, &mut xti, &names)
+                    .expect("lookalike reference"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_names_shift_user_name_indexes() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [
+            DefinedName::new("Base", "=Sheet1!$A$1").expect("base"),
+            DefinedName::new("Double", "=Base*2").expect("double"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 1).expect("name table");
+        let mut xti = XtiCollector::new(1);
+        assert_eq!(
+            definitions[1]
+                .encode(&sheets, &mut xti, &names)
+                .expect("name reference"),
+            [0x23, 2, 0, 0, 0, 0x1E, 2, 0, 0x05]
+        );
+    }
+
+    #[test]
+    fn qualified_names_without_a_table_are_errors() {
+        let (sheets, mut xti) = encoder();
+        assert!(encode_formula("='Data Sheet'!Rate", None, &sheets, &mut xti).is_err());
+    }
+
+    #[test]
+    fn sheet_ranges_cannot_qualify_defined_names() {
+        let sheets = vec![
+            Worksheet::new_named("Sheet1".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+        ];
+        let definitions = [
+            DefinedName::new("Target", "=1").expect("target"),
+            DefinedName::new("Bad", "=SUM(Sheet1:Sheet2!Target)").expect("bad"),
+        ];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let mut xti = XtiCollector::new(2);
+        let error = definitions[1]
+            .encode(&sheets, &mut xti, &names)
+            .expect_err("sheet range name");
+        assert!(error.to_string().contains("sheet ranges"));
     }
 
     #[test]

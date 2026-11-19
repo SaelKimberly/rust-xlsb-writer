@@ -55,6 +55,7 @@
 - [Table filter conditions](plans/2026-11-19-table-filter-conditions.md)
 - [Formula-valued defined names](plans/2026-11-19-formula-defined-names.md)
 - [Defined names: worksheet ranges](plans/2026-11-19-defined-name-sheet-ranges.md)
+- [Defined names: references to other names](plans/2026-11-19-defined-name-references.md)
 
 ## Analysis
 

@@ -15,7 +15,7 @@ use rust_xlsb_core::prelude::{
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
 use crate::data::CellData;
-use crate::defined_name::{DefinedName, XtiCollector, area3d, sheet_index};
+use crate::defined_name::{DefinedName, NameTable, XtiCollector, area3d};
 use crate::formula::TableInfo;
 use crate::properties::CustomPropertyValue;
 use crate::table::write_table_part;
@@ -376,6 +376,19 @@ fn write_defined_names(
         return Ok(());
     }
 
+    let builtin_count = sheets
+        .iter()
+        .filter(|sheet| sheet.print_area().is_some())
+        .count()
+        + sheets
+            .iter()
+            .filter(|sheet| sheet.autofilter_range().is_some())
+            .count()
+        + sheets
+            .iter()
+            .filter(|sheet| has_repeat_titles(sheet))
+            .count();
+
     let mut names = Vec::new();
 
     // Preserve the historical Xti order: sheet order, one entry per sheet that
@@ -440,15 +453,14 @@ fn write_defined_names(
         }
     }
 
-    let mut user_names = defined_names.iter().collect::<Vec<_>>();
-    user_names.sort_by(|left, right| left.sort_name.cmp(&right.sort_name));
-    for name in user_names {
-        let itab = match name.scope.as_deref() {
-            Some(scope) => sheet_itab(sheet_index(sheets, scope)?)?,
+    let user_names = NameTable::new(sheets, defined_names, builtin_count)?;
+    for entry in user_names.entries() {
+        let itab = match entry.scope {
+            Some(scope) => sheet_itab(scope)?,
             None => u32::MAX,
         };
-        let rgce = name.encode(sheets, xti)?;
-        push_defined_name(&mut names, itab, &name.name, 0, rgce)?;
+        let rgce = entry.defined.encode(sheets, xti, &user_names)?;
+        push_defined_name(&mut names, itab, &entry.defined.name, 0, rgce)?;
     }
 
     if !xti.is_empty() {
@@ -2062,6 +2074,36 @@ mod tests {
             flag.formula.rgce,
             [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x1E, 0, 0, 0x0D]
         );
+    }
+
+    #[test]
+    fn name_references_use_the_btname_collection_order() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.write(0, 0, 1).expect("writes");
+        sheet.set_print_area(0, 0, 1, 1).expect("print area");
+        workbook
+            .define_name("Base", "=Sheet1!$A$1")
+            .expect("base name");
+        workbook
+            .define_name("Double", "=Base*2")
+            .expect("referencing name");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let names = records::<BrtName>(&workbook_part);
+
+        assert_eq!(names.len(), 3);
+        assert_eq!(
+            names[0].name.to_optional_string().as_deref(),
+            Some("_xlnm.Print_Area")
+        );
+        assert_eq!(names[1].name.to_optional_string().as_deref(), Some("Base"));
+        assert_eq!(
+            names[2].name.to_optional_string().as_deref(),
+            Some("Double")
+        );
+        assert_eq!(names[2].formula.rgce, [0x23, 2, 0, 0, 0, 0x1E, 2, 0, 0x05]);
     }
 
     #[test]
