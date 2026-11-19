@@ -41,9 +41,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    sparkline groups are supported; in-cell image embedding, charts, notes,
    shapes, buttons, and checkboxes are missing.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
-   user-defined names, the Excel 2023 theme, custom theme files, basic VBA
-   project embedding, and VBA code names are available; chartsheets and signed
-   VBA projects are missing. Core/app/custom document properties are present.
+   user-defined names, the Excel 2023 theme, custom theme files, VBA projects
+   with detached signatures and code names are available; chartsheets are
+   missing. Core/app/custom document properties are present.
 6. **Data ecosystem** — `Formula` is supported; serde and Polars adapters are
    missing. Optional `jiff` and `rust_decimal` features and the native
    `ExcelDateTime` type are present.
@@ -75,7 +75,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 324 core + 442 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose image, sparkline, and macro read-back |
+| Verification | 324 core + 444 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose image, sparkline, signed-macro read-back |
 
 ## 3. Capability Matrix
 
@@ -105,7 +105,7 @@ Status meanings:
 | `use_excel_2023_theme` | Supported | Theme part, theme version, Aptos Narrow 11 default format |
 | `use_custom_theme` | Supported | Raw XML, `.thmx`, or `.xlsx` extraction; image fills rejected |
 | `add_vba_project`, `set_vba_name` | Supported | VBA project part, relationship, content type, and workbook/worksheet code names |
-| `add_vba_project_with_signature` | Missing | Signed macro projects |
+| `add_vba_project_with_signature` | Supported | `vbaProjectSignature.bin`, content type, and project relationship part |
 | `set_zip_compression_level` | Supported | Deflate levels 1–9; default store-only |
 | `use_zip_large_file` | Supported | ZIP64 entry extensions and oversized-directory records |
 | `read_only_recommended` | Supported | `BrtFileSharing` flag |
@@ -265,7 +265,7 @@ Status meanings:
 | Constant-memory writer | Missing | Streaming worksheet |
 | Low-memory writer | Missing | Reduced cell retention |
 | Temp-dir control | Missing | Streaming scratch space |
-| Document properties/themes/VBA/chartsheets | Partial | Core/app/custom document properties, Excel 2023 theme, custom theme files, and basic VBA projects; signed VBA projects and chartsheets missing |
+| Document properties/themes/VBA/chartsheets | Partial | Core/app/custom document properties, Excel 2023 theme, custom theme files, and signed VBA projects; chartsheets missing |
 | Deterministic output timestamps | Supported | Fixed DOS timestamp |
 
 ## 4. Behavioral And Contract Differences
@@ -310,7 +310,7 @@ records or package parts that do not exist yet.
 | Defined names | User literals, absolute A1 references, expression formulas with same-workbook sheet and worksheet-range references, references to other defined names, and print-area and print-title names; external-workbook and future-function references remain |
 | Document properties | Shipped: core/app strings, custom values, and creation timestamps |
 | Themes | Shipped: Excel 2023 and custom theme parts, `BrtWbProp.dwThemeVersion`, theme color indexes, and `.thmx`/`.xlsx` extraction |
-| VBA | Shipped: `xl/vbaProject.bin`, project relationship and content type, and workbook/worksheet code names; signed projects remain |
+| VBA | Shipped: `xl/vbaProject.bin`, detached `vbaProjectSignature.bin` with its project relationship and content type, and workbook/worksheet code names |
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
 | Deflate | Shipped: method 8, levels 1–9, streamed local headers, ZIP64 mode and end records; per-entry strategy remains |
 | Workbook behavior | Shipped: `BrtCalcProp`, `BrtFileSharing`, and `BrtBookView.iTabRatio` |
@@ -412,7 +412,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 | ✅ Excel 2023 theme and theme colors | Excel 2023 Office/Aptos theme part and `BrtWbProp` version | — |
 | ✅ Custom themes | Raw XML, `.thmx`, and `.xlsx` extraction; `dwThemeVersion = 0` | — |
 | Chartsheets | Dashboard structure | L |
-| ✅ VBA projects and code names | Basic macro-enabled workbooks; signed projects remain | — |
+| ✅ VBA projects, signatures, and code names | Signed macro-enabled workbooks | — |
 | ✅ Calculation mode, read-only recommended, tab ratio | Workbook behavior | S |
 | ✅ Deflate compression controls | Levels 1–9 and ZIP64/large-file mode | S |
 
@@ -475,16 +475,17 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 324 core + 442 writer unit tests and 7 doctests in default
+- Test evidence: 324 core + 444 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
   `.xlsx` and `.thmx` ZIP extraction, missing theme parts, image-fill
   rejection, verbatim part bytes, and `BrtWbProp.dwThemeVersion = 0`.
   VBA tests cover the project bytes, content type, workbook relationship,
-  workbook and worksheet code names, the `ThisWorkbook` default, and invalid
-  code-name rejection. Aspose.Cells loads the generated XLSB, reports the VBA
-  project and `DataSheet` code name, and preserves the project on re-save.
+  project and worksheet code names, the `ThisWorkbook` default, invalid
+  code-name rejection, and the signed project parts and relationship. Aspose
+  loads the generated signed XLSB, reports the VBA project and `Sheet1` code
+  name, keeps the signature bytes on re-save, and re-serializes the project.
   Formula-driven rule tests cover `PtgRefN`/`PtgAreaN` offsets against the
   validation or conditional-format range, custom validation type 7, formula
   comparison types, and `CF_TEMPLATE_FMLA`. ExcelGen's `test-dataval.xlsb`

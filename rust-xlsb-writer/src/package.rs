@@ -39,6 +39,7 @@ pub fn build_package(
     default_format: Option<&Format>,
     defined_names: &[DefinedName],
     vba_project: Option<&[u8]>,
+    vba_signature: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let sst = SSTHolder::create_in_memory()?;
     let mut registry = StyleRegistry::new();
@@ -265,6 +266,8 @@ pub fn build_package(
                 &image_types,
                 has_dynamic_arrays,
                 vba_project.is_some(),
+                vba_project.is_some()
+                    && vba_signature.is_some_and(|signature| !signature.is_empty()),
             )
             .into_bytes(),
         ),
@@ -328,6 +331,15 @@ pub fn build_package(
     }
     if let Some(project) = vba_project {
         parts.push(("xl/vbaProject.bin".to_owned(), project.to_vec()));
+    }
+    if let (Some(_), Some(signature)) = (vba_project, vba_signature)
+        && !signature.is_empty()
+    {
+        parts.push(("xl/vbaProjectSignature.bin".to_owned(), signature.to_vec()));
+        parts.push((
+            "xl/_rels/vbaProject.bin.rels".to_owned(),
+            vba_project_rels().into_bytes(),
+        ));
     }
 
     zip_store(
@@ -744,6 +756,7 @@ fn content_types(
     image_types: &[(&str, &str)],
     has_metadata: bool,
     has_vba: bool,
+    has_vba_signature: bool,
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -788,6 +801,11 @@ fn content_types(
     if has_vba {
         body.push_str(
             r#"<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>"#,
+        );
+    }
+    if has_vba_signature {
+        body.push_str(
+            r#"<Override PartName="/xl/vbaProjectSignature.bin" ContentType="application/vnd.ms-office.vbaProjectSignature"/>"#,
         );
     }
     if theme.is_some() {
@@ -988,6 +1006,15 @@ fn push_xml_element(out: &mut String, tag: &str, value: &str) {
     out.push_str("</");
     out.push_str(tag);
     out.push('>');
+}
+
+fn vba_project_rels() -> String {
+    String::from(concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        r#"<Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProjectSignature" Target="vbaProjectSignature.bin"/>"#,
+        r#"</Relationships>"#,
+    ))
 }
 
 #[expect(
@@ -4952,6 +4979,80 @@ mod tests {
     }
 
     #[test]
+    fn signed_vba_project_emits_signature_and_relationship() {
+        let project =
+            std::env::temp_dir().join(format!("rust_xlsb_vba_signed_{}.bin", std::process::id()));
+        let signature = std::env::temp_dir().join(format!(
+            "rust_xlsb_vba_signature_{}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&project, b"project bytes").expect("project");
+        std::fs::write(&signature, b"signature bytes").expect("signature");
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook
+            .add_vba_project_with_signature(&project, &signature)
+            .expect("vba project");
+        let bytes = workbook.save_to_buffer().expect("saves");
+        std::fs::remove_file(project).expect("cleanup project");
+        std::fs::remove_file(signature).expect("cleanup signature");
+
+        assert_eq!(
+            part_bytes(&bytes, "xl/vbaProject.bin").expect("project"),
+            b"project bytes"
+        );
+        assert_eq!(
+            part_bytes(&bytes, "xl/vbaProjectSignature.bin").expect("signature"),
+            b"signature bytes"
+        );
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/vbaProjectSignature.bin" ContentType="application/vnd.ms-office.vbaProjectSignature"/>"#
+        ));
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/_rels/vbaProject.bin.rels").expect("signature rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(
+            r#"<Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProjectSignature" Target="vbaProjectSignature.bin"/>"#
+        ));
+        assert_eq!(rels.matches("<Relationship ").count(), 1);
+    }
+
+    #[test]
+    fn empty_vba_signature_emits_no_signature_parts() {
+        let project =
+            std::env::temp_dir().join(format!("rust_xlsb_vba_empty_{}.bin", std::process::id()));
+        let signature = std::env::temp_dir().join(format!(
+            "rust_xlsb_vba_empty_signature_{}.bin",
+            std::process::id()
+        ));
+        std::fs::write(&project, b"project bytes").expect("project");
+        std::fs::write(&signature, b"").expect("signature");
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook
+            .add_vba_project_with_signature(&project, &signature)
+            .expect("vba project");
+        let bytes = workbook.save_to_buffer().expect("saves");
+        std::fs::remove_file(project).expect("cleanup project");
+        std::fs::remove_file(signature).expect("cleanup signature");
+
+        assert_eq!(
+            part_bytes(&bytes, "xl/vbaProject.bin").expect("project"),
+            b"project bytes"
+        );
+        assert!(part_bytes(&bytes, "xl/vbaProjectSignature.bin").is_err());
+        assert!(part_bytes(&bytes, "xl/_rels/vbaProject.bin.rels").is_err());
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(!content_types.contains("vbaProjectSignature"));
+    }
+
+    #[test]
     fn vba_project_defaults_workbook_and_worksheet_code_names() {
         let path =
             std::env::temp_dir().join(format!("rust_xlsb_vba_default_{}.bin", std::process::id()));
@@ -5016,6 +5117,8 @@ mod tests {
                 .expect("utf8");
         assert!(!content_types.contains("vbaProject"));
         assert!(part_bytes(&bytes, "xl/vbaProject.bin").is_err());
+        assert!(part_bytes(&bytes, "xl/vbaProjectSignature.bin").is_err());
+        assert!(part_bytes(&bytes, "xl/_rels/vbaProject.bin.rels").is_err());
         let rels =
             String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
                 .expect("utf8");

@@ -29,6 +29,7 @@ pub struct WorkbookSettings {
     pub zip_large_file: bool,
     pub(crate) theme: Option<Theme>,
     pub(crate) vba_project: Option<Box<[u8]>>,
+    pub(crate) vba_signature: Option<Box<[u8]>>,
     pub(crate) vba_codename: Option<String>,
 }
 
@@ -64,6 +65,7 @@ impl Workbook {
                 zip_large_file: false,
                 theme: None,
                 vba_project: None,
+                vba_signature: None,
                 vba_codename: None,
             },
             doc_properties: None,
@@ -148,6 +150,25 @@ impl Workbook {
         if self.settings.vba_codename.is_none() {
             self.settings.vba_codename = Some("ThisWorkbook".to_owned());
         }
+        Ok(self)
+    }
+
+    /// Adds a signed VBA project to the workbook.
+    ///
+    /// The project and signature files are stored as `xl/vbaProject.bin` and
+    /// `xl/vbaProjectSignature.bin`, with the signature linked from the
+    /// project relationships. The bytes are not validated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Io`] when either file cannot be read.
+    pub fn add_vba_project_with_signature<P: AsRef<Path>>(
+        &mut self,
+        project: P,
+        signature: P,
+    ) -> Result<&mut Self> {
+        self.add_vba_project(project)?;
+        self.settings.vba_signature = Some(std::fs::read(signature)?.into_boxed_slice());
         Ok(self)
     }
 
@@ -376,6 +397,7 @@ impl Workbook {
             self.default_format.as_ref(),
             &self.defined_names,
             self.settings.vba_project.as_deref(),
+            self.settings.vba_signature.as_deref(),
         )
     }
 
