@@ -12,25 +12,25 @@ pub use record::{
     BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginColBrk, BrtBeginColorScale,
     BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar,
     BrtBeginFilterColumn, BrtBeginFilters, BrtBeginHeaderFooter, BrtBeginIconSet, BrtBeginList,
-    BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginRwBrk, BrtBeginSst,
-    BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCFVO,
-    BrtCalcProp, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
+    BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginRwBrk, BrtBeginSparklineGroup,
+    BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh,
+    BrtCFVO, BrtCalcProp, BrtCellBlank, BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst,
     BrtCellRString, BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter,
     BrtDVal, BrtDXF, BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale,
     BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar,
     BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
-    BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
-    BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError,
-    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListCCFmla, BrtListPart,
-    BrtListTrFmla, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
-    BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
-    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS,
-    CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
-    CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
-    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
-    CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
-    CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+    BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSparklineGroup, BrtEndSst,
+    BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFRTBegin, BrtFRTEnd, BrtFileSharing,
+    BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont,
+    BrtHLink, BrtListCCFmla, BrtListPart, BrtListTrFmla, BrtMargins, BrtMergeCell, BrtName,
+    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
+    BrtSheetProtection, BrtSparkline, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp,
+    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
+    CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS,
+    CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
+    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT,
+    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
     CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
     CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
     CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, CF_TEMPLATE_TIME_PERIOD_TODAY,
@@ -45,6 +45,7 @@ pub use record::{
 pub use scope::*;
 pub use structure::{
     ACProductVersion, BErr, Blxf, Bold, BorderType, BrtColSpan, Cell, CodeName, FontFlags,
+    FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtProductVersion, FrtSqref, FrtSqrefs,
     HeaderFooterString, PhRun, PhoneticRuns, RangeProtectionTitleSDRel, RichStr, RkNumber,
     SimpleRichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString,
     XlStringExt, XlWideString, Xnum,
@@ -212,6 +213,9 @@ mod tests {
     #[case::brt_border(|| checked_test::<BrtBorder>(51))]
     #[case::brt_style(|| checked_test::<BrtStyle>(24))]
     #[case::brt_begin_table_styles(|| checked_test::<BrtBeginTableStyles>(12))]
+    #[case::brt_begin_sparkline_group(|| checked_test::<BrtBeginSparklineGroup>(98))]
+    #[case::brt_frt_begin(|| checked_test::<BrtFRTBegin>(4))]
+    #[case::brt_frt_end(|| checked_test::<BrtFRTEnd>(0))]
     #[case::brt_begin_book(|| checked_test::<BrtBeginBook>(0))]
     #[case::brt_wb_prop(|| checked_test::<BrtWbProp>(12))]
     #[case::brt_end_book(|| checked_test::<BrtEndBook>(0))]
@@ -240,6 +244,11 @@ mod tests {
     #[case::brt_end_styles(|| checked_test::<BrtEndStyles>(0))]
     #[case::brt_begin_sheet(|| checked_test::<BrtBeginSheet>(0))]
     #[case::brt_begin_ws_views(|| checked_test::<BrtBeginWsViews>(0))]
+    #[case::brt_begin_sparkline_groups(|| checked_test::<BrtBeginSparklineGroups>(0))]
+    #[case::brt_end_sparkline_group(|| checked_test::<BrtEndSparklineGroup>(0))]
+    #[case::brt_end_sparkline_groups(|| checked_test::<BrtEndSparklineGroups>(0))]
+    #[case::brt_begin_sparklines(|| checked_test::<BrtBeginSparklines>(0))]
+    #[case::brt_end_sparklines(|| checked_test::<BrtEndSparklines>(0))]
     #[case::brt_end_ws_views(|| checked_test::<BrtEndWsViews>(0))]
     #[case::brt_begin_sheet_data(|| checked_test::<BrtBeginSheetData>(0))]
     #[case::brt_begin_single_cells(|| checked_test::<BrtBeginSingleCells>(0))]

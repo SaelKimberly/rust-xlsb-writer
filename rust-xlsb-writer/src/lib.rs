@@ -39,6 +39,7 @@ mod properties;
 mod protection;
 mod range_list;
 mod sheet;
+pub(crate) mod sparkline;
 pub(crate) mod table;
 mod theme;
 mod url;
@@ -71,6 +72,7 @@ pub use format::{
 pub use formula::Formula;
 pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
+pub use sparkline::{ChartEmptyCells, Sparkline, SparklineRange, SparklineType};
 pub use table::{Table, TableColumn, TableFunction, TableStyle};
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};

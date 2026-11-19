@@ -108,6 +108,10 @@ pub enum Error {
     /// A custom theme file is invalid or unsupported.
     #[error("theme error: {0}")]
     ThemeError(String),
+
+    /// A sparkline definition or range is invalid.
+    #[error("sparkline error: {0}")]
+    SparklineError(String),
 }
 
 /// Writer result type.

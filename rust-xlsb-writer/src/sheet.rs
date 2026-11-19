@@ -5,16 +5,19 @@ use std::collections::{BTreeSet, HashMap};
 use rust_xlsb_core::prelude::{
     BrtArrFmla, BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
     BrtBeginDVals, BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk,
-    BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal,
-    BrtCellRk, BrtColInfo, BrtColSpan, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs,
-    BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals, BrtEndHeaderFooter,
-    BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView,
-    BrtEndWsViews, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink,
-    BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr,
-    BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, HeaderFooterString,
-    RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
-    XlWideString, Xnum, conditional_format_block_ranges,
+    BrtBeginSheet, BrtBeginSheetData, BrtBeginSparklineGroup, BrtBeginSparklineGroups,
+    BrtBeginSparklines, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
+    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtColInfo,
+    BrtColSpan, BrtColor, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs, BrtEndColBrk,
+    BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals, BrtEndHeaderFooter, BrtEndListParts,
+    BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndSparklineGroup,
+    BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView, BrtEndWsViews, BrtFRTBegin, BrtFRTEnd,
+    BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart,
+    BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel,
+    BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, FrtFormula,
+    FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref, FrtSqrefs, HeaderFooterString, RichStr,
+    StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString,
+    Xnum, conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -23,6 +26,7 @@ use rust_xlsb_core::{
 use crate::data::{CellData, FormulaResult};
 use crate::filter::write_filter_columns;
 use crate::formula::array_expansion;
+use crate::sparkline::{SparklineSaveGroup, SparklineType};
 use crate::worksheet::{ColumnOptions, IgnoreError, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
 
@@ -54,6 +58,7 @@ pub fn write_sheet(
         sst,
         &HashMap::new(),
         &[],
+        &[],
         selected,
         out,
     )
@@ -69,6 +74,7 @@ pub(crate) fn write_sheet_with_fonts(
     sst: &SSTHolder,
     rich_fonts: &HashMap<BrtFont, u16>,
     conditional_dxf_ids: &[Option<u32>],
+    sparkline_groups: &[SparklineSaveGroup<'_>],
     selected: bool,
     out: &mut Vec<u8>,
 ) -> Result<()> {
@@ -198,6 +204,7 @@ pub(crate) fn write_sheet_with_fonts(
     write_page_breaks(sheet, out)?;
     write_ignored_errors(sheet, out)?;
     write_list_parts(sheet, out)?;
+    write_sparklines(sparkline_groups, out)?;
 
     push(out, &BrtEndSheet::default())?;
     Ok(())
@@ -233,6 +240,110 @@ fn write_conditional_formats(
         push(out, &BrtEndCFRule::default())?;
         push(out, &BrtEndConditionalFormatting::default())?;
     }
+    Ok(())
+}
+
+fn sparkline_color(color: crate::Color) -> Result<BrtColor> {
+    if matches!(color, crate::Color::Default | crate::Color::Automatic) {
+        return Ok(BrtColor::rgb(0, 0, 0));
+    }
+    color.to_brt_color()
+}
+
+fn write_sparklines(groups: &[SparklineSaveGroup<'_>], out: &mut Vec<u8>) -> Result<()> {
+    if groups.is_empty() {
+        return Ok(());
+    }
+
+    push(out, &BrtFRTBegin::default())?;
+    push(out, &BrtBeginSparklineGroups::default())?;
+    for group in groups {
+        let sparkline = group.sparkline;
+        push(
+            out,
+            &BrtBeginSparklineGroup {
+                fShowEmptyCellAsZero: sparkline.show_empty_cells_as.record_value(),
+                fMarkers: sparkline.show_markers,
+                fHigh: sparkline.show_high_point,
+                fLow: sparkline.show_low_point,
+                fFirst: sparkline.show_first_point,
+                fLast: sparkline.show_last_point,
+                fNegative: sparkline.show_negative_points,
+                fAxis: sparkline.show_axis,
+                fDisplayHidden: sparkline.show_hidden_data,
+                fIndividualAutoMax: sparkline.custom_max.is_none() && !sparkline.group_max,
+                fIndividualAutoMin: sparkline.custom_min.is_none() && !sparkline.group_min,
+                fGroupAutoMax: sparkline.group_max,
+                fGroupAutoMin: sparkline.group_min,
+                fRTL: sparkline.show_right_to_left,
+                brtcolorSeries: sparkline_color(sparkline.series_color)?,
+                brtcolorNegative: sparkline_color(sparkline.negative_points_color)?,
+                brtcolorAxis: sparkline_color(sparkline.axis_color)?,
+                brtcolorMarkers: sparkline_color(sparkline.markers_color)?,
+                brtcolorFirst: sparkline_color(sparkline.first_point_color)?,
+                brtcolorLast: sparkline_color(sparkline.last_point_color)?,
+                brtcolorHigh: sparkline_color(sparkline.high_point_color)?,
+                brtcolorLow: sparkline_color(sparkline.low_point_color)?,
+                dManualMax: Xnum::from(sparkline.custom_max.unwrap_or(0.0)),
+                dManualMin: Xnum::from(sparkline.custom_min.unwrap_or(0.0)),
+                dLineWeight: Xnum::from(sparkline.line_weight.unwrap_or(0.75)),
+                isltype: match sparkline.kind {
+                    SparklineType::Line => 0,
+                    SparklineType::Column => 1,
+                    SparklineType::WinLose => 2,
+                },
+                ..BrtBeginSparklineGroup::default()
+            },
+        )?;
+        push(out, &BrtBeginSparklines::default())?;
+        let mut record = BrtSparkline {
+            frt: FrtHeader {
+                fSqref: true,
+                fFormulas: true,
+                rgSqrefs: Some(FrtSqrefs {
+                    csqref: 1,
+                    array: vec![FrtSqref {
+                        sqrfx: UncheckedSqRfX {
+                            crfx: 1,
+                            rgRefx: vec![UncheckedRfX::default()],
+                        },
+                        ..FrtSqref::default()
+                    }],
+                }),
+                rgFormulas: Some(FrtFormulas {
+                    cformula: 1,
+                    array: vec![FrtFormula {
+                        formula: FrtParsedFormula {
+                            cce: 15,
+                            cb: 0,
+                            rgce: vec![0; 15],
+                            rgcb: Vec::new(),
+                        },
+                        ..FrtFormula::default()
+                    }],
+                }),
+                ..FrtHeader::default()
+            },
+        };
+        for cell in &group.cells {
+            let sqref = &mut record.frt.rgSqrefs.as_mut().expect("sqrefs").array[0];
+            sqref.sqrfx.rgRefx[0] = UncheckedRfX {
+                rwFirst: cell.row,
+                rwLast: cell.row,
+                colFirst: u32::from(cell.col),
+                colLast: u32::from(cell.col),
+            };
+            record.frt.rgFormulas.as_mut().expect("formulas").array[0]
+                .formula
+                .rgce
+                .copy_from_slice(&cell.rgce);
+            push(out, &record)?;
+        }
+        push(out, &BrtEndSparklines::default())?;
+        push(out, &BrtEndSparklineGroup::default())?;
+    }
+    push(out, &BrtEndSparklineGroups::default())?;
+    push(out, &BrtFRTEnd::default())?;
     Ok(())
 }
 
@@ -1033,6 +1144,8 @@ mod tests {
     use super::*;
     use crate::Format;
     use crate::ProtectionOptions;
+    use crate::defined_name::area3d_value;
+    use crate::sparkline::{Sparkline, SparklineSaveCell, SparklineSaveGroup, SparklineType};
     use crate::worksheet::{MAX_COL, pixels_to_width};
 
     fn records<T>(part: &[u8]) -> Vec<T>
@@ -2270,5 +2383,56 @@ mod tests {
         assert_eq!(errors[0].grbit, BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT);
         assert_eq!(errors[1].grbit, BrtCellIgnoreEC::F_NUM_STORED_AS_TEXT);
         assert_eq!(errors[1].sqrfxu.rgRefx[0].rwFirst, 8_191);
+    }
+    #[test]
+    fn sparklines_emit_one_frt_block_and_grouped_records() {
+        let sparkline = Sparkline::new()
+            .set_type(SparklineType::Column)
+            .show_markers(true);
+        let save = [SparklineSaveGroup {
+            sparkline: &sparkline,
+            cells: vec![SparklineSaveCell {
+                row: 0,
+                col: 5,
+                rgce: area3d_value(0, 0, 0, 0, 4),
+            }],
+        }];
+        let mut out = Vec::new();
+        write_sparklines(&save, &mut out).expect("sparklines");
+
+        assert_eq!(
+            record_ids(&out),
+            [
+                KnownID::BrtFRTBegin,
+                KnownID::BrtBeginSparklineGroups,
+                KnownID::BrtBeginSparklineGroup,
+                KnownID::BrtBeginSparklines,
+                KnownID::BrtSparkline,
+                KnownID::BrtEndSparklines,
+                KnownID::BrtEndSparklineGroup,
+                KnownID::BrtEndSparklineGroups,
+                KnownID::BrtFRTEnd,
+            ]
+        );
+
+        let groups = records::<BrtBeginSparklineGroup>(&out);
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].fMarkers);
+        assert_eq!(groups[0].isltype, 1);
+        assert_eq!(groups[0].fShowEmptyCellAsZero, 1);
+
+        let sparklines = records::<BrtSparkline>(&out);
+        assert_eq!(sparklines.len(), 1);
+        let formula = sparklines[0]
+            .frt
+            .rgFormulas
+            .as_ref()
+            .expect("formulas")
+            .array[0]
+            .formula
+            .rgce
+            .as_slice();
+        assert_eq!(formula[0], 0x5B);
+        assert_eq!(&formula[11..15], &[0, 0, 4, 0]);
     }
 }

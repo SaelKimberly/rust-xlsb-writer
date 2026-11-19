@@ -63,3 +63,4 @@
 - [Worksheet Protection](plans/2026-11-18-worksheet-protection.md)
 - [Conditional formatting](plans/2026-11-19-conditional-formatting.md)
 - [Rich strings](plans/2026-11-19-rich-strings.md)
+- [Sparklines](plans/2026-11-19-sparklines.md)

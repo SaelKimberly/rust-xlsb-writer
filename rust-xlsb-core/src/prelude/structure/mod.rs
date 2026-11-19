@@ -4,6 +4,7 @@ mod blxf;
 mod bold;
 mod cell;
 mod font_flags;
+mod frt;
 mod range_protection_title_sd_rel;
 mod rfx;
 mod rich_str;
@@ -17,6 +18,9 @@ pub use blxf::{Blxf, BorderType};
 pub use bold::Bold;
 pub use cell::{BrtColSpan, Cell};
 pub use font_flags::FontFlags;
+pub use frt::{
+    FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtProductVersion, FrtSqref, FrtSqrefs,
+};
 pub use range_protection_title_sd_rel::RangeProtectionTitleSDRel;
 pub use rfx::UncheckedRfX;
 pub use rich_str::{PhRun, PhoneticRuns, RichStr, StrRun, StrRuns};

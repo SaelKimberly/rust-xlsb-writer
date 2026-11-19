@@ -22,6 +22,8 @@ mod brt_conditional;
 mod brt_dval;
 mod brt_dxf;
 mod brt_extern_sheet;
+mod brt_frt;
+pub use brt_frt::{BrtFRTBegin, BrtFRTEnd};
 mod brt_file_sharing;
 mod brt_fill;
 mod brt_filter;
@@ -40,6 +42,7 @@ mod brt_range_protection;
 mod brt_row_hdr;
 mod brt_sel;
 mod brt_sheet_protection;
+mod brt_sparkline;
 mod brt_style;
 mod brt_table;
 mod brt_wb_prop;
@@ -113,6 +116,7 @@ pub use brt_range_protection::BrtRangeProtection;
 pub use brt_row_hdr::BrtRowHdr;
 pub use brt_sel::BrtSel;
 pub use brt_sheet_protection::BrtSheetProtection;
+pub use brt_sparkline::{BrtBeginSparklineGroup, BrtEndSparklineGroup, BrtSparkline};
 pub use brt_style::BrtStyle;
 pub use brt_table::{
     BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtEndList, BrtEndListCol,

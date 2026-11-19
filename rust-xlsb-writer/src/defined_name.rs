@@ -369,6 +369,24 @@ pub fn area3d(ixti: u16, first_row: u32, first_col: u16, last_row: u32, last_col
     rgce
 }
 
+/// Encodes a `PtgArea3d` with the VALUE data type used by sparkline FRT
+/// formulas.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "the package module shares this encoder"
+)]
+pub(crate) fn area3d_value(
+    ixti: u16,
+    first_row: u32,
+    first_col: u16,
+    last_row: u32,
+    last_col: u16,
+) -> [u8; 15] {
+    let mut rgce = area3d(ixti, first_row, first_col, last_row, last_col);
+    rgce[0] = 0x5B;
+    rgce
+}
+
 fn split_local_name(name: &str) -> Result<Option<(Cow<'_, str>, &str)>> {
     if name.starts_with('\'') {
         let (sheet, rest) =

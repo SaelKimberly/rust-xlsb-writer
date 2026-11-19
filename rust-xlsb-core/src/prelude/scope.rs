@@ -46,6 +46,8 @@ declare_scopes!(
     SlicerCachesPivotCacheIDs,
     Slicers,
     SlicersEx,
+    SparklineGroups,
+    Sparklines,
     SlicerStyleElements,
     StyleSheet,
     WsViews

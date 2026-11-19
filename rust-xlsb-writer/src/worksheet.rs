@@ -15,6 +15,7 @@ use crate::format::BorderSide;
 use crate::formula::{Formula, cached_result, compile, result_is_too_long, subtotal_formula};
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
 use crate::range_list::RangeList;
+use crate::sparkline::{Sparkline, SparklineCell, SparklineGroup, SparklineRange};
 use crate::table::{Table, TableFunction, TableRange};
 use crate::{Color, Error, Format, Result, Url};
 
@@ -339,6 +340,7 @@ pub struct Worksheet {
     ignored_error_ranges: BTreeSet<(RowNum, ColNum, RowNum, ColNum)>,
     data_validations: Vec<DataValidationRange>,
     tables: Vec<TableRange>,
+    sparkline_groups: Vec<SparklineGroup>,
     max_autofit_row: RowNum,
     max_autofit_width: u32,
 }
@@ -413,6 +415,7 @@ impl Worksheet {
             ignored_error_ranges: BTreeSet::new(),
             data_validations: Vec::new(),
             tables: Vec::new(),
+            sparkline_groups: Vec::new(),
             max_autofit_row: MAX_ROW,
             max_autofit_width: MAX_AUTOFIT_WIDTH_PIXELS,
         }
@@ -2943,6 +2946,130 @@ impl Worksheet {
         Ok(self)
     }
 
+    /// Adds a sparkline to one cell.
+    ///
+    /// The sparkline data range must be one-dimensional. A range without a
+    /// worksheet name uses this worksheet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the cell is out of range,
+    /// [`Error::SparklineError`] when the data range is missing, invalid, or
+    /// not one-dimensional.
+    pub fn add_sparkline(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        sparkline: &Sparkline,
+    ) -> Result<&mut Self> {
+        if row > MAX_ROW || col > MAX_COL {
+            return Err(Error::RowColumnLimit);
+        }
+        let range = sparkline
+            .range
+            .clone()
+            .ok_or_else(|| Error::SparklineError("sparkline data range not set".to_owned()))?;
+        range.validate()?;
+        if !range.is_1d() {
+            return Err(Error::SparklineError(
+                "sparkline data range must be a 1D range".to_owned(),
+            ));
+        }
+        self.sparkline_groups.push(SparklineGroup {
+            sparkline: sparkline.clone(),
+            cells: vec![SparklineCell { row, col, range }],
+        });
+        Ok(self)
+    }
+
+    /// Adds one sparkline group across a row or column.
+    ///
+    /// `first_row..=last_row` and `first_col..=last_col` must describe either
+    /// one row or one column. The data range must be two-dimensional, and its
+    /// row or column count must match the target cells. Each target cell gets
+    /// the matching slice of the data range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] or [`Error::RowColumnOrder`] for an
+    /// invalid target range, or [`Error::SparklineError`] when the data range
+    /// is missing, invalid, not two-dimensional, or does not match the target.
+    pub fn add_sparkline_group(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        sparkline: &Sparkline,
+    ) -> Result<&mut Self> {
+        Self::check_range(first_row, first_col, last_row, last_col)?;
+        if first_row != last_row && first_col != last_col {
+            return Err(Error::SparklineError(
+                "sparkline group target must be one row or one column".to_owned(),
+            ));
+        }
+        let range = sparkline
+            .range
+            .clone()
+            .ok_or_else(|| Error::SparklineError("sparkline data range not set".to_owned()))?;
+        range.validate()?;
+        if !range.is_2d() {
+            return Err(Error::SparklineError(
+                "sparkline group data range must be a 2D range".to_owned(),
+            ));
+        }
+
+        let target_rows = last_row - first_row + 1;
+        let target_cols = u32::from(last_col - first_col) + 1;
+        let mut cells =
+            Vec::with_capacity(usize::try_from(target_rows.max(target_cols)).unwrap_or(0));
+        if target_rows > 1 {
+            if range.rows() != target_rows {
+                return Err(Error::SparklineError(
+                    "sparkline group rows do not match the data range".to_owned(),
+                ));
+            }
+            for row in first_row..=last_row {
+                cells.push(SparklineCell {
+                    row,
+                    col: first_col,
+                    range: SparklineRange {
+                        sheet: range.sheet.clone(),
+                        first_row: row - first_row + range.first_row,
+                        last_row: row - first_row + range.first_row,
+                        first_col: range.first_col,
+                        last_col: range.last_col,
+                    },
+                });
+            }
+        } else {
+            if range.cols() != target_cols {
+                return Err(Error::SparklineError(
+                    "sparkline group columns do not match the data range".to_owned(),
+                ));
+            }
+            for col in first_col..=last_col {
+                cells.push(SparklineCell {
+                    row: first_row,
+                    col,
+                    range: SparklineRange {
+                        sheet: range.sheet.clone(),
+                        first_row: range.first_row,
+                        last_row: range.last_row,
+                        first_col: col - first_col + range.first_col,
+                        last_col: col - first_col + range.first_col,
+                    },
+                });
+            }
+        }
+
+        self.sparkline_groups.push(SparklineGroup {
+            sparkline: sparkline.clone(),
+            cells,
+        });
+        Ok(self)
+    }
+
     /// Adds a conditional format over a cell range.
     ///
     /// The rule is evaluated against the range; a differential format is
@@ -3247,6 +3374,10 @@ impl Worksheet {
 
     pub(crate) fn tables_mut(&mut self) -> &mut [TableRange] {
         &mut self.tables
+    }
+
+    pub(crate) fn sparkline_groups(&self) -> &[SparklineGroup] {
+        &self.sparkline_groups
     }
 
     pub(crate) const fn autofilter_range(&self) -> Option<UncheckedRfX> {

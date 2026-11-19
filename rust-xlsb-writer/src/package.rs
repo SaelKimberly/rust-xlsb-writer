@@ -15,9 +15,12 @@ use rust_xlsb_core::prelude::{
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
 use crate::data::CellData;
-use crate::defined_name::{DefinedName, NameTable, XtiCollector, area3d};
+use crate::defined_name::{
+    DefinedName, NameTable, XtiCollector, area3d, area3d_value, sheet_index,
+};
 use crate::formula::TableInfo;
 use crate::properties::CustomPropertyValue;
+use crate::sparkline::{SparklineSaveCell, SparklineSaveGroup};
 use crate::table::write_table_part;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
@@ -112,6 +115,39 @@ pub fn build_package(
         }
     }
 
+    let mut sheet_sparklines = Vec::with_capacity(sheets.len());
+    for sheet in sheets {
+        let mut groups = Vec::with_capacity(sheet.sparkline_groups().len());
+        for group in sheet.sparkline_groups() {
+            let name = group
+                .cells
+                .first()
+                .and_then(|cell| cell.range.sheet.as_deref())
+                .unwrap_or_else(|| sheet.name_ref());
+            let ixti = xti.index(sheet_index(sheets, name)?)?;
+            let mut cells = Vec::with_capacity(group.cells.len());
+            for cell in &group.cells {
+                let range = &cell.range;
+                cells.push(SparklineSaveCell {
+                    row: cell.row,
+                    col: cell.col,
+                    rgce: area3d_value(
+                        ixti,
+                        range.first_row,
+                        range.first_col,
+                        range.last_row,
+                        range.last_col,
+                    ),
+                });
+            }
+            groups.push(SparklineSaveGroup {
+                sparkline: &group.sparkline,
+                cells,
+            });
+        }
+        sheet_sparklines.push(groups);
+    }
+
     let mut sheet_parts = Vec::with_capacity(sheets.len());
     let mut table_parts = Vec::new();
     let mut table_ids = Vec::new();
@@ -125,6 +161,7 @@ pub fn build_package(
             &sst,
             &rich_fonts,
             &conditional_dxf_ids[index],
+            &sheet_sparklines[index],
             selected,
             &mut bytes,
         )?;
@@ -1133,8 +1170,8 @@ mod tests {
         BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
         BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFmlaBool,
         BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtListTrFmla,
-        BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo,
-        BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+        BrtName, BrtRowHdr, BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp,
+        BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
         CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
         CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
         CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
@@ -2134,6 +2171,75 @@ mod tests {
         expected.extend_from_slice(&[0x42, 1, 0x04, 0]);
         assert_eq!(total.itab, u32::MAX);
         assert_eq!(total.formula.rgce, expected);
+    }
+
+    #[test]
+    fn sparkline_ranges_share_the_extern_sheet_collection() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.add_worksheet();
+        let first = crate::Sparkline::new().set_range(("Sheet1", 0, 0, 0, 4));
+        let second = crate::Sparkline::new().set_range(("Sheet2", 1, 0, 1, 4));
+        let repeat = crate::Sparkline::new().set_range(("Sheet1", 2, 0, 2, 4));
+        let sheet1 = workbook.worksheet_from_index(0).expect("Sheet1");
+        sheet1.add_sparkline(0, 5, &first).expect("first");
+        sheet1.add_sparkline(1, 5, &repeat).expect("repeat");
+        let cross = crate::Sparkline::new().set_range(("Sheet2", 2, 0, 2, 4));
+        sheet1.add_sparkline(2, 5, &cross).expect("cross sheet");
+        let group = crate::Sparkline::new().set_range(("Sheet2", 0, 0, 2, 4));
+        sheet1
+            .add_sparkline_group(0, 6, 2, 6, &group)
+            .expect("group");
+        workbook
+            .worksheet_from_index(1)
+            .expect("Sheet2")
+            .add_sparkline(0, 5, &second)
+            .expect("second");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 2);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(extern_sheets[0].rgXti[1].firstSheet, 1);
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let sparklines = records::<BrtSparkline>(&sheet);
+        assert_eq!(sparklines.len(), 6);
+        let formula = |record: &BrtSparkline| {
+            record.frt.rgFormulas.as_ref().expect("formula").array[0]
+                .formula
+                .rgce
+                .clone()
+        };
+        let sqref = |record: &BrtSparkline| {
+            let range = &record.frt.rgSqrefs.as_ref().expect("sqrefs").array[0]
+                .sqrfx
+                .rgRefx[0];
+            (range.rwFirst, range.colFirst)
+        };
+        assert_eq!(&formula(&sparklines[0])[1..3], &[0, 0]);
+        assert_eq!(&formula(&sparklines[1])[1..3], &[0, 0]);
+        assert_eq!(&formula(&sparklines[2])[1..3], &[1, 0]);
+        for (index, row) in (0_u32..=2).enumerate() {
+            let record = &sparklines[3 + index];
+            assert_eq!(&formula(record)[1..3], &[1, 0]);
+            assert_eq!(&formula(record)[3..7], &row.to_le_bytes());
+            assert_eq!(sqref(record), (row, 6));
+        }
+    }
+
+    #[test]
+    fn sparkline_with_an_unknown_sheet_fails_at_save() {
+        let mut workbook = crate::Workbook::new();
+        let sparkline = crate::Sparkline::new().set_range(("Missing", 0, 0, 0, 4));
+        workbook
+            .add_worksheet()
+            .add_sparkline(0, 5, &sparkline)
+            .expect("stores");
+        let error = workbook.save_to_buffer().expect_err("unknown sheet");
+        assert!(matches!(error, Error::UnknownWorksheetNameOrIndex(name) if name == "Missing"));
     }
 
     #[test]
