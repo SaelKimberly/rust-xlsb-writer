@@ -68,7 +68,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 286 core + 354 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 286 core + 355 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -461,7 +461,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 286 core + 354 writer unit tests and 7 doctests in default
+- Test evidence: 286 core + 355 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
@@ -474,7 +474,10 @@ parts.
   `PtgRefN` with row offset 0 and column offset -1. Multi-range tests decode
   `crfx`/`rgRefx` in caller order for both `BrtDVal` and
   `BrtBeginConditionalFormatting`; LibreOffice preserves
-  `sqref="B3:D6 I3:K6"` for both on XLSX export.
+  `sqref="B3:D6 I3:K6"` for both on XLSX export. ExcelGen's
+  `make_DVal`/`make_BeginCondFormat` confirm one record with `crfx > 1`:
+  data-validation formulas use the last area's top-left, conditional-format
+  formulas the bounding rectangle's top-left.
   LibreOffice imports static array formulas from XLSB, preserves their `ref`
   ranges, and recalculates the cached results; calamine reads the top-left
   cached value.

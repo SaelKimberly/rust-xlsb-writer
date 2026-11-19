@@ -535,13 +535,13 @@ impl DataValidation {
     }
 
     pub(crate) fn record_ranges(&self, ranges: &[UncheckedRfX]) -> Result<BrtDVal> {
-        let first = ranges
-            .first()
+        let formula_base = ranges
+            .last()
             .copied()
             .ok_or_else(|| Error::Parameter("data validation requires a range".to_owned()))?;
         let range_count = u32::try_from(ranges.len())
             .map_err(|_| Error::ValueNotRepresentable("too many data-validation ranges"))?;
-        let (val_type, operator, formula1, formula2) = self.formulas(&first)?;
+        let (val_type, operator, formula1, formula2) = self.formulas(&formula_base)?;
         let mut flags = u32::from(val_type) | (u32::from(operator) << 20);
         flags |= match self.error_style {
             DataValidationErrorStyle::Stop => 0,
@@ -885,7 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn multi_range_records_keep_every_area_and_the_first_formula_base() {
+    fn multi_range_records_keep_every_area_and_the_last_formula_base() {
         let validation = DataValidation::new()
             .allow_whole_number(DataValidationRule::GreaterThan(0))
             .set_multi_range("$B$3:$D$6,$I$3:$K$6");
@@ -909,7 +909,7 @@ mod tests {
         let record = custom.record_ranges(ranges.as_slice()).expect("record");
         assert_eq!(
             record.formula1.rgce,
-            [0x4C, 0xFE, 0xFF, 0x0F, 0x00, 0xFE, 0xFF, 0x1E, 0, 0, 0x0D]
+            [0x4C, 0xFD, 0xFF, 0x0F, 0x00, 0xFD, 0xFF, 0x1E, 0, 0, 0x0D]
         );
     }
 

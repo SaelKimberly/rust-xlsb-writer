@@ -48,9 +48,10 @@ is source-compatible API and must exist on every rule type.
 - Scenarios: space-separated ranges, comma-separated ranges, `$` anchors,
   single cells, multiple areas, replacement of the primary range, malformed
   input, range-count limits, and one rule with several DFX/formula records.
-- Acceptance: the decoded `crfx`/`rgRefx` matches the requested areas; formulas
-  in the rule use the first area's top-left cell as their relative base;
-  worksheets without multi-ranges keep byte-identical output.
+- Acceptance: the decoded `crfx`/`rgRefx` matches the requested areas; data
+  validation formulas use the last area's top-left cell, and conditional-format
+  formulas use the top-left of the bounding rectangle of all areas; worksheets
+  without multi-ranges keep byte-identical output.
 - No user decision is required; the reference defines the method names and
   argument types.
 
@@ -96,8 +97,9 @@ pub(crate) enum RangeList {
   counts over the caller limit.
 - `from_primary(primary, multi_range, max)` returns `Single(primary)` when no
   override exists, otherwise the parsed list.
-- `as_slice()` borrows the areas without allocation; `first()` supplies the
-  formula base.
+- `as_slice()` borrows the areas without allocation; `last()` supplies the
+  data-validation formula base and `bounding_first_cell()` supplies the
+  conditional-format formula base.
 
 `rust-xlsb-writer/src/data_validation.rs`:
 
@@ -114,8 +116,9 @@ pub(crate) enum RangeList {
   `2ColorScale`, `3ColorScale`, `DataBar`, `IconSet`, and `CustomIcon`.
 - Add `ConditionalFormat::multi_range(&self) -> Option<&str>` with a `None`
   default; every rule returns its stored value.
-- `ConditionalFormatRange` stores `RangeList`; `begin_rule` uses the first
-  area, and `write_conditional_formats` emits one block containing every area.
+- `ConditionalFormatRange` stores `RangeList`; `begin_rule` uses the bounding
+  rectangle's first cell, and `write_conditional_formats` emits one block
+  containing every area.
 
 `rust-xlsb-core/src/prelude/record/brt_conditional.rs`:
 
@@ -155,8 +158,9 @@ deku from the vector length.
   formatting accepts 1..=8192 areas (`BrtBeginConditionalFormatting14` is for
   larger unions).
 - Multi-range strings are same-sheet only; sheet-qualified areas are rejected.
-- The conditional-format rule formula compiles against the first area's
-  top-left cell, matching Excel's multi-selection behavior.
+- Data-validation formulas compile against the last area's top-left cell.
+- Conditional-format formulas compile against the top-left cell of the
+  bounding rectangle of all areas.
 
 ## TDD Route
 
@@ -185,8 +189,8 @@ deku from the vector length.
      `rust-xlsb-core/src/prelude/record/brt_conditional.rs`,
      `rust-xlsb-core/src/prelude/mod.rs`.
    - Tests: every rule type exposes the setter; worksheet stores all areas;
-     formula base uses the first area; core block check accepts several ranges
-     and rejects zero or too many; package emission.
+     formula base uses the bounding rectangle; core block check accepts several
+     ranges and rejects zero or too many; package emission.
    - Verify: `cargo test -p rust-xlsb-writer conditional_format` and
      `cargo test -p rust-xlsb-core brt_conditional`.
 
@@ -204,10 +208,10 @@ deku from the vector length.
 
 ## Verification
 
-- `cargo test --workspace`: 640 unit tests and 7 doctests pass (286 core,
-  354 writer).
-- `cargo test --workspace --all-features`: 644 unit tests and 7 doctests pass
-  (286 core, 358 writer).
+- `cargo test --workspace`: 641 unit tests and 7 doctests pass (286 core,
+  355 writer).
+- `cargo test --workspace --all-features`: 645 unit tests and 7 doctests pass
+  (286 core, 359 writer).
 - `cargo clippy --workspace --all-targets --all-features`: clean.
 - `cargo fmt --all --check` and `git diff --check`: clean.
 - LibreOffice imports the generated XLSB and exports
@@ -219,12 +223,22 @@ deku from the vector length.
 
 `MultiRangeReview` found no blocking or minor defects. It verified the
 protocol limits, zero-based/clusive range encoding, one-record union emission,
-formula base, worksheet state on malformed input, single-range byte identity,
-allocation behavior, and source-compatible setters on all 13 rule types.
-Residual test and documentation gaps were closed afterward:
+worksheet state on malformed input, single-range byte identity, allocation
+behavior, and source-compatible setters on all 13 rule types.
 
-- core and parser boundary tests now exercise 8192 accepted and 8193 rejected;
-- the conditional-format setter test now covers whitespace-only clearing;
+A source audit of ExcelGen's `xutl_xlsb.pkb` then corrected the formula-base
+model and confirmed the record shape:
+
+- `make_DVal` writes one `BrtDVal` with `sqrfx.crfx` and loops every area;
+  formulas use `sqref.lastRangeCellRef`, the last area's top-left.
+- `make_BeginCondFormat` writes one block with every area;
+  `boundingAreaFirstCellRef` is the top-left of the bounding rectangle.
+- Tests now use ordered ranges where first, last, and bounding cells differ.
+
+Review-adjacent gaps were also closed:
+
+- core and parser boundary tests exercise 8192 accepted and 8193 rejected;
+- the conditional-format setter test covers whitespace-only clearing;
 - the public `add_*` docs describe the multi-range override and its
   `Error::Parameter` failure path.
 
@@ -238,7 +252,9 @@ Residual test and documentation gaps were closed afterward:
 - A malformed multi-range string is reported by `add_*`, unlike the reference,
   which stores the raw string for later serialization. This is the safer
   failure point and keeps worksheet state unchanged.
-- Conditional-format formulas use the first area's top-left cell as their
-  relative base. If Excel instead uses the active cell, a multi-selection with
-  a different active cell could evaluate differently; the first area is the
-  only stable base the writer can store.
+- Data-validation formulas use the last area's top-left cell, matching
+  ExcelGen's `setSqref`/`make_DVal` path.
+- Conditional-format formulas use the bounding rectangle's first cell, matching
+  ExcelGen's `setSqref`/`make_BeginCondFormat` path. Using the first area
+  instead would shift formulas whenever the first area is not the
+  top-left-most.

@@ -68,11 +68,14 @@ impl RangeList {
         }
     }
 
-    pub(crate) fn first(&self) -> UncheckedRfX {
-        match self {
-            Self::Single(range) => *range,
-            Self::Multiple(ranges) => ranges[0],
+    pub(crate) fn bounding_first_cell(&self) -> (u32, u32) {
+        let mut row = u32::MAX;
+        let mut col = u32::MAX;
+        for range in self.as_slice() {
+            row = row.min(range.rwFirst);
+            col = col.min(range.colFirst);
         }
+        (row, col)
     }
 }
 
@@ -176,7 +179,14 @@ mod tests {
     fn single_cell_is_a_single_range_without_a_boxed_list() {
         let ranges = RangeList::parse("B3", 8_192).unwrap();
         assert!(matches!(ranges, RangeList::Single(_)));
-        assert_eq!(ranges.first(), area(2, 2, 1, 1));
+        assert_eq!(ranges.as_slice(), &[area(2, 2, 1, 1)]);
+    }
+
+    #[test]
+    fn formula_bases_use_the_last_area_and_the_bounding_top_left() {
+        let ranges = RangeList::parse("$I$3:$K$6,$B$9:$D$12", 8_192).unwrap();
+        assert_eq!(ranges.as_slice()[1], area(8, 11, 1, 3));
+        assert_eq!(ranges.bounding_first_cell(), (2, 1));
     }
 
     #[test]

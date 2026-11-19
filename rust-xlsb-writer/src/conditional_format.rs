@@ -2528,9 +2528,9 @@ impl ConditionalFormatRange {
     }
 
     pub(crate) fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
-        let first = self.ranges.first();
+        let (row, col) = self.ranges.bounding_first_cell();
         self.conditional_format
-            .begin_rule_in_range(priority, dxf_id, first.rwFirst, first.colFirst)
+            .begin_rule_in_range(priority, dxf_id, row, col)
     }
 
     pub(crate) fn ranges(&self) -> &[UncheckedRfX] {

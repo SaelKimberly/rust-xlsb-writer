@@ -5098,7 +5098,7 @@ mod tests {
 
         assert_eq!(worksheet.data_validations().len(), 2);
         assert_eq!(
-            worksheet.data_validations()[0].ranges.first(),
+            worksheet.data_validations()[0].ranges.as_slice()[0],
             UncheckedRfX {
                 rwFirst: 1,
                 rwLast: 3,
@@ -5210,7 +5210,7 @@ mod tests {
             .expect("conditional format");
         assert_eq!(worksheet.conditional_formats().len(), 1);
         let stored = &worksheet.conditional_formats()[0];
-        let range = stored.ranges.first();
+        let range = stored.ranges.as_slice()[0];
         assert_eq!(range.rwFirst, 1);
         assert_eq!(range.rwLast, 4);
         assert_eq!(range.colFirst, 2);
@@ -5244,7 +5244,7 @@ mod tests {
         let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let rule = crate::ConditionalFormatFormula::new()
             .set_rule("=A1")
-            .set_multi_range("$B$3:$D$6,$I$3:$K$6");
+            .set_multi_range("$I$3:$K$6,$B$9:$D$12");
         worksheet
             .add_conditional_format(0, 0, 0, 0, &rule)
             .expect("multi-range conditional format");
@@ -5252,8 +5252,9 @@ mod tests {
         let stored = &worksheet.conditional_formats()[0];
         assert_eq!(stored.ranges.as_slice().len(), 2);
         assert_eq!(stored.ranges.as_slice()[0].rwFirst, 2);
-        assert_eq!(stored.ranges.as_slice()[0].colFirst, 1);
-        assert_eq!(stored.ranges.as_slice()[1].colFirst, 8);
+        assert_eq!(stored.ranges.as_slice()[0].colFirst, 8);
+        assert_eq!(stored.ranges.as_slice()[1].rwFirst, 8);
+        assert_eq!(stored.ranges.as_slice()[1].colFirst, 1);
 
         let record = stored.begin_rule(1, u32::MAX).expect("rule");
         let formula = record.formula1.expect("formula");

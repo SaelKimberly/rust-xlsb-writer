@@ -2592,7 +2592,7 @@ mod tests {
 
         let rule = crate::ConditionalFormatFormula::new()
             .set_rule("=A1")
-            .set_multi_range("$B$3:$D$6,$I$3:$K$6");
+            .set_multi_range("$I$3:$K$6,$B$9:$D$12");
         worksheet
             .add_conditional_format(0, 0, 0, 0, &rule)
             .expect("multi-range conditional format");
@@ -2623,7 +2623,7 @@ mod tests {
                 .iter()
                 .map(|range| (range.rwFirst, range.rwLast, range.colFirst, range.colLast))
                 .collect::<Vec<_>>(),
-            [(2, 5, 1, 3), (2, 5, 8, 10)]
+            [(2, 5, 8, 10), (8, 11, 1, 3)]
         );
 
         let rules = records::<BrtBeginCFRule>(&sheet);
