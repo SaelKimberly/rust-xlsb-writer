@@ -4,12 +4,13 @@ use std::fmt::{self, Display};
 
 use rust_xlsb_core::prelude::{
     BrtBeginAFilter, BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtEndAFilter, BrtEndList,
-    BrtEndListCol, BrtEndListCols, BrtTableStyleClient, UncheckedRfX, XlNullableWideString,
-    XlStringExt,
+    BrtEndListCol, BrtEndListCols, BrtListTrFmla, BrtTableStyleClient, CellParsedFormula,
+    UncheckedRfX, XlNullableWideString, XlStringExt,
 };
 use rust_xlsb_core::push_record;
 
-use crate::{Error, Result};
+use crate::formula::compile;
+use crate::{Error, Format, Formula, Result};
 
 const NO_DXF: u32 = 0xffff_ffff;
 
@@ -25,6 +26,7 @@ pub struct Table {
     pub(crate) style: TableStyle,
     pub(crate) columns: Vec<TableColumn>,
     pub(crate) show_header_row: bool,
+    pub(crate) show_total_row: bool,
     pub(crate) show_autofilter: bool,
     pub(crate) show_banded_rows: bool,
     pub(crate) show_banded_columns: bool,
@@ -48,6 +50,7 @@ impl Table {
             style: TableStyle::Medium9,
             columns: Vec::new(),
             show_header_row: true,
+            show_total_row: false,
             show_autofilter: true,
             show_banded_rows: true,
             show_banded_columns: false,
@@ -81,6 +84,16 @@ impl Table {
     #[must_use]
     pub const fn set_header_row(mut self, enable: bool) -> Self {
         self.show_header_row = enable;
+        self
+    }
+
+    /// Turns the total row on or off.
+    ///
+    /// The total row is the table's last row. Populate it with
+    /// [`TableColumn::set_total_label`] or [`TableColumn::set_total_function`].
+    #[must_use]
+    pub const fn set_total_row(mut self, enable: bool) -> Self {
+        self.show_total_row = enable;
         self
     }
 
@@ -137,10 +150,16 @@ impl Table {
     }
 }
 
-/// One table column. Only header text is supported.
+/// One table column.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TableColumn {
     pub(crate) header: String,
+    pub(crate) total_label: String,
+    pub(crate) total_function: TableFunction,
+    pub(crate) format: Option<Format>,
+    pub(crate) header_format: Option<Format>,
+    pub(crate) total_formula: Option<CellParsedFormula>,
+    pub(crate) total_result: Option<Box<str>>,
 }
 
 impl TableColumn {
@@ -149,6 +168,12 @@ impl TableColumn {
     pub const fn new() -> Self {
         Self {
             header: String::new(),
+            total_label: String::new(),
+            total_function: TableFunction::None,
+            format: None,
+            header_format: None,
+            total_formula: None,
+            total_result: None,
         }
     }
 
@@ -157,6 +182,91 @@ impl TableColumn {
     pub fn set_header(mut self, header: impl Into<String>) -> Self {
         self.header = header.into();
         self
+    }
+
+    /// Sets the label displayed in the table total row for this column.
+    #[must_use]
+    pub fn set_total_label(mut self, label: impl Into<String>) -> Self {
+        self.total_label = label.into();
+        self
+    }
+
+    /// Sets the `SUBTOTAL` function for this column's total row cell.
+    #[must_use]
+    pub fn set_total_function(mut self, function: TableFunction) -> Self {
+        self.total_function = function;
+        self
+    }
+
+    /// Sets the format for this column's data cells.
+    #[must_use]
+    pub fn set_format(mut self, format: impl Into<Format>) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
+    /// Sets the format for this column's header cell.
+    #[must_use]
+    pub fn set_header_format(mut self, format: impl Into<Format>) -> Self {
+        self.header_format = Some(format.into());
+        self
+    }
+}
+
+/// A function for a table total row column.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum TableFunction {
+    /// No total function.
+    #[default]
+    None,
+    /// Arithmetic mean.
+    Average,
+    /// Count of non-empty cells.
+    Count,
+    /// Count of numeric cells.
+    CountNumbers,
+    /// Largest value.
+    Max,
+    /// Smallest value.
+    Min,
+    /// Arithmetic sum.
+    Sum,
+    /// Estimated standard deviation.
+    StdDev,
+    /// Estimated variance.
+    Var,
+    /// User supplied same-sheet A1 formula.
+    Custom(Formula),
+}
+
+impl TableFunction {
+    pub(crate) const fn ilta(&self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Average => 1,
+            Self::Count => 2,
+            Self::CountNumbers => 3,
+            Self::Max => 4,
+            Self::Min => 5,
+            Self::Sum => 6,
+            Self::StdDev => 7,
+            Self::Var => 8,
+            Self::Custom(_) => 9,
+        }
+    }
+
+    pub(crate) const fn subtotal_number(&self) -> Option<u16> {
+        match self {
+            Self::None | Self::Custom(_) => None,
+            Self::Average => Some(101),
+            Self::CountNumbers => Some(102),
+            Self::Count => Some(103),
+            Self::Max => Some(104),
+            Self::Min => Some(105),
+            Self::StdDev => Some(107),
+            Self::Sum => Some(109),
+            Self::Var => Some(110),
+        }
     }
 }
 
@@ -277,6 +387,7 @@ pub(crate) fn write_table_part(table: &TableRange, out: &mut Vec<u8>) -> Result<
     let table_data = &table.table;
     let range = table.range;
     let name = table_data.name.as_str();
+    let total_row = table_data.show_total_row;
     push_record(
         out,
         &BrtBeginList {
@@ -284,8 +395,12 @@ pub(crate) fn write_table_part(table: &TableRange, out: &mut Vec<u8>) -> Result<
             lt: 0,
             idList: table_data.id,
             crwHeader: u32::from(table_data.show_header_row),
-            crwTotals: 0,
-            flags: 0,
+            crwTotals: u32::from(total_row),
+            flags: if total_row {
+                BrtBeginList::F_SHOWN_TOTAL_ROW
+            } else {
+                0
+            },
             nDxfHeader: NO_DXF,
             nDxfData: NO_DXF,
             nDxfAgg: NO_DXF,
@@ -303,7 +418,11 @@ pub(crate) fn write_table_part(table: &TableRange, out: &mut Vec<u8>) -> Result<
     )?;
 
     if table_data.show_header_row && table_data.show_autofilter {
-        push_record(out, &BrtBeginAFilter { rfx: range })?;
+        let mut filter_range = range;
+        if total_row {
+            filter_range.rwLast = filter_range.rwLast.saturating_sub(1);
+        }
+        push_record(out, &BrtBeginAFilter { rfx: filter_range })?;
         push_record(out, &BrtEndAFilter::default())?;
     }
 
@@ -317,23 +436,45 @@ pub(crate) fn write_table_part(table: &TableRange, out: &mut Vec<u8>) -> Result<
     for (index, column) in table_data.columns.iter().enumerate() {
         let id = u32::try_from(index + 1)
             .map_err(|_| Error::ValueNotRepresentable("too many table columns"))?;
+        let label = (!column.total_label.is_empty()).then_some(column.total_label.as_str());
+        let custom = if label.is_none() {
+            match &column.total_function {
+                TableFunction::Custom(formula) => Some(formula),
+                _ => None,
+            }
+        } else {
+            None
+        };
         push_record(
             out,
             &BrtBeginListCol {
                 idField: id,
-                ilta: 0,
+                ilta: if label.is_some() {
+                    0
+                } else {
+                    column.total_function.ilta()
+                },
                 nDxfHdr: NO_DXF,
                 nDxfInsertRow: NO_DXF,
                 nDxfAgg: NO_DXF,
                 idqsif: 0,
                 stName: XlNullableWideString::default(),
                 stCaption: XlNullableWideString::construct(Some(column.header.as_str())),
-                stTotal: XlNullableWideString::default(),
+                stTotal: label.map_or_else(XlNullableWideString::default, |label| {
+                    XlNullableWideString::construct(Some(label))
+                }),
                 stStyleHeader: XlNullableWideString::default(),
                 stStyleInsertRow: XlNullableWideString::default(),
                 stStyleAgg: XlNullableWideString::default(),
             },
         )?;
+        if let Some(formula) = custom {
+            let formula = match &column.total_formula {
+                Some(compiled) => compiled.clone(),
+                None => compile(formula.as_str())?,
+            };
+            push_record(out, &BrtListTrFmla { flags: 0, formula })?;
+        }
         push_record(out, &BrtEndListCol::default())?;
     }
     push_record(out, &BrtEndListCols::default())?;
@@ -421,15 +562,9 @@ mod tests {
                 name: "Table1".to_owned(),
                 id: 1,
                 columns: vec![
-                    TableColumn {
-                        header: "Name".to_owned(),
-                    },
-                    TableColumn {
-                        header: "Q1".to_owned(),
-                    },
-                    TableColumn {
-                        header: "Q2".to_owned(),
-                    },
+                    TableColumn::new().set_header("Name"),
+                    TableColumn::new().set_header("Q1"),
+                    TableColumn::new().set_header("Q2"),
                 ],
                 ..Table::new()
             },

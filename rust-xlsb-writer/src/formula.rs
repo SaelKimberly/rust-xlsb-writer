@@ -32,6 +32,7 @@ const PTG_FUNC: u8 = 0x41;
 const PTG_FUNC_VAR: u8 = 0x42;
 const PTG_REF: u8 = 0x44;
 const PTG_AREA: u8 = 0x45;
+const PTG_AREA_REF: u8 = 0x25;
 const PTG_REF_N: u8 = 0x4C;
 const PTG_AREA_N: u8 = 0x4D;
 
@@ -87,6 +88,10 @@ impl Formula {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.formula
+    }
+
+    pub(crate) fn result_text(&self) -> Option<&str> {
+        self.result.as_deref()
     }
 
     pub(crate) fn into_parts(self) -> (Box<str>, Option<Box<str>>) {
@@ -179,6 +184,35 @@ fn compile_with_base(formula: &str, base: Option<(u32, u16)>) -> Result<CellPars
         cb: 0,
         rgcb: Vec::new(),
     })
+}
+
+/// Builds a table total-row `SUBTOTAL(function, area)` formula.
+pub fn subtotal_formula(
+    function: u16,
+    first_row: u32,
+    last_row: u32,
+    col: u16,
+) -> CellParsedFormula {
+    debug_assert!(first_row <= last_row);
+    debug_assert!(col < 16_384);
+    let mut rgce = Vec::with_capacity(20);
+    rgce.push(PTG_INT);
+    rgce.extend_from_slice(&function.to_le_bytes());
+    rgce.push(PTG_AREA_REF);
+    rgce.extend_from_slice(&first_row.to_le_bytes());
+    rgce.extend_from_slice(&last_row.to_le_bytes());
+    rgce.extend_from_slice(&col.to_le_bytes());
+    rgce.extend_from_slice(&col.to_le_bytes());
+    rgce.push(PTG_FUNC_VAR);
+    rgce.push(2);
+    rgce.extend_from_slice(&0x0158_u16.to_le_bytes());
+    let cce = u32::try_from(rgce.len()).expect("total formula fits 32 bits");
+    CellParsedFormula {
+        cce,
+        rgce,
+        cb: 0,
+        rgcb: Vec::new(),
+    }
 }
 
 /// Builds the top-left cell formula that points at an array formula record.
@@ -912,6 +946,7 @@ const FUNCTIONS: &[Function] = &[
     function("POWER", 0x0151, Arity::Fixed(2)),
     function("RADIANS", 0x0156, Arity::Fixed(1)),
     function("DEGREES", 0x0157, Arity::Fixed(1)),
+    function("SUBTOTAL", 0x0158, Arity::Range(2, 2)),
     function("SUMIF", 0x0159, Arity::Range(2, 3)),
     function("COUNTIF", 0x015A, Arity::Fixed(2)),
     function("COUNTBLANK", 0x015B, Arity::Fixed(1)),
@@ -933,6 +968,68 @@ mod tests {
 
     fn tokens(formula: &str) -> Vec<u8> {
         compile(formula).expect("formula compiles").rgce
+    }
+
+    #[test]
+    fn subtotal_formula_targets_one_column() {
+        let formula = subtotal_formula(109, 2, 4, 1);
+        assert_eq!(
+            formula.rgce,
+            [
+                PTG_INT,
+                109,
+                0,
+                PTG_AREA_REF,
+                2,
+                0,
+                0,
+                0,
+                4,
+                0,
+                0,
+                0,
+                1,
+                0,
+                1,
+                0,
+                PTG_FUNC_VAR,
+                2,
+                0x58,
+                0x01
+            ]
+        );
+        assert_eq!(formula.cce, 20);
+        assert_eq!(formula.cb, 0);
+        assert_eq!(formula.rgcb.len(), 0);
+    }
+
+    #[test]
+    fn compiles_subtotal() {
+        assert_eq!(
+            tokens("=SUBTOTAL(109,B3:B5)"),
+            [
+                PTG_INT,
+                109,
+                0,
+                PTG_AREA,
+                2,
+                0,
+                0,
+                0,
+                4,
+                0,
+                0,
+                0,
+                1,
+                0xC0,
+                1,
+                0xC0,
+                PTG_FUNC_VAR,
+                2,
+                0x58,
+                0x01
+            ]
+        );
     }
 
     #[test]

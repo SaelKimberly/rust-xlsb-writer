@@ -28,10 +28,10 @@ It is not a feature-equivalent replacement. The largest gaps are:
    top/bottom, average, duplicate/unique, 2-/3-color scales, basic data bars,
    standard icon sets, text, blank, error, date-occurring, and arbitrary
    formula rules, including multi-range rules; x14 icon sets and data-bar
-   extensions are missing. Basic tables, `AutoFilter` ranges, list/custom
-   filter conditions with temporal and boolean matching, literal and
-   formula-backed multi-range data validation, and structural sheet protection
-   are present.
+   extensions are missing. Basic tables with total rows, subtotal/label
+   columns, and per-column formats, `AutoFilter` ranges, list/custom filter
+   conditions with temporal and boolean matching, literal and formula-backed
+   multi-range data validation, and structural sheet protection are present.
 4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
@@ -58,7 +58,7 @@ the breadth gap.
 | Writes | generic `write`, `write_with_format`, formatted/unformatted row and column writes, row/column matrices, typed string/number/boolean/blank/date/time/datetime helpers, scalar formulas, cached formula results |
 | Cell layout | column width and range width, approximate autofit with row/width limits, column format and range format, border-aware range format, row height, row format, hidden rows/columns, hidden unused rows, cell/range format edits, clear value/format, merged ranges |
 | View | freeze panes and top-cell, selection, top-left cell, zoom, normal/page-layout/page-break-preview modes, gridline/zero/right-to-left flags, hidden/very-hidden/active/selected/first tab, tab color |
-| Analysis | worksheet `AutoFilter` ranges with list/custom filter conditions and automatic row hiding; basic tables with header rows, built-in styles, and table AutoFilters; literal and formula-backed data validation; conditional formats through arbitrary formula rules |
+| Analysis | worksheet `AutoFilter` ranges with list/custom filter conditions and automatic row hiding; tables with header/total rows, built-in styles, table AutoFilters, subtotal/label columns, and per-column formats; literal and formula-backed data validation; conditional formats through arbitrary formula rules |
 | Metadata | core, app, and custom document properties; explicit creation timestamp |
 | Hyperlinks | `write_url` and text/format/tooltip variants, internal and external targets, default hyperlink style, worksheet relationships |
 | Print | page orientation, paper size, order, margins, scale/fit, centering, gridlines/headings, black-and-white, draft, first page number, text headers/footers, manual row/column breaks, print areas, repeat rows/columns |
@@ -69,7 +69,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 286 core + 360 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 288 core + 366 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -179,7 +179,7 @@ Status meanings:
 |---|---|---|
 | `autofilter` | Supported | Range record, filter columns, and automatic row hiding |
 | `filter_column`, `filter_automatic_off` | Supported | List/custom string, number, temporal-serial, and boolean filters; blanks, AND/OR |
-| `add_table` | Partial | Header rows, custom columns, built-in styles, and table AutoFilters; totals, formulas, and per-column formats missing |
+| `add_table` | Partial | Header/total rows, custom columns, built-in styles, table AutoFilters, subtotal/label columns, and per-column data/header formats; calculated-column formulas missing |
 | `add_conditional_format` | Partial | Cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions missing |
 | `add_data_validation` | Partial | Multi-range list, whole/decimal, date/time, and text-length rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
@@ -289,7 +289,7 @@ records or package parts that do not exist yet.
 | Formulas | Shipped scalar token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError` records, cached results, recalculation-on-load, and static `BrtArrFmla` with `PtgExp` expansion; shared/dynamic state remains |
 | Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
 | Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
-| Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, and table AutoFilter ranges; totals, calculated columns, and per-column formats remain |
+| Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, table AutoFilter ranges, total rows, `ILTA_*` subtotals, `BrtListTrFmla` custom totals, and per-column formats; calculated columns remain |
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
 | Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
 | Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
@@ -349,7 +349,7 @@ records; LibreOffice renders merged ranges and links; no stubs.
 |---|---|---|
 | `autofilter` ✅ | Range and filter-column records | M |
 | `filter_column` ✅ | List/custom filters, blanks, AND/OR, automatic row hiding | M |
-| `add_table` ✅ | Header rows, custom columns, built-in styles, and table AutoFilters | L |
+| `add_table` ✅ Partial | Header/total rows, custom columns, built-in styles, table AutoFilters, subtotals, and per-column formats | L |
 | `add_conditional_format` ✅ Partial | Reporting and highlighting; cell-value, top/bottom, average, duplicate/unique, 2-/3-color scales, basic data bars, standard icon sets, text, blank, error, date-occurring, formula, and multi-range rules | L |
 | `add_data_validation` ✅ Partial | Multi-range list/number/date/time/text-length rules, custom formulas, formula-valued bounds/lists, prompt/error options | M |
 | `unprotect_range` ✅ | Shared-workbook safety | M |
@@ -462,7 +462,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 286 core + 360 writer unit tests and 7 doctests in default
+- Test evidence: 288 core + 366 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,

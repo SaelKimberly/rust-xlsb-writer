@@ -1,6 +1,6 @@
 use deku::{DekuRead, DekuWrite};
 
-use crate::prelude::{UncheckedRfX, XlNullableWideString, XlStringExt};
+use crate::prelude::{CellParsedFormula, UncheckedRfX, XlNullableWideString, XlStringExt};
 use crate::{Checked, Unchecked, assign_id};
 
 const NO_DXF: u32 = 0xffff_ffff;
@@ -171,6 +171,9 @@ impl Checked for BrtBeginListCol {
         if self.idField == 0 {
             return Err("table column id must be at least 1");
         }
+        if self.ilta > 9 {
+            return Err("invalid table total function");
+        }
         if self.stCaption.is_null() {
             return Err("table column caption must not be null");
         }
@@ -193,6 +196,29 @@ impl Checked for BrtBeginListCol {
 }
 
 assign_id!(BrtBeginListCol);
+
+/// Total row formula for one table column; MS-XLSB `2.4.708`.
+#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
+pub struct BrtListTrFmla {
+    pub flags: u8,
+    pub formula: CellParsedFormula,
+}
+
+impl BrtListTrFmla {
+    /// The formula is an array formula.
+    pub const F_ARRAY: u8 = 0x02;
+}
+
+impl Checked for BrtListTrFmla {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.flags & !Self::F_ARRAY != 0 {
+            return Err("reserved table total formula flags must be zero");
+        }
+        self.formula.check()
+    }
+}
+
+assign_id!(BrtListTrFmla);
 
 /// Beginning of the table-column collection; MS-XLSB `2.4.102`.
 #[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
@@ -369,6 +395,19 @@ mod tests {
         record = BrtBeginListCol::default();
         record.stTotal = XlNullableWideString::construct(Some("x".repeat(8_190)));
         assert!(record.check().is_err(), "total limit");
+        record = BrtBeginListCol::default();
+        record.ilta = 10;
+        assert!(record.check().is_err(), "total function limit");
+    }
+
+    #[test]
+    fn list_total_formula_rejects_reserved_flags() {
+        let mut record = BrtListTrFmla::default();
+        record.check().expect("valid");
+        assert_eq!(record.to_bytes().expect("bytes").len(), 12);
+
+        record.flags = 0x04;
+        assert!(record.check().is_err(), "reserved flags");
     }
 
     #[test]

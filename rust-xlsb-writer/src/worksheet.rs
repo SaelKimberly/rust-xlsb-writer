@@ -12,10 +12,10 @@ use crate::data::{
 use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
-use crate::formula::{Formula, cached_result, compile, result_is_too_long};
+use crate::formula::{Formula, cached_result, compile, result_is_too_long, subtotal_formula};
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
 use crate::range_list::RangeList;
-use crate::table::{Table, TableRange};
+use crate::table::{Table, TableFunction, TableRange};
 use crate::{Color, Error, Format, Result, Url};
 
 pub const MAX_ROW: u32 = 1_048_575;
@@ -2728,13 +2728,15 @@ impl Worksheet {
 
     /// Adds a table over a cell range.
     ///
-    /// The table writes its header row. Column headers default to existing
-    /// header-cell strings, then `Column1`, `Column2`, and so on. Totals,
-    /// calculated-column formulas, and per-column formats are not supported.
+    /// The table writes its header and optional total rows. Column headers
+    /// default to existing header-cell strings, then `Column1`, `Column2`, and
+    /// so on. Total labels, `SUBTOTAL` functions, per-column data formats, and
+    /// header formats are supported. Calculated-column formulas are not.
     ///
     /// # Errors
     ///
-    /// Returns a range, table-name, header, overlap, or `AutoFilter` error.
+    /// Returns a range, table-name, header, total, overlap, or `AutoFilter`
+    /// error.
     pub fn add_table(
         &mut self,
         first_row: RowNum,
@@ -2744,7 +2746,10 @@ impl Worksheet {
         table: &Table,
     ) -> Result<&mut Self> {
         Self::check_range(first_row, first_col, last_row, last_col)?;
-        if table.show_header_row && first_row == last_row {
+        let rows = last_row - first_row + 1;
+        let header_rows = u32::from(table.show_header_row);
+        let total_rows = u32::from(table.show_total_row);
+        if rows <= header_rows + total_rows {
             return Err(Error::TableError(
                 "table must have at least one data row".to_owned(),
             ));
@@ -2798,25 +2803,105 @@ impl Worksheet {
                     "table column header exceeds 255 characters".to_owned(),
                 ));
             }
+            if column.total_label.encode_utf16().count() > 8_189 {
+                return Err(Error::TableError(
+                    "table total label exceeds 8189 characters".to_owned(),
+                ));
+            }
             if !names.insert(column.header.to_lowercase()) {
                 return Err(Error::TableError(format!(
                     "column name '{}' already exists in table",
                     column.header
                 )));
             }
+            if column.total_label.is_empty()
+                && let TableFunction::Custom(formula) = &column.total_function
+            {
+                if formula
+                    .result_text()
+                    .is_some_and(|result| result.encode_utf16().count() > MAX_STRING_UTF16)
+                {
+                    return Err(Error::StringTooLong);
+                }
+                column.total_formula = Some(compile(formula.as_str())?);
+                column.total_result = formula.result_text().map(Into::into);
+            }
         }
 
-        if table.show_header_row {
-            for (index, column) in columns.iter().enumerate() {
-                let col = first_col
-                    + u16::try_from(index)
-                        .map_err(|_| Error::ValueNotRepresentable("too many table columns"))?;
+        let data_first = first_row + header_rows;
+        let data_last = last_row - total_rows;
+        for (index, column) in columns.iter().enumerate() {
+            let col = first_col
+                + u16::try_from(index)
+                    .map_err(|_| Error::ValueNotRepresentable("too many table columns"))?;
+            if table.show_header_row {
+                let format = column
+                    .header_format
+                    .as_ref()
+                    .map(|format| self.intern_format(format));
                 self.store_with_index(
                     first_row,
                     col,
                     CellData::String(column.header.clone()),
-                    None,
+                    format,
                 )?;
+            }
+
+            let format = column
+                .format
+                .as_ref()
+                .map(|format| self.intern_format(format));
+            if total_rows == 1 {
+                if !column.total_label.is_empty() {
+                    self.store_with_index(
+                        last_row,
+                        col,
+                        CellData::String(column.total_label.clone()),
+                        format,
+                    )?;
+                } else if let Some(function) = column.total_function.subtotal_number() {
+                    let result = cached_result(&self.default_formula_result);
+                    self.store_with_index(
+                        last_row,
+                        col,
+                        CellData::Formula(FormulaCell {
+                            formula: subtotal_formula(function, data_first, data_last, col),
+                            result,
+                        }),
+                        format,
+                    )?;
+                } else if matches!(column.total_function, TableFunction::Custom(_)) {
+                    let result = column.total_result.as_deref().map_or_else(
+                        || cached_result(&self.default_formula_result),
+                        cached_result,
+                    );
+                    self.store_with_index(
+                        last_row,
+                        col,
+                        CellData::Formula(FormulaCell {
+                            formula: column
+                                .total_formula
+                                .clone()
+                                .expect("custom total formula compiled"),
+                            result,
+                        }),
+                        format,
+                    )?;
+                }
+            }
+
+            if let Some(format) = format {
+                for row in data_first..=data_last {
+                    self.cells
+                        .entry(row)
+                        .or_default()
+                        .entry(col)
+                        .and_modify(|cell| cell.format = Some(format))
+                        .or_insert(Cell {
+                            data: CellData::Blank,
+                            format: Some(format),
+                        });
+                }
             }
         }
 
@@ -5344,6 +5429,106 @@ mod tests {
         worksheet.add_table(2, 0, 4, 1, &table).expect("table");
         assert!(!worksheet.cells().contains_key(&2));
         assert_eq!(worksheet.tables()[0].table.columns[0].header, "Name");
+    }
+
+    #[test]
+    fn add_table_writes_total_labels_subtotals_and_formats() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let data_format = Format::new().set_bold();
+        let table = Table::new().set_total_row(true).set_columns(&[
+            TableColumn::new()
+                .set_header("Name")
+                .set_total_label("Totals"),
+            TableColumn::new()
+                .set_header("Q1")
+                .set_total_function(TableFunction::Sum)
+                .set_format(&data_format),
+        ]);
+        worksheet.add_table(0, 0, 4, 1, &table).expect("table");
+
+        assert_eq!(
+            worksheet.cells()[&4][&0].data,
+            CellData::String("Totals".to_owned())
+        );
+        let total = &worksheet.cells()[&4][&1];
+        let CellData::Formula(formula) = &total.data else {
+            panic!("expected total formula");
+        };
+        assert_eq!(formula.formula, subtotal_formula(109, 1, 3, 1));
+        assert_eq!(formula.result, crate::data::FormulaResult::Number(0.0));
+        assert!(total.format.is_some());
+        for row in 1..=3 {
+            assert_eq!(worksheet.cells()[&row][&1].format, total.format);
+        }
+        assert!(worksheet.tables()[0].table.show_total_row);
+        assert_eq!(worksheet.tables()[0].table.columns[0].total_label, "Totals");
+        assert_eq!(
+            worksheet.tables()[0].table.columns[1].total_function,
+            TableFunction::Sum
+        );
+    }
+
+    #[test]
+    fn add_table_writes_header_formats_and_custom_totals() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let header_format = Format::new().set_bold();
+        let custom = Formula::new("=SUM(A2:A3)").set_result("6");
+        let table = Table::new()
+            .set_total_row(true)
+            .set_columns(&[TableColumn::new()
+                .set_header("Value")
+                .set_header_format(&header_format)
+                .set_total_function(TableFunction::Custom(custom))]);
+        worksheet.add_table(0, 0, 3, 0, &table).expect("table");
+
+        assert!(worksheet.cells()[&0][&0].format.is_some());
+        let total = &worksheet.cells()[&3][&0];
+        let CellData::Formula(formula) = &total.data else {
+            panic!("expected custom total formula");
+        };
+        assert_eq!(formula.formula, compile("=SUM(A2:A3)").expect("compiled"));
+        assert_eq!(formula.result, crate::data::FormulaResult::Number(6.0));
+        assert!(
+            worksheet.tables()[0].table.columns[0]
+                .total_formula
+                .is_some()
+        );
+        assert_eq!(
+            worksheet.tables()[0].table.columns[0]
+                .total_result
+                .as_deref(),
+            Some("6")
+        );
+    }
+
+    #[test]
+    fn add_table_rejects_total_rows_without_data_rows_and_long_labels() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        assert!(matches!(
+            worksheet.add_table(0, 0, 0, 0, &Table::new().set_total_row(true)),
+            Err(Error::TableError(_))
+        ));
+        assert!(matches!(
+            worksheet.add_table(0, 0, 1, 0, &Table::new().set_total_row(true)),
+            Err(Error::TableError(_))
+        ));
+        let long_label = Table::new()
+            .set_total_row(true)
+            .set_columns(&[TableColumn::new().set_total_label("x".repeat(8_190))]);
+        assert!(matches!(
+            worksheet.add_table(0, 0, 2, 0, &long_label),
+            Err(Error::TableError(_))
+        ));
+        let bad_formula = Table::new()
+            .set_total_row(true)
+            .set_columns(&[TableColumn::new()
+                .set_total_function(TableFunction::Custom(Formula::new("=Sheet2!A1")))]);
+        assert!(matches!(
+            worksheet.add_table(0, 0, 2, 0, &bad_formula),
+            Err(Error::FormulaError(_))
+        ));
+        assert!(worksheet.tables().is_empty());
+        assert!(worksheet.cells().is_empty());
     }
 
     #[test]

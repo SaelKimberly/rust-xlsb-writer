@@ -71,7 +71,7 @@ pub use format::{
 pub use formula::Formula;
 pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
-pub use table::{Table, TableColumn, TableStyle};
+pub use table::{Table, TableColumn, TableFunction, TableStyle};
 pub use url::Url;
 pub use workbook::{CalculationMode, Workbook};
 pub use worksheet::{ColNum, IgnoreError, RowNum, Worksheet};

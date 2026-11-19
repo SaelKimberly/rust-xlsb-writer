@@ -1083,15 +1083,15 @@ mod tests {
         BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
         BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
         BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFmlaBool,
-        BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtName,
-        BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
-        CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
-        CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-        CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
-        CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
-        CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
-        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
-        CFVO_PERCENT, CFVO_PERCENTILE,
+        BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtListTrFmla,
+        BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo,
+        BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+        CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
+        CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
+        CF_TEMPLATE_TIME_PERIOD_TODAY, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS,
+        CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
+        CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -2840,6 +2840,55 @@ mod tests {
         let links = records::<BrtHLink>(&sheet_part);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].relId.to_optional_string().as_deref(), Some("rId2"));
+    }
+
+    #[test]
+    fn table_totals_emit_flags_functions_and_formulas() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        let table =
+            Table::new().set_total_row(true).set_columns(&[
+                TableColumn::new()
+                    .set_header("Name")
+                    .set_total_label("Totals"),
+                TableColumn::new()
+                    .set_header("Q1")
+                    .set_total_function(crate::TableFunction::Sum),
+                TableColumn::new().set_header("Q2").set_total_function(
+                    crate::TableFunction::Custom(crate::Formula::new("=SUM(C2:C3)")),
+                ),
+            ]);
+        worksheet.add_table(0, 0, 3, 2, &table).expect("table");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let table_part = part_bytes(&bytes, "xl/tables/table1.bin").expect("table part");
+        let list = records::<BrtBeginList>(&table_part);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].crwTotals, 1);
+        assert_eq!(list[0].flags, BrtBeginList::F_SHOWN_TOTAL_ROW);
+
+        let filters = records::<BrtBeginAFilter>(&table_part);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].rfx.rwLast, 2);
+
+        let columns = records::<BrtBeginListCol>(&table_part);
+        assert_eq!(columns.len(), 3);
+        assert_eq!(columns[0].ilta, 0);
+        assert_eq!(
+            columns[0].stTotal.to_optional_string().as_deref(),
+            Some("Totals")
+        );
+        assert_eq!(columns[1].ilta, 6);
+        assert!(columns[1].stTotal.is_null());
+        assert_eq!(columns[2].ilta, 9);
+        assert!(columns[2].stTotal.is_null());
+
+        let formulas = records::<BrtListTrFmla>(&table_part);
+        assert_eq!(formulas.len(), 1);
+        assert_eq!(
+            formulas[0].formula,
+            crate::formula::compile("=SUM(C2:C3)").expect("compiled")
+        );
     }
 
     #[test]
