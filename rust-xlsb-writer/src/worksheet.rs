@@ -308,6 +308,7 @@ pub struct Worksheet {
     filter_automatic_off: bool,
     filter_hidden_rows: BTreeSet<RowNum>,
     has_rich_strings: bool,
+    has_dynamic_arrays: bool,
     default_formula_result: Box<str>,
     conditional_formats: Vec<ConditionalFormatRange>,
     view: SheetView,
@@ -384,6 +385,7 @@ impl Worksheet {
             filter_automatic_off: false,
             filter_hidden_rows: BTreeSet::new(),
             has_rich_strings: false,
+            has_dynamic_arrays: false,
             default_formula_result: "0".into(),
             conditional_formats: Vec::new(),
             view: SheetView::default(),
@@ -944,6 +946,7 @@ impl Worksheet {
             last_col,
             formula.into(),
             None,
+            false,
         )
     }
 
@@ -968,7 +971,97 @@ impl Worksheet {
             last_col,
             formula.into(),
             Some(format),
+            false,
         )
+    }
+
+    /// Writes a dynamic array formula to a range.
+    ///
+    /// Dynamic array formulas use the same parser and range rules as
+    /// [`Self::write_array_formula`], but mark the top-left cell with cell
+    /// metadata so Excel treats the cached result as a spill range.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_array_formula`].
+    pub fn write_dynamic_array_formula(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        formula: impl Into<Formula>,
+    ) -> Result<&mut Self> {
+        self.store_array_formula(
+            first_row,
+            first_col,
+            last_row,
+            last_col,
+            formula.into(),
+            None,
+            true,
+        )
+    }
+
+    /// Writes a formatted dynamic array formula to a range.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_dynamic_array_formula`].
+    pub fn write_dynamic_array_formula_with_format(
+        &mut self,
+        first_row: RowNum,
+        first_col: ColNum,
+        last_row: RowNum,
+        last_col: ColNum,
+        formula: impl Into<Formula>,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        self.store_array_formula(
+            first_row,
+            first_col,
+            last_row,
+            last_col,
+            formula.into(),
+            Some(format),
+            true,
+        )
+    }
+
+    /// Writes a dynamic array formula to one cell.
+    ///
+    /// The range is the single cell; Excel spills the result at runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_array_formula`].
+    pub fn write_dynamic_formula(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        formula: impl Into<Formula>,
+    ) -> Result<&mut Self> {
+        self.store_array_formula(row, col, row, col, formula.into(), None, true)
+    }
+
+    /// Writes a formatted dynamic array formula to one cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_dynamic_formula`].
+    pub fn write_dynamic_formula_with_format(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        formula: impl Into<Formula>,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        self.store_array_formula(row, col, row, col, formula.into(), Some(format), true)
+    }
+
+    /// Returns whether any dynamic array formula was written.
+    pub(crate) const fn has_dynamic_arrays(&self) -> bool {
+        self.has_dynamic_arrays
     }
 
     /// Replaces the cached result of an existing formula cell.
@@ -1040,6 +1133,7 @@ impl Worksheet {
         last_col: ColNum,
         formula: Formula,
         format: Option<&Format>,
+        is_dynamic: bool,
     ) -> Result<&mut Self> {
         Self::check_row(first_row)?;
         Self::check_col(first_col)?;
@@ -1072,9 +1166,11 @@ impl Worksheet {
                     colLast: u32::from(last_col),
                 },
                 result,
+                is_dynamic,
             }),
             format,
         )?;
+        self.has_dynamic_arrays |= is_dynamic;
 
         for row in first_row..=last_row {
             for col in first_col..=last_col {

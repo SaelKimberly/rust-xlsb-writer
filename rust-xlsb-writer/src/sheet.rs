@@ -7,17 +7,17 @@ use rust_xlsb_core::prelude::{
     BrtBeginDVals, BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk,
     BrtBeginSheet, BrtBeginSheetData, BrtBeginSparklineGroup, BrtBeginSparklineGroups,
     BrtBeginSparklines, BrtBeginWsView, BrtBeginWsViews, BrtBkHim, BrtBrk, BrtCellBlank,
-    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal,
-    BrtCellRk, BrtColInfo, BrtColSpan, BrtColor, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs,
-    BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals, BrtEndHeaderFooter,
-    BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData,
-    BrtEndSparklineGroup, BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView, BrtEndWsViews,
-    BrtFRTBegin, BrtFRTEnd, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont,
-    BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRowHdr, BrtSel, BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula,
-    FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref, FrtSqrefs, HeaderFooterString,
-    RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
-    XlWideString, Xnum, conditional_format_block_ranges,
+    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellMeta, BrtCellRString,
+    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtColor, BrtEndAFilter, BrtEndCFRule,
+    BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals,
+    BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
+    BrtEndSheetData, BrtEndSparklineGroup, BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView,
+    BrtEndWsViews, BrtFRTBegin, BrtFRTEnd, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString,
+    BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane,
+    BrtPrintOptions, BrtRowHdr, BrtSel, BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
+    CellParsedFormula, FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref, FrtSqrefs,
+    HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX,
+    XlNullableWideString, XlStringExt, XlWideString, Xnum, conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -1019,6 +1019,9 @@ fn push_cell(
             push_formula_record(out, cell, &formula.formula, &formula.result)
         }
         CellData::ArrayFormula(formula) => {
+            if formula.is_dynamic {
+                push(out, &BrtCellMeta { icmb: 1 })?;
+            }
             let expansion = array_expansion(
                 formula.range.rwFirst,
                 u16::try_from(formula.range.colFirst)
@@ -1029,7 +1032,7 @@ fn push_cell(
                 out,
                 &BrtArrFmla {
                     rfx: formula.range,
-                    fAlwaysCalc: true,
+                    fAlwaysCalc: !formula.is_dynamic,
                     formula: formula.formula.clone(),
                 },
             )

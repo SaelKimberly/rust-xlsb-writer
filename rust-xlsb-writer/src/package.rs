@@ -7,9 +7,12 @@ use std::io::Write as _;
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
 use rust_xlsb_core::prelude::{
-    BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBeginExternals, BrtBookView,
-    BrtBundleSh, BrtCalcProp, BrtEndBook, BrtEndBookViews, BrtEndBundleShs, BrtEndExternals,
-    BrtExternSheet, BrtFileSharing, BrtName, BrtSupSelf, BrtWbProp, NameParsedFormula,
+    BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBeginDynamicArrayPr, BrtBeginEsfmd,
+    BrtBeginEsmdb, BrtBeginEsmdtinfo, BrtBeginExternals, BrtBeginFmd, BrtBeginMetadata,
+    BrtBookView, BrtBundleSh, BrtCalcProp, BrtEndBook, BrtEndBookViews, BrtEndBundleShs,
+    BrtEndDynamicArrayPr, BrtEndEsfmd, BrtEndEsmdb, BrtEndEsmdtinfo, BrtEndExternals, BrtEndFmd,
+    BrtEndMetadata, BrtExternSheet, BrtFRTBegin, BrtFRTEnd, BrtFileSharing, BrtMdb, BrtMdtinfo,
+    BrtName, BrtSupSelf, BrtWbProp, FrtProductVersion, Mdir, NameParsedFormula,
     XlNullableWideString, XlStringExt, XlWideString, Xnum, Xti,
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
@@ -199,6 +202,7 @@ pub fn build_package(
     }
 
     let has_strings = !sst.is_empty();
+    let has_dynamic_arrays = sheets.iter().any(Worksheet::has_dynamic_arrays);
     let has_custom_properties =
         properties.is_some_and(|properties| !properties.custom_properties.is_empty());
     let has_theme = settings.theme.is_some();
@@ -216,6 +220,7 @@ pub fn build_package(
                 settings.theme.as_ref(),
                 &table_ids,
                 &image_types,
+                has_dynamic_arrays,
             )
             .into_bytes(),
         ),
@@ -225,7 +230,7 @@ pub fn build_package(
         ),
         (
             "xl/_rels/workbook.bin.rels".to_owned(),
-            workbook_rels(sheets.len(), has_strings, has_theme).into_bytes(),
+            workbook_rels(sheets.len(), has_strings, has_theme, has_dynamic_arrays).into_bytes(),
         ),
         (
             "xl/workbook.bin".to_owned(),
@@ -263,6 +268,11 @@ pub fn build_package(
         let mut shared_strings = Vec::new();
         sst.write_to_biff_sst(&mut shared_strings)?;
         parts.push(("xl/sharedStrings.bin".to_owned(), shared_strings));
+    }
+    if has_dynamic_arrays {
+        let mut metadata = Vec::new();
+        write_metadata_part(&mut metadata)?;
+        parts.push(("xl/metadata.bin".to_owned(), metadata));
     }
 
     zip_store(
@@ -648,6 +658,10 @@ fn sheet_rels(sheet: &Worksheet, background: Option<(usize, u32)>) -> Option<Str
     Some(body)
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "package flags mirror independent part-presence decisions"
+)]
 fn content_types(
     sheet_count: usize,
     has_strings: bool,
@@ -656,6 +670,7 @@ fn content_types(
     theme: Option<&crate::theme::Theme>,
     table_ids: &[u32],
     image_types: &[(&str, &str)],
+    has_metadata: bool,
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -690,6 +705,11 @@ fn content_types(
     if has_strings {
         body.push_str(
             r#"<Override PartName="/xl/sharedStrings.bin" ContentType="application/vnd.ms-excel.sharedStrings"/>"#,
+        );
+    }
+    if has_metadata {
+        body.push_str(
+            r#"<Override PartName="/xl/metadata.bin" ContentType="application/vnd.ms-excel.sheetMetadata"/>"#,
         );
     }
     if theme.is_some() {
@@ -885,7 +905,12 @@ fn push_xml_element(out: &mut String, tag: &str, value: &str) {
     out.push('>');
 }
 
-fn workbook_rels(sheet_count: usize, has_strings: bool, has_theme: bool) -> String {
+fn workbook_rels(
+    sheet_count: usize,
+    has_strings: bool,
+    has_theme: bool,
+    has_metadata: bool,
+) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -918,9 +943,52 @@ fn workbook_rels(sheet_count: usize, has_strings: bool, has_theme: bool) -> Stri
             r#"<Relationship Id="rId{next_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>"#
         )
         .expect("writing to String cannot fail");
+        next_id += 1;
+    }
+    if has_metadata {
+        write!(
+            body,
+            r#"<Relationship Id="rId{next_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.bin"/>"#
+        )
+        .expect("writing to String cannot fail");
     }
     body.push_str("</Relationships>");
     body
+}
+
+fn write_metadata_part(out: &mut Vec<u8>) -> Result<()> {
+    push_record(out, &BrtBeginMetadata::default())?;
+    push_record(out, &BrtBeginEsmdtinfo::default())?;
+    push_record(out, &BrtMdtinfo::default())?;
+    push_record(out, &BrtEndEsmdtinfo::default())?;
+    push_record(out, &BrtBeginEsfmd::default())?;
+    push_record(out, &BrtBeginFmd::default())?;
+    push_record(
+        out,
+        &BrtFRTBegin {
+            productVersion: FrtProductVersion {
+                version: 2,
+                product: 2,
+                reserved: false,
+            },
+        },
+    )?;
+    push_record(out, &BrtBeginDynamicArrayPr::default())?;
+    push_record(out, &BrtEndDynamicArrayPr::default())?;
+    push_record(out, &BrtFRTEnd::default())?;
+    push_record(out, &BrtEndFmd::default())?;
+    push_record(out, &BrtEndEsfmd::default())?;
+    push_record(out, &BrtBeginEsmdb::default())?;
+    push_record(
+        out,
+        &BrtMdb {
+            cMdir: 1,
+            rgMdir: vec![Mdir::default()],
+        },
+    )?;
+    push_record(out, &BrtEndEsmdb::default())?;
+    push_record(out, &BrtEndMetadata::default())?;
+    Ok(())
 }
 
 const ZIP64_LIMIT: u64 = u32::MAX as u64;
@@ -1231,14 +1299,14 @@ mod tests {
         Bold, BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
         BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
-        BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString,
-        BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter,
-        BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart,
-        BrtListTrFmla, BrtName, BrtRowHdr, BrtSheetProtection, BrtSparkline, BrtTableStyleClient,
-        BrtWbProp, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS,
-        CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
-        CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER,
-        CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+        BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellMeta,
+        BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing,
+        BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink,
+        BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName, BrtRowHdr, BrtSheetProtection,
+        BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
+        CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
+        CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+        CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
         CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
         CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
         CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
@@ -3967,6 +4035,7 @@ mod tests {
             }
         );
         assert!(arrays[0].fAlwaysCalc);
+        assert_eq!(records::<BrtCellMeta>(&sheet).len(), 0);
         assert_eq!(arrays[0].formula.cce, 31);
 
         let numbers = records::<BrtFmlaNum>(&sheet);
@@ -3989,6 +4058,120 @@ mod tests {
 
         let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
         assert_eq!(records::<BrtCalcProp>(&workbook_part).len(), 1);
+        assert!(part_bytes(&bytes, "xl/metadata.bin").is_err());
+    }
+
+    #[test]
+    fn dynamic_array_formula_emits_metadata_and_cell_meta() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_string(0, 0, "Foo").expect("string");
+        worksheet.write_string(1, 0, "Food").expect("string");
+        worksheet.write_string(2, 0, "Frood").expect("string");
+        worksheet
+            .write_dynamic_array_formula(0, 1, 2, 1, "=LEN(A1:A3)")
+            .expect("dynamic formula");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let arrays = records::<BrtArrFmla>(&sheet);
+        assert_eq!(arrays.len(), 1);
+        assert!(!arrays[0].fAlwaysCalc);
+        assert_eq!(
+            arrays[0].rfx,
+            rust_xlsb_core::prelude::UncheckedRfX {
+                rwFirst: 0,
+                rwLast: 2,
+                colFirst: 1,
+                colLast: 1,
+            }
+        );
+        assert_eq!(arrays[0].formula.cce, 16);
+
+        let cells = records::<BrtCellMeta>(&sheet);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].icmb, 1);
+
+        let ids = record_ids(&sheet);
+        let meta = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtCellMeta)
+            .expect("cell meta");
+        assert_eq!(ids.get(meta + 1), Some(&KnownID::BrtFmlaNum));
+        assert_eq!(ids.get(meta + 2), Some(&KnownID::BrtArrFmla));
+
+        let metadata = part_bytes(&bytes, "xl/metadata.bin").expect("metadata part");
+        assert_eq!(metadata.len(), 117);
+        assert_eq!(
+            record_ids(&metadata),
+            [
+                KnownID::BrtBeginMetadata,
+                KnownID::BrtBeginEsmdtinfo,
+                KnownID::BrtMdtinfo,
+                KnownID::BrtEndEsmdtinfo,
+                KnownID::BrtBeginEsfmd,
+                KnownID::BrtBeginFmd,
+                KnownID::BrtFRTBegin,
+                KnownID::BrtBeginDynamicArrayPr,
+                KnownID::BrtEndDynamicArrayPr,
+                KnownID::BrtFRTEnd,
+                KnownID::BrtEndFmd,
+                KnownID::BrtEndEsfmd,
+                KnownID::BrtBeginEsmdb,
+                KnownID::BrtMdb,
+                KnownID::BrtEndEsmdb,
+                KnownID::BrtEndMetadata,
+            ]
+        );
+        let types = records::<BrtMdtinfo>(&metadata);
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].grbit, 0x506a_c0b0);
+        assert_eq!(types[0].metadataID, 0x0001_d4c0);
+        assert_eq!(
+            types[0].stName.to_optional_string().as_deref(),
+            Some("XLDAPR")
+        );
+        let blocks = records::<BrtMdb>(&metadata);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].rgMdir.len(), 1);
+        assert_eq!(blocks[0].rgMdir[0].iMdt, 1);
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/metadata.bin" ContentType="application/vnd.ms-excel.sheetMetadata"/>"#
+        ));
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("utf8");
+        assert!(rels.contains(
+            r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.bin""#
+        ));
+    }
+
+    #[test]
+    fn dynamic_formula_single_cell_uses_one_cell_range() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .write_dynamic_formula(1, 2, "=LEN(A1:A3)")
+            .expect("dynamic formula");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let arrays = records::<BrtArrFmla>(&sheet);
+        assert_eq!(arrays.len(), 1);
+        assert_eq!(
+            arrays[0].rfx,
+            rust_xlsb_core::prelude::UncheckedRfX {
+                rwFirst: 1,
+                rwLast: 1,
+                colFirst: 2,
+                colLast: 2,
+            }
+        );
+        assert_eq!(records::<BrtCellMeta>(&sheet).len(), 1);
     }
 
     #[test]

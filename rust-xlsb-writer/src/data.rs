@@ -34,13 +34,14 @@ pub struct FormulaCell {
     pub(crate) result: FormulaResult,
 }
 
-/// A static array formula and the range it owns.
+/// An array formula and the range it owns.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayFormulaCell {
     pub(crate) formula: CellParsedFormula,
     pub(crate) range: UncheckedRfX,
     pub(crate) result: FormulaResult,
+    pub(crate) is_dynamic: bool,
 }
 
 /// Cached value stored with a formula cell.

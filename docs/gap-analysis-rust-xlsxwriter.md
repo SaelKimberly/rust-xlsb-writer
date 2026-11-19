@@ -19,9 +19,10 @@ document properties with explicit creation timestamps.
 
 It is not a feature-equivalent replacement. The largest gaps are:
 
-1. **Formulas** — scalar and static array formulas, cached results, and
-   same-sheet references are supported; dynamic-array, shared, external,
-   cross-sheet cell, and defined-name cell formulas are missing.
+1. **Formulas** — scalar, static array, and dynamic array formulas, cached
+   results, and same-sheet references are supported; shared formulas, `_xlfn`
+   dynamic functions, external, cross-sheet cell, and defined-name cell
+   formulas are missing.
 2. **Worksheet layout and view** — user-defined names support literals,
    absolute A1 references, and supported expression formulas with
    same-workbook sheet and worksheet-range references plus references to other
@@ -123,8 +124,8 @@ Status meanings:
 | `write_date`, `write_time` (unformatted) | Supported extension | Not present in `rust_xlsxwriter` |
 | `write_formula`, `write_formula_with_format` | Supported | Same-sheet A1 references, ranges, operators, and classic functions; cross-sheet/named syntax rejected |
 | `write_array_formula`, `write_array_formula_with_format` | Supported | Static same-sheet array formula records and range zero-fill |
-| `write_dynamic_array_formula`, `write_dynamic_array_formula_with_format` | Missing | Dynamic-array metadata part |
-| `write_dynamic_formula` | Missing | Dynamic formula records |
+| `write_dynamic_array_formula`, `write_dynamic_array_formula_with_format` | Supported | `XLDAPR` metadata part and `BrtCellMeta`; classic formula syntax only, future `_xlfn` functions missing |
+| `write_dynamic_formula` | Supported | Single-cell dynamic array formula with the same metadata; classic formula syntax only |
 | `write_rich_string` | Supported | `BrtCellRString` plus font-run indexes |
 | `write_url`, `write_url_with_text`, `write_url_with_options` | Supported | `BrtHLink` plus worksheet relationships |
 | `write_rich_string_with_format` | Supported | Cell-wide format plus run fonts |
@@ -277,7 +278,7 @@ These are not necessarily missing features, but they matter for ports.
 | `IntoExcelDateTime` | `to_excel_serial_date(&self) -> f64` | `into_cell_data(self) -> Result<CellData>` |
 | `CellData` | internal | public but `#[doc(hidden)]` because it appears in a public trait signature |
 | Rich strings | supported | supported; run fonts only |
-| Formulas | supported | scalar and static arrays supported; shared, dynamic, cross-sheet, and names missing |
+| Formulas | supported | scalar, static arrays, and dynamic arrays supported; shared formulas, `_xlfn` dynamic functions, cross-sheet references, and defined names in cell formulas remain missing |
 | Row/column writes | formatted and unformatted variants | both variants |
 | Worksheet collection | full mutable/immutable access | index, exact-name, and collection access |
 | Memory modes | constant/low-memory | cell-retaining in-memory model |
@@ -290,7 +291,7 @@ records or package parts that do not exist yet.
 
 | Feature area | Missing implementation |
 |---|---|
-| Formulas | Shipped scalar token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError` records, cached results, recalculation-on-load, and static `BrtArrFmla` with `PtgExp` expansion; shared/dynamic state remains |
+| Formulas | Shipped scalar token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError` records, cached results, recalculation-on-load, static `BrtArrFmla` with `PtgExp` expansion, and dynamic array formulas with `XLDAPR` metadata plus `BrtCellMeta`; shared formulas and `_xlfn` dynamic functions remain |
 | Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
 | Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
 | Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, table AutoFilter ranges, total rows, `ILTA_*` subtotals, `BrtListTrFmla` custom totals, `BrtListCCFmla` calculated columns with `PtgList` structured references, per-column formats, and table filter conditions |
@@ -331,18 +332,19 @@ objects.
 | `set_freeze_panes`, `set_selection`, `set_top_left_cell` | ✅ | Basic view usability | S–M |
 | `set_cell_format`, `set_range_format`, `clear_cell`, `clear_cell_format` | ✅ P0a | Format-only edits without rewriting values | S–M |
 | `write_formula` + `set_formula_result` | ✅ Partial | Scalar formulas, cached results, and same-sheet references; cross-sheet/named syntax rejected | L |
-| `write_array_formula` | ✅ Partial | Static same-sheet array ranges and cached results; dynamic arrays remain | L |
-| Dynamic formulas | Open | Dynamic-array metadata and spill support | L |
+| `write_array_formula` | ✅ Partial | Static and dynamic same-sheet array ranges and cached results; `_xlfn` array functions remain | L |
+| Dynamic formulas | ✅ Partial | Classic formulas spill through the `XLDAPR` metadata part; future `_xlfn` dynamic functions remain | L |
 
 **P0a status:** shipped `Result<T,E>`, formatted row/column writes, row/column
 matrices, cell/range format edits, clear operations, hidden rows/columns, and
 the format-only parity setters. **Merge status:** `merge_range` and the three
 MS-XLSB merge records are shipped. **View status:** freeze panes, frozen-pane top cell, selection,
 top-left cell, zoom, display flags, pixel-unit layout setters, and the
-`WSVIEWS2` records are shipped. **P0b status:** scalar and static array
-formulas, cached results, same-sheet references, and recalculation-on-load are
-shipped; dynamic, shared, cross-sheet, and named formulas remain. Hyperlinks
-and worksheet state are shipped.
+`WSVIEWS2` records are shipped. **P0b status:** scalar, static array, and
+dynamic array formulas, cached results, same-sheet references, and
+recalculation-on-load are shipped; shared, `_xlfn` dynamic-function,
+cross-sheet, and named cell formulas remain. Hyperlinks and worksheet state are
+shipped.
 
 **Exit criteria:** public API exists; calamine reads values and formulas’
 cached results where supported; record-level tests assert formula/merge/link
@@ -445,12 +447,12 @@ still deterministic; no cell data loss under streaming.
 
 ## 8. Immediate Recommendation
 
-**P0a and scalar/static-array P0b are shipped.** The next formula milestone is
-dynamic-array support, which needs a metadata part and spill-state design:
+**P0a and scalar/static-array/dynamic-array P0b are shipped.** The next formula
+work is future-function token coverage and shared-formula state:
 
-1. Dynamic-array metadata records and content types.
-2. Dynamic-array spill metadata and recalculation state.
-3. Shared-formula state if the reference API requires it.
+1. `_xlfn`/`_xlws` function ids and spill-function names.
+2. Shared-formula state if the reference API requires it.
+3. Cross-sheet and defined-name cell formulas.
 
 If formulas are deferred, the next bounded gaps are rich objects: notes,
 shapes, buttons, checkboxes, foreground images, and charts. Hyperlinks,

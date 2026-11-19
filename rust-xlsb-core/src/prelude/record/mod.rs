@@ -34,6 +34,7 @@ mod brt_font;
 mod brt_hlink;
 mod brt_margins;
 mod brt_merge_cell;
+mod brt_metadata;
 mod brt_name;
 mod brt_page_breaks;
 mod brt_page_setup;
@@ -109,6 +110,11 @@ pub use brt_font::BrtFont;
 pub use brt_hlink::BrtHLink;
 pub use brt_margins::BrtMargins;
 pub use brt_merge_cell::BrtMergeCell;
+pub use brt_metadata::{
+    BrtBeginDynamicArrayPr, BrtBeginEsfmd, BrtBeginEsmdb, BrtBeginEsmdtinfo, BrtBeginFmd,
+    BrtBeginMetadata, BrtCellMeta, BrtEndDynamicArrayPr, BrtEndEsfmd, BrtEndEsmdb, BrtEndEsmdtinfo,
+    BrtEndFmd, BrtEndMetadata, BrtMdb, BrtMdtinfo, Mdir,
+};
 pub use brt_name::{BrtName, NameParsedFormula};
 pub use brt_page_breaks::{BrtBeginColBrk, BrtBeginRwBrk, BrtBrk, BrtEndColBrk, BrtEndRwBrk};
 pub use brt_page_setup::BrtPageSetup;

@@ -54,10 +54,12 @@ const MAX_STRING_UTF16: usize = 32_767;
 /// The formula is parsed when it is written. Strings use US-English Excel
 /// syntax and a comma argument separator. A leading `=` and surrounding array
 /// braces are optional. Supported references are same-sheet A1 cells and
-/// ranges. Scalar writes reject cross-sheet references, defined names, and
-/// dynamic-array functions; static array formulas use
-/// [`Worksheet::write_array_formula`]. Table calculated formulas also accept
-/// structured references such as `Table1[@[Q1]:[Q4]]` via
+/// ranges. Scalar writes reject cross-sheet references and defined names.
+/// Array formulas use [`Worksheet::write_array_formula`] or
+/// [`Worksheet::write_dynamic_array_formula`]. The parser accepts classic
+/// functions such as `LEN`; future `_xlfn.` functions and dynamic-function
+/// names such as `FILTER` are not encoded. Table calculated formulas also
+/// accept structured references such as `Table1[@[Q1]:[Q4]]` via
 /// [`TableColumn::set_formula`](crate::TableColumn::set_formula).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Formula {
