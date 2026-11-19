@@ -29,8 +29,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    standard icon sets, text, blank, error, date-occurring, and arbitrary
    formula rules, including multi-range rules; x14 icon sets and data-bar
    extensions are missing. Basic tables, `AutoFilter` ranges, list/custom
-   filter conditions, literal and formula-backed multi-range data validation,
-   and structural sheet protection are present.
+   filter conditions with temporal and boolean matching, literal and
+   formula-backed multi-range data validation, and structural sheet protection
+   are present.
 4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
@@ -68,7 +69,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 286 core + 355 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 286 core + 360 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -177,7 +178,7 @@ Status meanings:
 | Capability | Current | Gap |
 |---|---|---|
 | `autofilter` | Supported | Range record, filter columns, and automatic row hiding |
-| `filter_column`, `filter_automatic_off` | Partial | List/custom string and number filters, blanks, AND/OR; temporal and boolean cells stay unmatched |
+| `filter_column`, `filter_automatic_off` | Supported | List/custom string, number, temporal-serial, and boolean filters; blanks, AND/OR |
 | `add_table` | Partial | Header rows, custom columns, built-in styles, and table AutoFilters; totals, formulas, and per-column formats missing |
 | `add_conditional_format` | Partial | Cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions missing |
 | `add_data_validation` | Partial | Multi-range list, whole/decimal, date/time, and text-length rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
@@ -461,7 +462,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 286 core + 355 writer unit tests and 7 doctests in default
+- Test evidence: 286 core + 360 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,

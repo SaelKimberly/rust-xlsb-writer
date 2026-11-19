@@ -1,5 +1,7 @@
 //! Worksheet autofilter conditions and matching.
 
+use rust_xlsb_core::{CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext};
+
 use crate::data::CellData;
 
 /// Comparison used by a custom autofilter condition.
@@ -224,7 +226,6 @@ impl FilterCondition {
     }
 
     #[expect(
-        clippy::cast_precision_loss,
         clippy::float_cmp,
         reason = "Excel filters compare stored IEEE-754 values exactly"
     )]
@@ -248,18 +249,23 @@ impl FilterCondition {
                     _ => key == filter.normalized,
                 }) || (self.should_match_blanks && key.is_empty())
             }
-            CellData::Integer(value) => {
-                let value = *value as f64;
-                self.list
-                    .iter()
-                    .any(|filter| filter.is_number() && value == filter.number)
+            CellData::Bool(value) => {
+                let key = if *value { "true" } else { "false" };
+                self.list.iter().any(|filter| {
+                    filter.data_type == FilterDataType::String && filter.normalized == key
+                })
             }
-            CellData::Number(value) => self
-                .list
-                .iter()
-                .any(|filter| filter.is_number() && *value == filter.number),
-            CellData::Blank => self.should_match_blanks,
-            _ => false,
+            _ => {
+                if let Some(value) = numeric_value(cell)
+                    && self
+                        .list
+                        .iter()
+                        .any(|filter| filter.is_number() && filter.number == value)
+                {
+                    return true;
+                }
+                matches!(cell, CellData::Blank) && self.should_match_blanks
+            }
         }
     }
 
@@ -278,14 +284,19 @@ impl FilterCondition {
 }
 
 impl FilterData {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "Excel filters compare stored IEEE-754 values exactly"
-    )]
     fn matches(&self, cell: Option<&CellData>) -> bool {
         let Some(cell) = cell else {
             return false;
         };
+        if self.is_number() {
+            let number = match cell {
+                CellData::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+                _ => numeric_value(cell),
+            };
+            if let Some(value) = number {
+                return compare_number(value, self.number, self.criteria);
+            }
+        }
         match cell {
             CellData::String(text) | CellData::RichString(crate::data::RichString { text, .. }) => {
                 let key = normalize(text);
@@ -304,11 +315,22 @@ impl FilterData {
                     FilterCriteria::DoesNotContain => !key.contains(&self.normalized),
                 }
             }
-            CellData::Integer(value) if self.is_number() => {
-                compare_number(*value as f64, self.number, self.criteria)
-            }
-            CellData::Number(value) if self.is_number() => {
-                compare_number(*value, self.number, self.criteria)
+            CellData::Bool(value) => {
+                let key = if *value { "true" } else { "false" };
+                match self.criteria {
+                    FilterCriteria::EqualTo => key == self.normalized.as_str(),
+                    FilterCriteria::NotEqualTo => key != self.normalized.as_str(),
+                    FilterCriteria::LessThan => key < self.normalized.as_str(),
+                    FilterCriteria::LessThanOrEqualTo => key <= self.normalized.as_str(),
+                    FilterCriteria::GreaterThan => key > self.normalized.as_str(),
+                    FilterCriteria::GreaterThanOrEqualTo => key >= self.normalized.as_str(),
+                    FilterCriteria::EndsWith => key.ends_with(&self.normalized),
+                    FilterCriteria::DoesNotEndWith => !key.ends_with(&self.normalized),
+                    FilterCriteria::BeginsWith => key.starts_with(&self.normalized),
+                    FilterCriteria::DoesNotBeginWith => !key.starts_with(&self.normalized),
+                    FilterCriteria::Contains => key.contains(&self.normalized),
+                    FilterCriteria::DoesNotContain => !key.contains(&self.normalized),
+                }
             }
             CellData::Blank => false,
             _ => self.is_non_blank_filter(),
@@ -317,6 +339,40 @@ impl FilterData {
 
     fn is_non_blank_filter(&self) -> bool {
         self.criteria == FilterCriteria::NotEqualTo && self.string == " "
+    }
+}
+
+/// Number context for temporal filters; these conversions never intern strings.
+struct NumericFilterContext;
+
+impl WbContext for NumericFilterContext {
+    fn shared_strings(&self) -> &SSTHolder {
+        unreachable!("temporal filters convert to numbers only")
+    }
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Excel filters compare stored IEEE-754 values exactly"
+)]
+fn numeric_value(cell: &CellData) -> Option<f64> {
+    match cell {
+        CellData::Integer(value) => Some(*value as f64),
+        CellData::Number(value) => Some(*value),
+        CellData::Date(value) => temporal_serial(value),
+        CellData::Time(value) => temporal_serial(value),
+        CellData::DateTime(value) => temporal_serial(value),
+        CellData::Duration(value) => temporal_serial(value),
+        CellData::ExcelDateTime(value) => Some(value.to_excel()),
+        _ => None,
+    }
+}
+
+fn temporal_serial(value: &dyn ToCellValue) -> Option<f64> {
+    match value.to_cell_value(&NumericFilterContext).ok()? {
+        CellValue::Number(NumberEncoding::Real(value)) => Some(value),
+        CellValue::Number(NumberEncoding::Rk(value)) => Some(value.value()),
+        _ => None,
     }
 }
 
@@ -342,11 +398,17 @@ fn compare_number(value: f64, target: f64, criteria: FilterCriteria) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeDelta};
     use rust_xlsb_core::prelude::BrtFont;
 
+    use crate::ExcelDateTime;
     use crate::data::{RichRun, RichString};
 
     use super::*;
+
+    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).expect("valid date")
+    }
 
     fn rich_text(text: &str) -> CellData {
         CellData::RichString(RichString {
@@ -419,7 +481,83 @@ mod tests {
         assert!(!condition.matches(None));
         assert!(!condition.matches(Some(&CellData::Blank)));
         assert!(condition.matches(Some(&CellData::Integer(1))));
+        assert!(condition.matches(Some(&CellData::Bool(true))));
         assert!(condition.matches(Some(&CellData::String("x".to_owned()))));
         assert!(condition.matches(Some(&rich_text("x"))));
+    }
+
+    #[test]
+    fn temporal_cells_match_numeric_list_filters() {
+        let condition = FilterCondition::new()
+            .add_list_filter(45292_i32)
+            .add_list_filter(0.5_f64)
+            .add_list_filter(45292.5_f64);
+
+        assert!(condition.matches(Some(&CellData::Date(date(2024, 1, 1)))));
+        assert!(condition.matches(Some(&CellData::Time(
+            NaiveTime::from_hms_opt(12, 0, 0).expect("valid time")
+        ))));
+        assert!(
+            condition.matches(Some(&CellData::DateTime(NaiveDateTime::new(
+                date(2024, 1, 1),
+                NaiveTime::from_hms_opt(12, 0, 0).expect("valid time")
+            ))))
+        );
+        assert!(
+            condition.matches(Some(&CellData::ExcelDateTime(
+                ExcelDateTime::from_ymd(2024, 1, 1)
+                    .expect("valid date")
+                    .and_hms(12, 0, 0)
+                    .expect("valid time")
+            )))
+        );
+        assert!(condition.matches(Some(&CellData::Duration(TimeDelta::hours(12)))));
+        assert!(!condition.matches(Some(&CellData::Date(date(2024, 1, 2)))));
+    }
+
+    #[test]
+    fn temporal_cells_match_numeric_custom_filters() {
+        let condition = FilterCondition::new()
+            .add_custom_filter(FilterCriteria::GreaterThanOrEqualTo, 45292_i32)
+            .add_custom_filter(FilterCriteria::LessThan, 45293_i32);
+
+        assert!(condition.matches(Some(&CellData::Date(date(2024, 1, 1)))));
+        assert!(
+            condition.matches(Some(&CellData::DateTime(NaiveDateTime::new(
+                date(2024, 1, 1),
+                NaiveTime::from_hms_opt(12, 0, 0).expect("valid time")
+            ))))
+        );
+        assert!(!condition.matches(Some(&CellData::Date(date(2024, 1, 2)))));
+    }
+
+    #[test]
+    fn invalid_temporal_values_do_not_match_numeric_filters() {
+        let condition = FilterCondition::new().add_list_filter(0_i32);
+        assert!(!condition.matches(Some(&CellData::Date(date(1899, 12, 31)))));
+        assert!(!condition.matches(Some(&CellData::Time(
+            NaiveTime::from_hms_nano_opt(23, 59, 59, 1_000_000_000).expect("leap second")
+        ))));
+    }
+
+    #[test]
+    fn boolean_cells_match_list_and_custom_filters() {
+        let true_list = FilterCondition::new().add_list_filter("true");
+        assert!(true_list.matches(Some(&CellData::Bool(true))));
+        assert!(!true_list.matches(Some(&CellData::Bool(false))));
+
+        let false_list = FilterCondition::new().add_list_filter("FALSE");
+        assert!(false_list.matches(Some(&CellData::Bool(false))));
+        assert!(!false_list.matches(Some(&CellData::Bool(true))));
+
+        let numeric_equal =
+            FilterCondition::new().add_custom_filter(FilterCriteria::EqualTo, 1_i32);
+        assert!(numeric_equal.matches(Some(&CellData::Bool(true))));
+        assert!(!numeric_equal.matches(Some(&CellData::Bool(false))));
+
+        let string_equal =
+            FilterCondition::new().add_custom_filter(FilterCriteria::EqualTo, "FALSE");
+        assert!(string_equal.matches(Some(&CellData::Bool(false))));
+        assert!(!string_equal.matches(Some(&CellData::Bool(true))));
     }
 }

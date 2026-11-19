@@ -4357,6 +4357,33 @@ mod tests {
     }
 
     #[test]
+    fn temporal_and_boolean_filters_hide_nonmatching_rows() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        worksheet.autofilter(0, 0, 3, 1).expect("autofilter");
+        worksheet.write_string(0, 0, "Date").expect("header");
+        worksheet.write_string(0, 1, "Active").expect("header");
+        for (row, day) in [(1, 1), (2, 2), (3, 3)] {
+            let date = chrono::NaiveDate::from_ymd_opt(2024, 1, day).expect("date");
+            worksheet.write_date(row, 0, date).expect("date");
+        }
+        worksheet.write_boolean(1, 1, true).expect("bool");
+        worksheet.write_boolean(2, 1, false).expect("bool");
+        worksheet.write_boolean(3, 1, true).expect("bool");
+
+        worksheet
+            .filter_column(1, &FilterCondition::new().add_list_filter("TRUE"))
+            .expect("boolean filter");
+        worksheet.apply_filters();
+        assert_eq!(worksheet.filter_hidden_rows(), &[2].into());
+
+        worksheet
+            .filter_column(0, &FilterCondition::new().add_list_filter(45292_i32))
+            .expect("date filter");
+        worksheet.apply_filters();
+        assert_eq!(worksheet.filter_hidden_rows(), &[2, 3].into());
+    }
+
+    #[test]
     fn merge_range_writes_string_and_formatted_blanks() {
         let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
         let format = Format::new().set_bold();
