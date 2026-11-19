@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::UncheckedRfX;
 
+use crate::button::Button;
 use crate::conditional_format::{ConditionalFormat, ConditionalFormatRange};
 use crate::data::{
     ArrayFormulaCell, CellData, FormulaCell, FormulaResult, IntoExcelData, IntoExcelDateTime,
@@ -360,6 +361,7 @@ pub struct Worksheet {
     header_images: [Option<Image>; 3],
     footer_images: [Option<Image>; 3],
     notes: BTreeMap<(RowNum, ColNum), Note>,
+    buttons: BTreeMap<(RowNum, ColNum, u32, u32), Button>,
     show_all_notes: bool,
     default_note_author: Option<String>,
     page_breaks: Vec<u32>,
@@ -445,6 +447,7 @@ impl Worksheet {
             header_images: [None, None, None],
             footer_images: [None, None, None],
             notes: BTreeMap::new(),
+            buttons: BTreeMap::new(),
             show_all_notes: false,
             default_note_author: None,
             page_breaks: Vec::new(),
@@ -3772,6 +3775,51 @@ impl Worksheet {
 
     pub(crate) const fn notes(&self) -> &BTreeMap<(RowNum, ColNum), Note> {
         &self.notes
+    }
+
+    /// Inserts a form-control button into a cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the cell is outside the
+    /// worksheet.
+    pub fn insert_button(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        button: &Button,
+    ) -> Result<&mut Self> {
+        self.insert_button_with_offset(row, col, button, 0, 0)
+    }
+
+    /// Inserts a form-control button with pixel offsets from the cell origin.
+    ///
+    /// Buttons are keyed by cell and offsets, so multiple buttons can share a
+    /// cell. A second button at the same key replaces the first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the cell is outside the
+    /// worksheet.
+    pub fn insert_button_with_offset(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        button: &Button,
+        x_offset: u32,
+        y_offset: u32,
+    ) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        self.buttons.insert(
+            (row, col, y_offset, x_offset),
+            button.clone().set_offset(x_offset, y_offset),
+        );
+        Ok(self)
+    }
+
+    pub(crate) const fn buttons(&self) -> &BTreeMap<(RowNum, ColNum, u32, u32), Button> {
+        &self.buttons
     }
 
     pub(crate) fn default_note_author(&self) -> Option<&str> {

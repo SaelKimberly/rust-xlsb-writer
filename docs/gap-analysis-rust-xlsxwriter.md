@@ -38,9 +38,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    multi-range data validation, and structural sheet protection are present.
 4. **Rich objects** — worksheet background images, foreground images with
    native or scaled sizing, pixel offsets, fit-to-cell placement,
-   header/footer VML images, cell notes with authors and visibility, and
-   sparkline groups are supported; in-cell image embedding, charts, shapes,
-   buttons, and checkboxes are missing.
+   header/footer VML images, basic form-control buttons, cell notes with
+   authors and visibility, and sparkline groups are supported; in-cell image
+   embedding, charts, shapes, and checkboxes are missing.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
    user-defined names, the Excel 2023 theme, custom theme files, VBA projects
    with detached signatures and code names are available; chartsheets are
@@ -50,7 +50,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    `ExcelDateTime` type are present.
 7. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 13 `Workbook`, 112
+The current API surface is deliberately narrow: roughly 13 `Workbook`, 150
 `Worksheet`, and 48 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -209,7 +209,7 @@ Status meanings:
 | `insert_chart`, `insert_chart_with_offset` | Missing | Chart parts |
 | `insert_note` | Partial | Plain-text notes with author, visibility, pixel dimensions, background color, and alt text; comments binary part and note VML |
 | `insert_shape`, `insert_shape_with_offset` | Missing | Drawing shapes |
-| `insert_button`, `insert_button_with_offset` | Missing | Form controls |
+| `insert_button`, `insert_button_with_offset` | Supported | Caption, macro, alt text, size, offsets, VML shape |
 | `insert_checkbox`, `insert_checkbox_with_format` | Missing | Checkbox cells |
 | `show_all_notes`, `set_default_note_author` | Supported | Visibility override and default author |
 
@@ -304,7 +304,7 @@ records or package parts that do not exist yet.
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, automatic worksheet and table row hiding; icon/top-10/dynamic filter records remain |
 | Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
 | Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
-| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground images use DrawingML pictures, two-cell anchors, DPI-aware scaled extents, fit-to-cell placement, drawing relationships, and media parts; header/footer images use VML shapes, media relationships, and `BrtLegacyDrawingHF`. In-cell embedding and charts remain |
+| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground images use DrawingML pictures, two-cell anchors, DPI-aware scaled extents, fit-to-cell placement, drawing relationships, and media parts; header/footer images use VML shapes, media relationships, and `BrtLegacyDrawingHF`; buttons use form-control VML shapes and share the note VML part. In-cell embedding and charts remain |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Sparklines | Shipped `BrtBeginSparklineGroup`/`BrtSparkline` FRT records, grouped rows/columns, and `Xti` data-range formulas |
 | Notes | Shipped: `commentsN.bin` with authors and rich text, note VML shapes, and `BrtLegacyDrawing`; author-prefix formatting, note text fonts, and threaded comments remain |
@@ -396,7 +396,8 @@ page layout; record-level tests cover print/view records.
 |---|---|---|
 | Images: insert, offset, scaling, fit-to-cell ✅; embed remains | Common report requirement | L–XL |
 | Notes/comments ✅ Partial | Plain text, authors, visibility, dimensions, colors, alt text, comments binary and VML | Author prefix, note text fonts, threaded comments |
-| Shapes/textboxes, buttons, checkboxes | Form-like sheets | L |
+| Buttons ✅ | Form-like sheets | M |
+| Shapes/textboxes, checkboxes | Form-like sheets | L |
 | Charts | Dashboards | XL |
 | Sparklines ✅ | Compact trend display | M |
 | Background image ✅ | Presentation | M |
@@ -461,7 +462,7 @@ work is future-function token coverage and shared-formula state:
 3. Cross-sheet and defined-name cell formulas.
 
 If formulas are deferred, the next bounded gaps are rich objects: shapes,
-buttons, checkboxes, in-cell image embedding, and charts. Hyperlinks,
+checkboxes, in-cell image embedding, and charts. Hyperlinks,
 worksheet state, page setup, text headers/footers, manual page breaks, outline
 groups, print areas, repeat titles, foreground-image scaling/fit-to-cell, and
 approximate autofit are shipped.
@@ -476,7 +477,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 332 core + 457 writer unit tests and 7 doctests in default
+- Test evidence: 332 core + 463 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
@@ -554,7 +555,11 @@ parts.
   and custom cell geometry, and unchanged media bytes. Aspose reads a 100x50
   image at 300 DPI as 32x16 logical pixels, and a fit-to-cell image at the
   requested 80x40 pixels. LibreOffice exports the scaled, fitted, and centered
-  extents with the same proportions.
+  extents with the same proportions. Form-control button tests cover default
+  and custom captions, macros, alt text, offsets, dimensions, VML shape ids,
+  shared note/button VML, worksheet relationships, and `BrtLegacyDrawing`.
+  Aspose reads the generated buttons as form-control shapes with the expected
+  captions, macros, alt text, and cells.
 - No benchmark measures peak memory or throughput. Memory-mode gaps are
   architectural, not benchmarked.
 - No Microsoft Excel validation was available. LibreOffice is the visual oracle.

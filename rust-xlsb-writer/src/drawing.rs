@@ -6,7 +6,11 @@ use crate::{Error, Image, Result};
 
 use crate::worksheet::{MAX_COL, MAX_ROW, Worksheet};
 
-const EMU_PER_PIXEL: u64 = 9_525;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the VML object writers"
+)]
+pub(crate) const EMU_PER_PIXEL: u64 = 9_525;
 const EMU_PER_PIXEL_F64: f64 = 9_525.0;
 const DEFAULT_COL_WIDTH: f64 = 8.43;
 const DEFAULT_ROW_HEIGHT: f64 = 15.0;
@@ -204,6 +208,15 @@ pub fn advance_rows(sheet: &Worksheet, row: u32, offset: u32, height: f64) -> (u
 )]
 pub fn centered_offset(cell: f64, image: f64) -> u32 {
     ((cell - image).max(0.0) / 2.0).round() as u32
+}
+
+/// Converts a 96-DPI pixel dimension to the 72-DPI points VML uses.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the VML object writers"
+)]
+pub(crate) fn vml_dpi_size(dimension: f64) -> f64 {
+    (dimension + 0.25).floor() * 72.0 / 96.0
 }
 
 pub fn column_pixels(sheet: &Worksheet, col: u16) -> f64 {

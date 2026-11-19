@@ -23,6 +23,7 @@
 //! Both features are disabled by default. Native [`ExcelDateTime`] values and
 //! `chrono` temporal values are always available.
 
+mod button;
 mod conditional_format;
 mod data;
 mod data_validation;
@@ -49,6 +50,7 @@ mod url;
 mod workbook;
 mod worksheet;
 
+pub use button::Button;
 pub use conditional_format::{
     ConditionalFormat, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
     ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,

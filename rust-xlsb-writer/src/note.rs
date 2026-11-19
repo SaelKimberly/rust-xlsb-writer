@@ -144,13 +144,11 @@ use rust_xlsb_core::push_record;
 
 use crate::Result;
 use crate::drawing::{
-    absolute_column_pixels, absolute_row_pixels, advance_columns, advance_rows, column_pixels,
-    row_pixels,
+    EMU_PER_PIXEL, absolute_column_pixels, absolute_row_pixels, advance_columns, advance_rows,
+    column_pixels, row_pixels, vml_dpi_size,
 };
 use crate::format::Color;
 use crate::worksheet::{MAX_COL, Worksheet};
-
-const EMU_PER_PIXEL: u64 = 9_525;
 
 /// Builds the binary `commentsN.bin` part for one worksheet.
 ///
@@ -230,15 +228,16 @@ pub fn comments_bin(sheet: &Worksheet) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Number of 1024-id VML blocks needed by a worksheet's notes.
-pub fn note_vml_blocks(sheet: &Worksheet) -> u32 {
-    u32::try_from(sheet.notes().len().div_ceil(1024).max(1)).expect("note blocks fit u32")
+/// Number of 1024-id VML blocks needed by a worksheet's buttons and notes.
+pub fn vml_blocks(sheet: &Worksheet) -> u32 {
+    let count = sheet.notes().len().saturating_add(sheet.buttons().len());
+    u32::try_from(count.div_ceil(1024).max(1)).expect("VML blocks fit u32")
 }
 
-/// Builds the note VML drawing for one worksheet.
-pub fn vml_notes_xml(sheet: &Worksheet, data_id: u32) -> String {
+/// Builds the VML drawing for one worksheet, including buttons and notes.
+pub fn vml_xml(sheet: &Worksheet, data_id: u32) -> String {
     let visible_all = sheet.all_notes_visible();
-    let blocks = note_vml_blocks(sheet);
+    let blocks = vml_blocks(sheet);
     let mut data_ids = String::with_capacity(usize::try_from(blocks).expect("fits usize") * 5);
     for block in 0..blocks {
         if block != 0 {
@@ -246,18 +245,24 @@ pub fn vml_notes_xml(sheet: &Worksheet, data_id: u32) -> String {
         }
         write!(data_ids, "{}", data_id + block).expect("writing to String cannot fail");
     }
-    let mut out = String::with_capacity(640 + sheet.notes().len() * 620);
+    let mut out =
+        String::with_capacity(640 + sheet.notes().len() * 620 + sheet.buttons().len() * 480);
     out.push_str(r#"<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">"#);
     write!(
         out,
         r#"<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="{data_ids}" /></o:shapelayout>"#
     )
     .expect("writing to String cannot fail");
-    out.push_str(concat!(
-        r#"<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe">"#,
-        r#"<v:stroke joinstyle="miter" /><v:path gradientshapeok="t" o:connecttype="rect" /></v:shapetype>"#,
-    ));
-    for (index, (&(row, col), note)) in sheet.notes().iter().enumerate() {
+    let mut shape_id = 1024 + (data_id - 1) * 1024;
+    let mut z_index = 0;
+    crate::button::write_button_shapes(&mut out, sheet, &mut shape_id, &mut z_index);
+    if !sheet.notes().is_empty() {
+        out.push_str(concat!(
+            r#"<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe">"#,
+            r#"<v:stroke joinstyle="miter" /><v:path gradientshapeok="t" o:connecttype="rect" /></v:shapetype>"#,
+        ));
+    }
+    for (&(row, col), note) in sheet.notes() {
         let anchor = note_anchor(sheet, row, col, note.width(), note.height());
         let left = vml_dpi_size(
             absolute_column_pixels(sheet, anchor.start_col) + f64::from(anchor.start_col_off),
@@ -270,7 +275,8 @@ pub fn vml_notes_xml(sheet: &Worksheet, data_id: u32) -> String {
         let visible = note.is_visible(visible_all);
         let visibility = if visible { "visible" } else { "hidden" };
         let fill_color = note.fill_color();
-        let shape_id = 1025 + (data_id - 1) * 1024 + u32::try_from(index).expect("fits u32");
+        shape_id += 1;
+        z_index += 1;
         write!(out, r#"<v:shape id="_x0000_s{shape_id}" "#).expect("writing to String cannot fail");
         if !note.alt_text().is_empty() {
             write!(
@@ -282,7 +288,7 @@ pub fn vml_notes_xml(sheet: &Worksheet, data_id: u32) -> String {
         }
         write!(
             out,
-            r##"type="#_x0000_t202" style="position:absolute;margin-left:{left}pt;margin-top:{top}pt;width:{width}pt;height:{height}pt;z-index:{index};visibility:{visibility};" fillcolor="#{fill_color:06X}" o:insetmode="auto"><v:fill color2="#{fill_color:06X}" /><v:shadow on="t" color="black" obscured="t" /><v:path o:connecttype="none" /><v:textbox style="mso-direction-alt:auto"><div style="text-align:Left" /></v:textbox><x:ClientData ObjectType="Note"><x:MoveWithCells /><x:SizeWithCells /><x:Anchor>{},{},{},{},{},{},{},{}</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{row}</x:Row><x:Column>{col}</x:Column>"##,
+            r##"type="#_x0000_t202" style="position:absolute;margin-left:{left}pt;margin-top:{top}pt;width:{width}pt;height:{height}pt;z-index:{z_index};visibility:{visibility};" fillcolor="#{fill_color:06X}" o:insetmode="auto"><v:fill color2="#{fill_color:06X}" /><v:shadow on="t" color="black" obscured="t" /><v:path o:connecttype="none" /><v:textbox style="mso-direction-alt:auto"><div style="text-align:Left" /></v:textbox><x:ClientData ObjectType="Note"><x:MoveWithCells /><x:SizeWithCells /><x:Anchor>{},{},{},{},{},{},{},{}</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{row}</x:Row><x:Column>{col}</x:Column>"##,
             anchor.start_col,
             anchor.start_col_off,
             anchor.start_row,
@@ -380,13 +386,9 @@ const fn note_start_row(row: u32) -> (u32, u32) {
     }
 }
 
-fn vml_dpi_size(dimension: f64) -> f64 {
-    (dimension + 0.25).floor() * 72.0 / 96.0
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{comments_bin, vml_notes_xml};
+    use super::{comments_bin, vml_xml};
     use crate::format::Color;
     use crate::{Note, Worksheet};
 
@@ -407,7 +409,7 @@ mod tests {
         let comments = comments_bin(&sheet).expect("comments");
         assert_eq!(&comments[..5], &[0xF4, 0x04, 0, 0xF6, 0x04]);
 
-        let vml = vml_notes_xml(&sheet, 1);
+        let vml = vml_xml(&sheet, 1);
         assert!(
             vml.contains(r#"<o:idmap v:ext="edit" data="1" />"#),
             "{vml}"
@@ -442,14 +444,14 @@ mod tests {
     fn note_vml_uses_blocks_and_reference_offsets() {
         let mut sheet = Worksheet::new();
         sheet.insert_note(1, 1, &Note::new("offset")).expect("note");
-        let vml = vml_notes_xml(&sheet, 1);
+        let vml = vml_xml(&sheet, 1);
         assert!(vml.contains("<x:Anchor>2,15,0,10,"), "{vml}");
 
         let mut sheet = Worksheet::new();
         for row in 0..1025 {
             sheet.insert_note(row, 0, &Note::new("x")).expect("note");
         }
-        let vml = vml_notes_xml(&sheet, 1);
+        let vml = vml_xml(&sheet, 1);
         assert!(vml.contains(r#"<o:idmap v:ext="edit" data="1,2" />"#));
         assert!(vml.contains(r#"id="_x0000_s2049""#));
     }
@@ -464,7 +466,7 @@ mod tests {
                 &Note::new("edge"),
             )
             .expect("note");
-        let vml = vml_notes_xml(&sheet, 1);
+        let vml = vml_xml(&sheet, 1);
         assert!(vml.contains("<x:Anchor>16380,49,1048571,14,"), "{vml}");
     }
 
@@ -480,7 +482,7 @@ mod tests {
                     .set_alt_text("a \"quote\" & <tag>"),
             )
             .expect("note");
-        let vml = vml_notes_xml(&sheet, 1);
+        let vml = vml_xml(&sheet, 1);
         assert!(vml.contains(r##"fillcolor="#80FF80""##), "{vml}");
         assert!(vml.contains(r##"<v:fill color2="#80FF80" />"##), "{vml}");
         assert!(
@@ -507,7 +509,7 @@ mod tests {
         sheet
             .insert_note(0, 0, &Note::new("Hidden").set_visible(false))
             .expect("note");
-        let vml = vml_notes_xml(&sheet, 1);
+        let vml = vml_xml(&sheet, 1);
         assert!(vml.contains("visibility:hidden;"));
         assert!(!vml.contains("<x:Visible />"));
     }

@@ -169,7 +169,7 @@ pub fn build_package(
     let mut drawing_number = 0u32;
     let mut vml_part_number = 0u32;
     let mut header_vml_data_id = 0u32;
-    let mut note_vml_data_id = 0u32;
+    let mut vml_data_id = 0u32;
     let mut comment_number = 0u32;
     let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
@@ -285,21 +285,21 @@ pub fn build_package(
             next_rel_id += 1;
             Some((comment_number, comments_rel_id))
         };
-        let note_vml = if sheet.notes().is_empty() {
+        let legacy_vml = if sheet.notes().is_empty() && sheet.buttons().is_empty() {
             None
         } else {
-            let blocks = crate::note::note_vml_blocks(sheet);
-            let first_data_id = note_vml_data_id
+            let blocks = crate::note::vml_blocks(sheet);
+            let first_data_id = vml_data_id
                 .checked_add(1)
-                .ok_or(Error::ValueNotRepresentable("too many note blocks"))?;
-            note_vml_data_id = first_data_id
+                .ok_or(Error::ValueNotRepresentable("too many VML blocks"))?;
+            vml_data_id = first_data_id
                 .checked_add(blocks - 1)
-                .ok_or(Error::ValueNotRepresentable("too many note blocks"))?;
+                .ok_or(Error::ValueNotRepresentable("too many VML blocks"))?;
             vml_part_number += 1;
             let part_number = vml_part_number;
             vml_parts.push((
                 format!("xl/drawings/vmlDrawing{part_number}.vml"),
-                crate::note::vml_notes_xml(sheet, first_data_id).into_bytes(),
+                crate::note::vml_xml(sheet, first_data_id).into_bytes(),
             ));
             let rel_id = next_rel_id;
             next_rel_id += 1;
@@ -333,7 +333,7 @@ pub fn build_package(
             &sheet_sparklines[index],
             selected,
             drawing.map(|(_, rel_id)| rel_id),
-            note_vml.map(|(_, rel_id)| rel_id),
+            legacy_vml.map(|(_, rel_id)| rel_id),
             background_rel_id,
             header_vml.map(|(_, rel_id)| rel_id),
             &mut bytes,
@@ -344,7 +344,7 @@ pub fn build_package(
             drawing,
             image_index.zip(background_rel_id),
             comments,
-            note_vml,
+            legacy_vml,
             header_vml,
         ) {
             sheet_parts.push((
@@ -887,7 +887,7 @@ fn sheet_rels(
     drawing: Option<(u32, u32)>,
     background: Option<(usize, u32)>,
     comments: Option<(u32, u32)>,
-    note_vml: Option<(u32, u32)>,
+    legacy_vml: Option<(u32, u32)>,
     header_vml: Option<(u32, u32)>,
 ) -> Option<String> {
     if sheet.tables().is_empty()
@@ -895,7 +895,7 @@ fn sheet_rels(
         && drawing.is_none()
         && background.is_none()
         && comments.is_none()
-        && note_vml.is_none()
+        && legacy_vml.is_none()
         && header_vml.is_none()
     {
         return None;
@@ -951,7 +951,7 @@ fn sheet_rels(
         )
         .expect("writing to String cannot fail");
     }
-    if let Some((vml_number, vml_rel_id)) = note_vml {
+    if let Some((vml_number, vml_rel_id)) = legacy_vml {
         write!(
             body,
             r#"<Relationship Id="rId{vml_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing{vml_number}.vml"/>"#
@@ -5357,7 +5357,98 @@ mod tests {
     }
 
     #[test]
-    fn note_vml_blocks_continue_across_sheets() {
+    fn buttons_emit_vml_legacy_drawing_without_comments() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet
+            .insert_button(
+                2,
+                1,
+                &crate::Button::new()
+                    .set_caption("Press Me")
+                    .set_macro("say_hello"),
+            )
+            .expect("button");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert!(part_bytes(&bytes, "xl/comments1.bin").is_err());
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#
+        ));
+
+        let vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("vml"))
+                .expect("utf8");
+        assert!(vml.contains(r#"<v:shapetype id="_x0000_t201""#), "{vml}");
+        assert!(vml.contains(r#"id="_x0000_s1025""#), "{vml}");
+        assert!(vml.contains(">Press Me</font>"), "{vml}");
+        assert!(
+            vml.contains("<x:FmlaMacro>[0]!say_hello</x:FmlaMacro>"),
+            "{vml}"
+        );
+
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(
+            r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>"#
+        ));
+
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let legacy = records::<BrtLegacyDrawing>(&sheet_part);
+        assert_eq!(
+            legacy[0].stRelId.to_optional_string().as_deref(),
+            Some("rId1")
+        );
+    }
+
+    #[test]
+    fn buttons_and_notes_share_one_vml_part() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet
+            .insert_button(0, 0, &crate::Button::new().set_caption("Run"))
+            .expect("button");
+        sheet
+            .insert_note(1, 1, &crate::Note::new("Note"))
+            .expect("note");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert!(part_bytes(&bytes, "xl/comments1.bin").is_ok());
+        assert!(part_bytes(&bytes, "xl/drawings/vmlDrawing2.vml").is_err());
+
+        let vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("vml"))
+                .expect("utf8");
+        assert!(vml.contains(r#"<v:shapetype id="_x0000_t201""#), "{vml}");
+        assert!(vml.contains(r#"<v:shapetype id="_x0000_t202""#), "{vml}");
+        assert!(vml.contains(r#"id="_x0000_s1025""#), "{vml}");
+        assert!(vml.contains(r#"id="_x0000_s1026""#), "{vml}");
+        assert!(
+            vml.contains(r#"<x:ClientData ObjectType="Button">"#),
+            "{vml}"
+        );
+        assert!(vml.contains(r#"<x:ClientData ObjectType="Note">"#), "{vml}");
+
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(
+            r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.bin"/>"#
+        ));
+        assert!(rels.contains(
+            r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>"#
+        ));
+    }
+
+    #[test]
+    fn vml_blocks_continue_across_sheets() {
         let mut workbook = crate::Workbook::new();
         let first = workbook.add_worksheet();
         for row in 0..1025 {
