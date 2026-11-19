@@ -465,6 +465,8 @@ mod tests {
         let not_equal =
             FilterCondition::new().add_custom_filter(FilterCriteria::NotEqualTo, 4000_i32);
         assert!(not_equal.matches(Some(&CellData::String(String::new()))));
+        assert!(!not_equal.matches(Some(&CellData::String("4000".to_owned()))));
+        assert!(!not_equal.matches(Some(&CellData::String(" 4000 ".to_owned()))));
     }
 
     #[test]
@@ -554,6 +556,15 @@ mod tests {
             FilterCondition::new().add_custom_filter(FilterCriteria::EqualTo, 1_i32);
         assert!(numeric_equal.matches(Some(&CellData::Bool(true))));
         assert!(!numeric_equal.matches(Some(&CellData::Bool(false))));
+
+        let numeric_not_equal =
+            FilterCondition::new().add_custom_filter(FilterCriteria::NotEqualTo, 1_i32);
+        assert!(!numeric_not_equal.matches(Some(&CellData::Bool(true))));
+        assert!(numeric_not_equal.matches(Some(&CellData::Bool(false))));
+
+        let not_four_thousand =
+            FilterCondition::new().add_custom_filter(FilterCriteria::NotEqualTo, 4000_i32);
+        assert!(not_four_thousand.matches(Some(&CellData::Bool(true))));
 
         let string_equal =
             FilterCondition::new().add_custom_filter(FilterCriteria::EqualTo, "FALSE");
