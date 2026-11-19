@@ -1006,6 +1006,20 @@ mod tests {
     }
 
     #[test]
+    fn unknown_cell_lookalikes_keep_cell_errors() {
+        let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
+        let definitions = [DefinedName::new("Target", "=1").expect("target")];
+        let names = NameTable::new(&sheets, &definitions, 0).expect("name table");
+        let mut xti = XtiCollector::new(1);
+        let error = encode_formula_with_names("=A1B", None, &sheets, &mut xti, Some(&names))
+            .expect_err("unknown lookalike");
+        assert!(error.to_string().contains("absolute"), "{error}");
+        let error = encode_formula_with_names("=Sheet1!A1B", None, &sheets, &mut xti, Some(&names))
+            .expect_err("unknown qualified lookalike");
+        assert!(error.to_string().contains("absolute"));
+    }
+
+    #[test]
     fn builtin_names_shift_user_name_indexes() {
         let sheets = vec![Worksheet::new_named("Sheet1".to_owned())];
         let definitions = [

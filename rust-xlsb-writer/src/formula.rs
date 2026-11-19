@@ -543,7 +543,13 @@ impl<'a> Parser<'a, '_, '_, '_> {
             }
         }
         if let Some(reference) = self.cell_ref_at(self.pos)
-            && !self.next_is_name_char(reference.end)
+            && !self.cell_prefix_is_defined_name(
+                self.pos,
+                reference.end,
+                self.name_context
+                    .as_ref()
+                    .and_then(|context| context.default_sheet),
+            )
         {
             let mut after = reference.end;
             while self
@@ -576,13 +582,7 @@ impl<'a> Parser<'a, '_, '_, '_> {
         }
 
         let start = self.pos;
-        while let Some(ch) = self.input[self.pos..].chars().next() {
-            if is_name_char(ch) {
-                self.pos += ch.len_utf8();
-            } else {
-                break;
-            }
-        }
+        self.pos = self.name_token_end(start);
         let name = &self.input[start..self.pos];
         if self.peek() == Some(b'[') {
             if self.tables.is_some() {
@@ -1058,13 +1058,7 @@ impl<'a> Parser<'a, '_, '_, '_> {
 
     fn read_defined_name(&mut self) -> Result<&'a str> {
         let start = self.pos;
-        while let Some(ch) = self.input[self.pos..].chars().next() {
-            if is_name_char(ch) {
-                self.pos += ch.len_utf8();
-            } else {
-                break;
-            }
-        }
+        self.pos = self.name_token_end(start);
         if self.pos == start {
             return Err(formula_error(
                 "defined-name sheet references require a cell, range, or name",
@@ -1110,7 +1104,7 @@ impl<'a> Parser<'a, '_, '_, '_> {
         };
         let first_cell = self
             .cell_ref_at(self.pos)
-            .filter(|cell| !self.next_is_name_char(cell.end));
+            .filter(|cell| !self.cell_prefix_is_defined_name(self.pos, cell.end, Some(first)));
         let Some(first_cell) = first_cell else {
             if first != last {
                 return Err(formula_error(
@@ -1152,6 +1146,37 @@ impl<'a> Parser<'a, '_, '_, '_> {
 
     fn next_is_name_char(&self, at: usize) -> bool {
         self.input[at..].chars().next().is_some_and(is_name_char)
+    }
+
+    fn name_token_end(&self, start: usize) -> usize {
+        let mut end = start;
+        while let Some(ch) = self.input[end..].chars().next() {
+            if !is_name_char(ch) {
+                break;
+            }
+            end += ch.len_utf8();
+        }
+        end
+    }
+
+    fn cell_prefix_is_defined_name(
+        &self,
+        start: usize,
+        cell_end: usize,
+        scope: Option<usize>,
+    ) -> bool {
+        if !self.next_is_name_char(cell_end) {
+            return false;
+        }
+        let Some(context) = self.name_context.as_ref() else {
+            return false;
+        };
+        let Some(names) = context.names else {
+            return false;
+        };
+        names
+            .lookup(&self.input[start..self.name_token_end(start)], scope)
+            .is_ok()
     }
 
     fn cell_ref_at(&self, start: usize) -> Option<CellRef> {

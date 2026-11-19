@@ -133,8 +133,8 @@ cargo fmt --all --check
 Package decode is the byte oracle. LibreOffice drops defined-name formulas on
 XLSB import, so it can only prove the package opens, not the token index.
 
-Result: 691 unit tests and 7 doctests in default builds (290 core, 401
-writer); 695 unit tests and 7 doctests with all features. Clippy and fmt are
+Result: 692 unit tests and 7 doctests in default builds (290 core, 402
+writer); 696 unit tests and 7 doctests with all features. Clippy and fmt are
 clean. A generated workbook with a print area, a global reference, and a
 sheet-qualified local reference opens in LibreOffice and exports CSV without
 error. A real Excel `goal.xlsb` fixture confirms the `0x23` + one-based
@@ -149,12 +149,15 @@ found two P2 parser gaps, both fixed:
 1. Names starting with `_` or `\` were accepted by `Workbook::define_name` but
    not routed to name parsing. `parse_primary` now dispatches those starts.
 2. Names that begin with a cell-reference prefix, such as `Q1Sales`, were
-   parsed as a cell plus trailing text. Cell-reference matches are now rejected
-   when the next character is a name character, for both unqualified and
-   sheet-qualified names.
+   parsed as a cell plus trailing text. A cell-reference match now yields to
+   the name parser only when the complete token resolves to a defined name;
+   unknown lookalikes keep the old cell-reference errors. Both unqualified and
+   sheet-qualified names are covered.
 
-Regression tests cover both shapes, including a sheet-qualified lookalike.
-Additional coverage handles Unicode names and Unicode case folding.
+Regression tests cover both shapes, including a sheet-qualified lookalike and
+unknown lookalikes that must keep the old error. Function-like prefixes such
+as `LOG10(...)` keep their existing function path. Additional coverage handles
+Unicode names and Unicode case folding.
 
 ## Risks And Mitigations
 
