@@ -1,5 +1,6 @@
 //! Worksheet tables and Table part serialization.
 
+use std::collections::BTreeMap;
 use std::fmt::{self, Display};
 
 use rust_xlsb_core::prelude::{
@@ -9,8 +10,9 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::push_record;
 
+use crate::filter::{FilterCondition, write_filter_columns};
 use crate::formula::{TableInfo, compile, compile_table_formula};
-use crate::{Error, Format, Formula, Result};
+use crate::{ColNum, Error, Format, Formula, Result};
 
 const NO_DXF: u32 = 0xffff_ffff;
 
@@ -32,6 +34,7 @@ pub struct Table {
     pub(crate) show_banded_columns: bool,
     pub(crate) show_first_column: bool,
     pub(crate) show_last_column: bool,
+    pub(crate) filter_conditions: BTreeMap<ColNum, FilterCondition>,
 }
 
 impl Default for Table {
@@ -56,6 +59,7 @@ impl Table {
             show_banded_columns: false,
             show_first_column: false,
             show_last_column: false,
+            filter_conditions: BTreeMap::new(),
         }
     }
 
@@ -101,6 +105,18 @@ impl Table {
     #[must_use]
     pub const fn set_autofilter(mut self, enable: bool) -> Self {
         self.show_autofilter = enable;
+        self
+    }
+
+    /// Adds or replaces a filter condition for a table column.
+    ///
+    /// `col` is a zero-based column index within the table, not a worksheet
+    /// column. The table must keep its header row and `AutoFilter`; otherwise
+    /// [`crate::Worksheet::add_table`] rejects the filter. Non-matching data
+    /// rows are hidden when the workbook is saved.
+    #[must_use]
+    pub fn filter_column(mut self, col: ColNum, filter_condition: &FilterCondition) -> Self {
+        self.filter_conditions.insert(col, filter_condition.clone());
         self
     }
 
@@ -440,6 +456,7 @@ pub(crate) fn write_table_part(
             filter_range.rwLast = filter_range.rwLast.saturating_sub(1);
         }
         push_record(out, &BrtBeginAFilter { rfx: filter_range })?;
+        write_filter_columns(&table_data.filter_conditions, filter_range, out)?;
         push_record(out, &BrtEndAFilter::default())?;
     }
 
@@ -533,7 +550,8 @@ pub(crate) fn write_table_part(
 mod tests {
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        BrtBeginAFilter, BrtBeginList, BrtBeginListCol, BrtTableStyleClient,
+        BrtBeginAFilter, BrtBeginFilterColumn, BrtBeginFilters, BrtBeginList, BrtBeginListCol,
+        BrtFilter, BrtTableStyleClient,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -638,6 +656,49 @@ mod tests {
         );
         assert_eq!(calculated[0].flags, 0);
         assert_eq!(records::<BrtListTrFmla>(&part).len(), 1);
+    }
+
+    #[test]
+    fn table_part_writes_filter_conditions() {
+        let mut table = table();
+        table.table.filter_conditions.insert(
+            3,
+            FilterCondition::new()
+                .add_list_filter("East")
+                .add_list_blanks_filter(),
+        );
+        let mut part = Vec::new();
+        write_table_part(&table, &[], &mut part).expect("table part");
+
+        let ids = record_ids(&part);
+        let position = |id: KnownID| ids.iter().position(|record_id| *record_id == id);
+        let begin_filter = position(KnownID::BrtBeginAFilter).expect("begin filter");
+        let begin_column = position(KnownID::BrtBeginFilterColumn).expect("begin column");
+        let begin_filters = position(KnownID::BrtBeginFilters).expect("begin filters");
+        let filter = position(KnownID::BrtFilter).expect("filter");
+        let end_filters = position(KnownID::BrtEndFilters).expect("end filters");
+        let end_column = position(KnownID::BrtEndFilterColumn).expect("end column");
+        let end_filter = position(KnownID::BrtEndAFilter).expect("end filter");
+        let begin_cols = position(KnownID::BrtBeginListCols).expect("begin columns");
+        assert!(
+            begin_filter < begin_column
+                && begin_column < begin_filters
+                && begin_filters < filter
+                && filter < end_filters
+                && end_filters < end_column
+                && end_column < end_filter
+                && end_filter < begin_cols
+        );
+
+        let columns = records::<BrtBeginFilterColumn>(&part);
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].dwCol, 1);
+        let filters = records::<BrtBeginFilters>(&part);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].fBlank, 1);
+        let values = records::<BrtFilter>(&part);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].rgch.try_to_string().expect("string"), "East");
     }
 
     #[test]

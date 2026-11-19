@@ -29,9 +29,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    standard icon sets, text, blank, error, date-occurring, and arbitrary
    formula rules, including multi-range rules; x14 icon sets and data-bar
    extensions are missing. Basic tables with total rows, subtotal/label
-   columns, per-column formats, and calculated-column formulas, `AutoFilter`
-   ranges, list/custom filter
-   conditions with temporal and boolean matching, literal and formula-backed
+   columns, per-column formats, calculated-column formulas, and table filter
+   conditions, `AutoFilter` ranges, list/custom filter conditions with
+   temporal and boolean matching, literal and formula-backed
    multi-range data validation, and structural sheet protection are present.
 4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
@@ -180,7 +180,7 @@ Status meanings:
 |---|---|---|
 | `autofilter` | Supported | Range record, filter columns, and automatic row hiding |
 | `filter_column`, `filter_automatic_off` | Supported | List/custom string, number, temporal-serial, and boolean filters; blanks, AND/OR |
-| `add_table` | Partial | Header/total rows, custom columns, built-in styles, table AutoFilters, subtotal/label columns, per-column data/header formats, and calculated-column formulas; table filter conditions missing |
+| `add_table` | Partial | Header/total rows, custom columns, built-in styles, table AutoFilters, subtotal/label columns, per-column data/header formats, calculated-column formulas, and table filter conditions |
 | `add_conditional_format` | Partial | Cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions missing |
 | `add_data_validation` | Partial | Multi-range list, whole/decimal, date/time, and text-length rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
@@ -290,8 +290,8 @@ records or package parts that do not exist yet.
 | Formulas | Shipped scalar token encoder, `BrtFmlaString`/`BrtFmlaNum`/`BrtFmlaBool`/`BrtFmlaError` records, cached results, recalculation-on-load, and static `BrtArrFmla` with `PtgExp` expansion; shared/dynamic state remains |
 | Hyperlinks | Shipped: `BrtHLink`, URL parsing, worksheet relationships, tooltip/display options |
 | Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
-| Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, table AutoFilter ranges, total rows, `ILTA_*` subtotals, `BrtListTrFmla` custom totals, `BrtListCCFmla` calculated columns with `PtgList` structured references, and per-column formats; table filter conditions remain |
-| Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
+| Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, table AutoFilter ranges, total rows, `ILTA_*` subtotals, `BrtListTrFmla` custom totals, `BrtListCCFmla` calculated columns with `PtgList` structured references, per-column formats, and table filter conditions |
+| Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, automatic worksheet and table row hiding; icon/top-10/dynamic filter records remain |
 | Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
 | Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |

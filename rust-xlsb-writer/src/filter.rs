@@ -1,8 +1,18 @@
 //! Worksheet autofilter conditions and matching.
 
-use rust_xlsb_core::{CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext};
+use std::collections::BTreeMap;
+
+use rust_xlsb_core::prelude::{
+    BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters, BrtCustomFilter,
+    BrtEndCustomFilters, BrtEndFilterColumn, BrtEndFilters, BrtFilter, UncheckedRfX, XlStringExt,
+    XlWideString,
+};
+use rust_xlsb_core::{
+    BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
+};
 
 use crate::data::CellData;
+use crate::{ColNum, Error, Result};
 
 /// Comparison used by a custom autofilter condition.
 ///
@@ -217,6 +227,20 @@ impl FilterCondition {
         self.list.is_empty() && self.custom1.is_none() && !self.should_match_blanks
     }
 
+    pub(crate) fn validate(&self) -> std::result::Result<(), &'static str> {
+        if self.is_empty() {
+            return Err("filter condition has no values or comparisons");
+        }
+        if self
+            .list
+            .iter()
+            .any(|data| !(1..=255).contains(&data.string.encode_utf16().count()))
+        {
+            return Err("list filter values must contain 1-255 UTF-16 code units");
+        }
+        Ok(())
+    }
+
     pub(crate) fn matches(&self, cell: Option<&CellData>) -> bool {
         if self.is_list_filter {
             self.matches_list(cell)
@@ -393,6 +417,96 @@ fn compare_number(value: f64, target: f64, criteria: FilterCriteria) -> bool {
         FilterCriteria::GreaterThan => value > target,
         FilterCriteria::GreaterThanOrEqualTo => value >= target,
         _ => false,
+    }
+}
+
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with worksheet and table serializers"
+)]
+pub(crate) fn write_filter_columns(
+    conditions: &BTreeMap<ColNum, FilterCondition>,
+    range: UncheckedRfX,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    for (&col, condition) in conditions {
+        push(
+            out,
+            &BrtBeginFilterColumn {
+                dwCol: u32::from(col) - range.colFirst,
+                fHideArrow: false,
+                fNoBtn: false,
+            },
+        )?;
+
+        if condition.is_list_filter {
+            push(
+                out,
+                &BrtBeginFilters {
+                    fBlank: u32::from(condition.should_match_blanks),
+                    unused: 0,
+                },
+            )?;
+            for data in &condition.list {
+                push(
+                    out,
+                    &BrtFilter {
+                        rgch: XlWideString::construct(Some(data.string.as_str())),
+                    },
+                )?;
+            }
+            push(out, &BrtEndFilters::default())?;
+        } else {
+            push(
+                out,
+                &BrtBeginCustomFilters {
+                    fAnd: u32::from(condition.apply_logical_or && condition.custom2.is_some()),
+                },
+            )?;
+            if let Some(data) = &condition.custom1 {
+                push(out, &custom_filter(data))?;
+            }
+            if let Some(data) = &condition.custom2 {
+                push(out, &custom_filter(data))?;
+            }
+            push(out, &BrtEndCustomFilters::default())?;
+        }
+
+        push(out, &BrtEndFilterColumn::default())?;
+    }
+
+    Ok(())
+}
+
+fn push<T: BiffWrite>(out: &mut Vec<u8>, record: &T) -> Result<()> {
+    push_record(out, record).map_err(Error::from)
+}
+
+fn custom_filter(data: &FilterData) -> BrtCustomFilter {
+    let grbit_sgn = data.criteria.operator();
+    if data.is_number() {
+        return BrtCustomFilter {
+            vts: 0x04,
+            grbitSgn: grbit_sgn,
+            union: data.number.to_le_bytes(),
+            vtsStringXls: None,
+        };
+    }
+
+    if data.string == " " && data.criteria == FilterCriteria::NotEqualTo {
+        return BrtCustomFilter {
+            vts: 0x0E,
+            grbitSgn: grbit_sgn,
+            union: [0; 8],
+            vtsStringXls: None,
+        };
+    }
+
+    BrtCustomFilter {
+        vts: 0x06,
+        grbitSgn: grbit_sgn,
+        union: [0; 8],
+        vtsStringXls: Some(XlWideString::construct(Some(data.value()))),
     }
 }
 

@@ -4,26 +4,24 @@ use std::collections::{BTreeSet, HashMap};
 
 use rust_xlsb_core::prelude::{
     BrtArrFmla, BrtBeginAFilter, BrtBeginCellIgnoreECs, BrtBeginColBrk, BrtBeginColInfos,
-    BrtBeginCustomFilters, BrtBeginDVals, BrtBeginFilterColumn, BrtBeginFilters,
-    BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk, BrtBeginSheet,
-    BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal, BrtCellRk, BrtColInfo,
-    BrtColSpan, BrtCustomFilter, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs, BrtEndColBrk,
-    BrtEndColInfos, BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals,
-    BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells,
-    BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtFmlaBool,
-    BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtMargins,
-    BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim,
-    BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, HeaderFooterString, RichStr, StrRun, StrRuns,
-    UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
-    conditional_format_block_ranges,
+    BrtBeginDVals, BrtBeginHeaderFooter, BrtBeginListParts, BrtBeginMergeCells, BrtBeginRwBrk,
+    BrtBeginSheet, BrtBeginSheetData, BrtBeginWsView, BrtBeginWsViews, BrtBrk, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellRString, BrtCellReal,
+    BrtCellRk, BrtColInfo, BrtColSpan, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs,
+    BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals, BrtEndHeaderFooter,
+    BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView,
+    BrtEndWsViews, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink,
+    BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr,
+    BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, HeaderFooterString,
+    RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt,
+    XlWideString, Xnum, conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
 };
 
 use crate::data::{CellData, FormulaResult};
-use crate::filter::{FilterCriteria, FilterData};
+use crate::filter::write_filter_columns;
 use crate::formula::array_expansion;
 use crate::worksheet::{ColumnOptions, IgnoreError, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
@@ -163,7 +161,7 @@ pub(crate) fn write_sheet_with_fonts(
     write_unprotected_ranges(sheet, out)?;
     if let Some(rfx) = sheet.autofilter_range() {
         push(out, &BrtBeginAFilter { rfx })?;
-        write_filter_columns(sheet, rfx, out)?;
+        write_filter_columns(sheet.filter_conditions(), rfx, out)?;
         push(out, &BrtEndAFilter::default())?;
     }
 
@@ -809,84 +807,6 @@ fn write_data_validations(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     }
     push(out, &BrtEndDVals::default())?;
     Ok(())
-}
-
-fn write_filter_columns(sheet: &Worksheet, range: UncheckedRfX, out: &mut Vec<u8>) -> Result<()> {
-    for (&col, condition) in sheet.filter_conditions() {
-        push(
-            out,
-            &BrtBeginFilterColumn {
-                dwCol: u32::from(col) - range.colFirst,
-                fHideArrow: false,
-                fNoBtn: false,
-            },
-        )?;
-
-        if condition.is_list_filter {
-            push(
-                out,
-                &BrtBeginFilters {
-                    fBlank: u32::from(condition.should_match_blanks),
-                    unused: 0,
-                },
-            )?;
-            for data in &condition.list {
-                push(
-                    out,
-                    &BrtFilter {
-                        rgch: XlWideString::construct(Some(data.string.as_str())),
-                    },
-                )?;
-            }
-            push(out, &BrtEndFilters::default())?;
-        } else {
-            push(
-                out,
-                &BrtBeginCustomFilters {
-                    fAnd: u32::from(condition.apply_logical_or && condition.custom2.is_some()),
-                },
-            )?;
-            if let Some(data) = &condition.custom1 {
-                push(out, &custom_filter(data))?;
-            }
-            if let Some(data) = &condition.custom2 {
-                push(out, &custom_filter(data))?;
-            }
-            push(out, &BrtEndCustomFilters::default())?;
-        }
-
-        push(out, &BrtEndFilterColumn::default())?;
-    }
-
-    Ok(())
-}
-
-fn custom_filter(data: &FilterData) -> BrtCustomFilter {
-    let grbit_sgn = data.criteria.operator();
-    if data.is_number() {
-        return BrtCustomFilter {
-            vts: 0x04,
-            grbitSgn: grbit_sgn,
-            union: data.number.to_le_bytes(),
-            vtsStringXls: None,
-        };
-    }
-
-    if data.string == " " && data.criteria == FilterCriteria::NotEqualTo {
-        return BrtCustomFilter {
-            vts: 0x0E,
-            grbitSgn: grbit_sgn,
-            union: [0; 8],
-            vtsStringXls: None,
-        };
-    }
-
-    BrtCustomFilter {
-        vts: 0x06,
-        grbitSgn: grbit_sgn,
-        union: [0; 8],
-        vtsStringXls: Some(XlWideString::construct(Some(data.value()))),
-    }
 }
 
 fn push_formula_record(

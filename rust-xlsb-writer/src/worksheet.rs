@@ -2731,12 +2731,15 @@ impl Worksheet {
     /// The table writes its header and optional total rows. Column headers
     /// default to existing header-cell strings, then `Column1`, `Column2`, and
     /// so on. Total labels, `SUBTOTAL` functions, per-column data formats,
-    /// header formats, and calculated-column formulas are supported.
+    /// header formats, calculated-column formulas, and table filter conditions
+    /// are supported. Table filter column numbers are zero-based within the
+    /// table; matching rows outside the condition are hidden at save time.
     ///
     /// # Errors
     ///
     /// Returns a range, table-name, header, total, overlap, or `AutoFilter`
-    /// error.
+    /// error. Table filters also require a header row and `AutoFilter`, a
+    /// column inside the table, and at least one value or comparison.
     pub fn add_table(
         &mut self,
         first_row: RowNum,
@@ -2755,6 +2758,24 @@ impl Worksheet {
             ));
         }
         table.validate_name()?;
+        if !table.filter_conditions.is_empty() {
+            if !table.show_header_row || !table.show_autofilter {
+                return Err(Error::Parameter(
+                    "table filters require a header row and AutoFilter".to_owned(),
+                ));
+            }
+            let width = last_col - first_col + 1;
+            for (&col, condition) in &table.filter_conditions {
+                if col >= width {
+                    return Err(Error::Parameter(format!(
+                        "table filter column {col} is outside the table width {width}"
+                    )));
+                }
+                condition
+                    .validate()
+                    .map_err(|message| Error::Parameter(message.to_owned()))?;
+            }
+        }
 
         let range = UncheckedRfX {
             rwFirst: first_row,
@@ -2778,6 +2799,15 @@ impl Worksheet {
         }
 
         let mut stored = table.clone();
+        if !stored.filter_conditions.is_empty() {
+            let conditions = std::mem::take(&mut stored.filter_conditions);
+            for (col, condition) in conditions {
+                let col = first_col.checked_add(col).ok_or_else(|| {
+                    Error::ValueNotRepresentable("table filter column is out of range")
+                })?;
+                stored.filter_conditions.insert(col, condition);
+            }
+        }
         let mut columns = std::mem::take(&mut stored.columns);
         columns.resize(
             usize::from(last_col - first_col + 1),
@@ -3007,9 +3037,10 @@ impl Worksheet {
 
     /// Adds or replaces a filter condition for an autofilter column.
     ///
-    /// Rows that do not match all column conditions are hidden when the
-    /// workbook is saved. Use [`Self::filter_automatic_off`] to keep the
-    /// records but leave row visibility to Excel.
+    /// Rows that do not match all worksheet column conditions are hidden when
+    /// the workbook is saved. Use [`Self::filter_automatic_off`] to keep the
+    /// records but leave worksheet row visibility to Excel. Table filters are
+    /// independent and always hide their non-matching data rows.
     ///
     /// # Errors
     ///
@@ -3032,28 +3063,19 @@ impl Worksheet {
                 range.colFirst, range.colLast
             )));
         }
-        if filter_condition.is_empty() {
-            return Err(Error::Parameter(
-                "filter condition has no values or comparisons".to_owned(),
-            ));
-        }
-        if filter_condition
-            .list
-            .iter()
-            .any(|data| !(1..=255).contains(&data.string.encode_utf16().count()))
-        {
-            return Err(Error::Parameter(
-                "list filter values must contain 1-255 UTF-16 code units".to_owned(),
-            ));
-        }
+        filter_condition
+            .validate()
+            .map_err(|message| Error::Parameter(message.to_owned()))?;
         self.filter_conditions.insert(col, filter_condition.clone());
         Ok(self)
     }
 
-    /// Disables automatic hidden-row updates for autofilter conditions.
+    /// Disables automatic hidden-row updates for worksheet autofilter
+    /// conditions.
     ///
-    /// Filter records are still written; only the row visibility is left to the
-    /// application opening the workbook.
+    /// Filter records are still written; only worksheet row visibility is left
+    /// to the application opening the workbook. Table filters are independent
+    /// and continue to hide their non-matching data rows.
     pub const fn filter_automatic_off(&mut self) -> &mut Self {
         self.filter_automatic_off = true;
         self
@@ -3061,20 +3083,39 @@ impl Worksheet {
 
     pub(crate) fn apply_filters(&mut self) {
         self.filter_hidden_rows.clear();
-        let Some(range) = self.autofilter else {
-            return;
-        };
-        if self.filter_automatic_off || self.filter_conditions.is_empty() {
-            return;
+        if let Some(range) = self.autofilter
+            && !self.filter_automatic_off
+            && !self.filter_conditions.is_empty()
+        {
+            for row in range.rwFirst.saturating_add(1)..=range.rwLast {
+                let hidden = self.filter_conditions.iter().any(|(&col, condition)| {
+                    let cell = self.cells.get(&row).and_then(|cells| cells.get(&col));
+                    !condition.matches(cell.map(|cell| &cell.data))
+                });
+                if hidden {
+                    self.filter_hidden_rows.insert(row);
+                }
+            }
         }
 
-        for row in range.rwFirst.saturating_add(1)..=range.rwLast {
-            let hidden = self.filter_conditions.iter().any(|(&col, condition)| {
-                let cell = self.cells.get(&row).and_then(|cells| cells.get(&col));
-                !condition.matches(cell.map(|cell| &cell.data))
-            });
-            if hidden {
-                self.filter_hidden_rows.insert(row);
+        for table in &self.tables {
+            if !table.table.show_autofilter || table.table.filter_conditions.is_empty() {
+                continue;
+            }
+            let data_first = table.range.rwFirst + u32::from(table.table.show_header_row);
+            let data_last = table.range.rwLast - u32::from(table.table.show_total_row);
+            for row in data_first..=data_last {
+                let hidden = table
+                    .table
+                    .filter_conditions
+                    .iter()
+                    .any(|(&col, condition)| {
+                        let cell = self.cells.get(&row).and_then(|cells| cells.get(&col));
+                        !condition.matches(cell.map(|cell| &cell.data))
+                    });
+                if hidden {
+                    self.filter_hidden_rows.insert(row);
+                }
             }
         }
     }
@@ -5415,6 +5456,74 @@ mod tests {
         worksheet.add_table(0, 0, 2, 1, &table).expect("table");
         assert_eq!(worksheet.tables()[0].table.columns[0].header, "Only");
         assert_eq!(worksheet.tables()[0].table.columns[1].header, "Column2");
+    }
+
+    #[test]
+    fn add_table_validates_and_translates_filter_columns() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let filter = FilterCondition::new().add_list_filter("East");
+        assert!(matches!(
+            worksheet.add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().set_header_row(false).filter_column(0, &filter)
+            ),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().set_autofilter(false).filter_column(0, &filter)
+            ),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.add_table(0, 0, 2, 1, &Table::new().filter_column(2, &filter)),
+            Err(Error::Parameter(_))
+        ));
+        assert!(matches!(
+            worksheet.add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().filter_column(0, &FilterCondition::new())
+            ),
+            Err(Error::Parameter(_))
+        ));
+        let long = "x".repeat(256);
+        assert!(matches!(
+            worksheet.add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new()
+                    .filter_column(0, &FilterCondition::new().add_list_filter(long.as_str()))
+            ),
+            Err(Error::Parameter(_))
+        ));
+        assert!(worksheet.tables().is_empty());
+
+        let table = Table::new().filter_column(1, &filter).set_columns(&[
+            TableColumn::new().set_header("Region"),
+            TableColumn::new().set_header("Sales"),
+        ]);
+        worksheet.add_table(0, 3, 2, 4, &table).expect("table");
+        assert_eq!(
+            worksheet.tables()[0]
+                .table
+                .filter_conditions
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            [4]
+        );
     }
 
     #[test]

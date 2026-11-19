@@ -2927,6 +2927,47 @@ mod tests {
     }
 
     #[test]
+    fn table_filters_emit_records_and_hide_data_rows() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_string(1, 2, "Region").expect("header");
+        worksheet.write_string(2, 3, "East").expect("east");
+        worksheet.write_string(3, 3, "West").expect("west");
+        worksheet.write_string(4, 3, "East").expect("east");
+        let table = Table::new()
+            .set_total_row(true)
+            .set_columns(&[
+                TableColumn::new().set_header("Region"),
+                TableColumn::new().set_header("Q1"),
+                TableColumn::new().set_header("Q2"),
+            ])
+            .filter_column(1, &FilterCondition::new().add_list_filter("East"));
+        worksheet.add_table(1, 2, 5, 4, &table).expect("table");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let table_part = part_bytes(&bytes, "xl/tables/table1.bin").expect("table part");
+        let columns = records::<BrtBeginFilterColumn>(&table_part);
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].dwCol, 1);
+        let filters = records::<BrtFilter>(&table_part);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].rgch.try_to_string().expect("string"), "East");
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let rows = records::<BrtRowHdr>(&sheet);
+        let hidden = |row: u32| {
+            rows.iter()
+                .find(|record| record.rw == row)
+                .is_some_and(|record| record.fDyZero && record.miyRw == 0)
+        };
+        assert!(!hidden(1));
+        assert!(!hidden(2));
+        assert!(hidden(3));
+        assert!(!hidden(4));
+        assert!(!hidden(5));
+    }
+
+    #[test]
     fn table_calculated_columns_emit_formula_and_external_sheet() {
         let mut workbook = crate::Workbook::new();
         let worksheet = workbook.add_worksheet();
