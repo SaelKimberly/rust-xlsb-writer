@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::defined_name::{DefinedName, sheet_index};
 use crate::theme::{Theme, read_theme_from_path, theme_error};
-use crate::worksheet::{Worksheet, default_column_metrics, validate_sheet_name};
+use crate::worksheet::{Worksheet, default_column_metrics, validate_sheet_name, validate_vba_name};
 use crate::{DocProperties, Error, FontScheme, Format, Result};
 
 /// Formula calculation mode for a workbook.
@@ -28,6 +28,8 @@ pub struct WorkbookSettings {
     pub zip_compression_level: Option<u8>,
     pub zip_large_file: bool,
     pub(crate) theme: Option<Theme>,
+    pub(crate) vba_project: Option<Box<[u8]>>,
+    pub(crate) vba_codename: Option<String>,
 }
 
 /// A workbook that owns one or more worksheets.
@@ -61,6 +63,8 @@ impl Workbook {
                 zip_compression_level: None,
                 zip_large_file: false,
                 theme: None,
+                vba_project: None,
+                vba_codename: None,
             },
             doc_properties: None,
             default_format: None,
@@ -127,6 +131,38 @@ impl Workbook {
         }
 
         self.settings.theme = Some(Theme::Custom(theme_xml.into_boxed_str()));
+        Ok(self)
+    }
+
+    /// Adds a VBA project to the workbook.
+    ///
+    /// The file is stored as `xl/vbaProject.bin`. It must be a valid
+    /// `vbaProject.bin` extracted from an Excel macro-enabled workbook. If no
+    /// workbook code name was set, it defaults to `ThisWorkbook`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Io`] when the file cannot be read.
+    pub fn add_vba_project<P: AsRef<Path>>(&mut self, path: P) -> Result<&mut Self> {
+        self.settings.vba_project = Some(std::fs::read(path)?.into_boxed_slice());
+        if self.settings.vba_codename.is_none() {
+            self.settings.vba_codename = Some("ThisWorkbook".to_owned());
+        }
+        Ok(self)
+    }
+
+    /// Sets the workbook VBA code name.
+    ///
+    /// The name must be non-empty, at most 31 characters, start with a letter,
+    /// and contain only letters, numbers, and underscores.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::VbaNameError`] when the name violates those rules.
+    pub fn set_vba_name(&mut self, name: impl Into<String>) -> Result<&mut Self> {
+        let name = name.into();
+        validate_vba_name(&name)?;
+        self.settings.vba_codename = Some(name);
         Ok(self)
     }
 
@@ -339,6 +375,7 @@ impl Workbook {
             self.doc_properties.as_ref(),
             self.default_format.as_ref(),
             &self.defined_names,
+            self.settings.vba_project.as_deref(),
         )
     }
 
@@ -356,6 +393,13 @@ impl Workbook {
     fn prepare(&mut self) -> Result<()> {
         if self.worksheets.is_empty() {
             self.add_worksheet();
+        }
+        if self.settings.vba_project.is_some() {
+            for (index, sheet) in self.worksheets.iter_mut().enumerate() {
+                if sheet.vba_codename().is_none() {
+                    sheet.set_vba_name(format!("Sheet{}", index + 1))?;
+                }
+            }
         }
         let mut names = HashSet::new();
         for sheet in &self.worksheets {

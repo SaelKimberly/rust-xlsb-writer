@@ -298,6 +298,7 @@ pub enum Visibility {
 )]
 pub struct Worksheet {
     name: String,
+    vba_codename: Option<String>,
     cells: BTreeMap<u32, BTreeMap<u16, Cell>>,
     rows: BTreeMap<u32, RowOptions>,
     columns: BTreeMap<u16, ColumnOptions>,
@@ -377,6 +378,7 @@ impl Worksheet {
     pub(crate) fn new_named(name: String) -> Self {
         Self {
             name,
+            vba_codename: None,
             cells: BTreeMap::new(),
             rows: BTreeMap::new(),
             columns: BTreeMap::new(),
@@ -447,6 +449,23 @@ impl Worksheet {
     #[must_use]
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+
+    /// Sets the worksheet VBA code name.
+    ///
+    /// Macro projects sometimes refer to a worksheet by a name other than the
+    /// default `Sheet1`, `Sheet2`, etc. The name must be non-empty, at most 31
+    /// characters, start with a letter, and contain only letters, numbers, and
+    /// underscores.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::VbaNameError`] when the name violates those rules.
+    pub fn set_vba_name(&mut self, name: impl Into<String>) -> Result<&mut Self> {
+        let name = name.into();
+        validate_vba_name(&name)?;
+        self.vba_codename = Some(name);
+        Ok(self)
     }
 
     /// Writes a value without formatting.
@@ -3774,6 +3793,22 @@ impl Worksheet {
 
     pub(crate) fn name_ref(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn vba_codename(&self) -> Option<&str> {
+        self.vba_codename.as_deref()
+    }
+}
+
+pub fn validate_vba_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.encode_utf16().count() > 31
+        || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        || !name.chars().next().is_some_and(char::is_alphabetic)
+    {
+        Err(Error::VbaNameError(name.to_owned()))
+    } else {
+        Ok(())
     }
 }
 

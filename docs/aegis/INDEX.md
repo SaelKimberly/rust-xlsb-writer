@@ -60,6 +60,7 @@
 - [Dynamic array formulas](plans/2026-11-19-dynamic-array-formulas.md)
 - [Foreground images](plans/2026-11-19-foreground-images.md)
 - [Foreground image scaling and fit-to-cell](plans/2026-11-19-foreground-image-scaling.md)
+- [VBA projects and code names](plans/2026-11-19-vba-projects.md)
 
 ## Analysis
 

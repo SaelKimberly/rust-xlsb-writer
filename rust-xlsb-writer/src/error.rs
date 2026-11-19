@@ -17,9 +17,13 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    /// A worksheet name violates Excel's naming rules.
+    /// A sheet name violates Excel's naming rules.
     #[error("invalid sheet name: {0}")]
     InvalidSheetName(String),
+
+    /// A VBA code name violates Excel's naming rules.
+    #[error("invalid VBA name: {0}")]
+    VbaNameError(String),
 
     /// Two worksheets use the same name.
     #[error("sheet name already used: {0}")]

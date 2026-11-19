@@ -15,8 +15,8 @@ use rust_xlsb_core::prelude::{
     BrtEndWsViews, BrtFRTBegin, BrtFRTEnd, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString,
     BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane,
     BrtPrintOptions, BrtRowHdr, BrtSel, BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell,
-    CellParsedFormula, FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref, FrtSqrefs,
-    HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX,
+    CellParsedFormula, CodeName, FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula, FrtSqref,
+    FrtSqrefs, HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX,
     XlNullableWideString, XlStringExt, XlWideString, Xnum, conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
@@ -431,6 +431,7 @@ fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     let (row_level, col_level) = sheet.outline_levels();
     let (symbols_above, symbols_left) = sheet.outline_symbols();
     let color = sheet.tab_color();
+    let vba_codename = sheet.vba_codename();
 
     if color.is_none()
         && !fit_to_page
@@ -438,6 +439,7 @@ fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
         && col_level == 0
         && !symbols_above
         && !symbols_left
+        && vba_codename.is_none()
     {
         return Ok(());
     }
@@ -456,6 +458,9 @@ fn write_ws_prop(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
     };
     if let Some(color) = color {
         prop.brtcolorTab = color.to_brt_color()?;
+    }
+    if vba_codename.is_some() {
+        prop.strName = CodeName::construct(vba_codename);
     }
     push(out, &prop)
 }

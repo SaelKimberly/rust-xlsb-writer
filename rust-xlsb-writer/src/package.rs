@@ -12,7 +12,7 @@ use rust_xlsb_core::prelude::{
     BrtBookView, BrtBundleSh, BrtCalcProp, BrtEndBook, BrtEndBookViews, BrtEndBundleShs,
     BrtEndDynamicArrayPr, BrtEndEsfmd, BrtEndEsmdb, BrtEndEsmdtinfo, BrtEndExternals, BrtEndFmd,
     BrtEndMetadata, BrtExternSheet, BrtFRTBegin, BrtFRTEnd, BrtFileSharing, BrtMdb, BrtMdtinfo,
-    BrtName, BrtSupSelf, BrtWbProp, FrtProductVersion, Mdir, NameParsedFormula,
+    BrtName, BrtSupSelf, BrtWbProp, CodeName, FrtProductVersion, Mdir, NameParsedFormula,
     XlNullableWideString, XlStringExt, XlWideString, Xnum, Xti,
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
@@ -26,6 +26,7 @@ use crate::formula::TableInfo;
 use crate::properties::CustomPropertyValue;
 use crate::sparkline::{SparklineSaveCell, SparklineSaveGroup};
 use crate::table::write_table_part;
+use crate::theme::Theme;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
 use crate::workbook::{CalculationMode, WorkbookSettings};
 use crate::worksheet::{MAX_COL, MAX_ROW, Visibility, Worksheet};
@@ -37,6 +38,7 @@ pub fn build_package(
     properties: Option<&DocProperties>,
     default_format: Option<&Format>,
     defined_names: &[DefinedName],
+    vba_project: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let sst = SSTHolder::create_in_memory()?;
     let mut registry = StyleRegistry::new();
@@ -262,6 +264,7 @@ pub fn build_package(
                 &drawing_ids,
                 &image_types,
                 has_dynamic_arrays,
+                vba_project.is_some(),
             )
             .into_bytes(),
         ),
@@ -271,7 +274,14 @@ pub fn build_package(
         ),
         (
             "xl/_rels/workbook.bin.rels".to_owned(),
-            workbook_rels(sheets.len(), has_strings, has_theme, has_dynamic_arrays).into_bytes(),
+            workbook_rels(
+                sheets.len(),
+                has_strings,
+                has_theme,
+                has_dynamic_arrays,
+                vba_project.is_some(),
+            )
+            .into_bytes(),
         ),
         (
             "xl/workbook.bin".to_owned(),
@@ -315,6 +325,9 @@ pub fn build_package(
         let mut metadata = Vec::new();
         write_metadata_part(&mut metadata)?;
         parts.push(("xl/metadata.bin".to_owned(), metadata));
+    }
+    if let Some(project) = vba_project {
+        parts.push(("xl/vbaProject.bin".to_owned(), project.to_vec()));
     }
 
     zip_store(
@@ -384,11 +397,15 @@ fn workbook_part(
             },
         )?;
     }
-    if let Some(theme) = settings.theme.as_ref() {
+    if settings.theme.is_some() || settings.vba_codename.is_some() {
         push_record(
             &mut out,
             &BrtWbProp {
-                dwThemeVersion: theme.version(),
+                dwThemeVersion: settings.theme.as_ref().map_or(0, Theme::version),
+                strName: settings
+                    .vba_codename
+                    .as_deref()
+                    .map_or_else(CodeName::default, |name| CodeName::construct(Some(name))),
                 ..BrtWbProp::default()
             },
         )?;
@@ -726,6 +743,7 @@ fn content_types(
     drawing_ids: &[u32],
     image_types: &[(&str, &str)],
     has_metadata: bool,
+    has_vba: bool,
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -765,6 +783,11 @@ fn content_types(
     if has_metadata {
         body.push_str(
             r#"<Override PartName="/xl/metadata.bin" ContentType="application/vnd.ms-excel.sheetMetadata"/>"#,
+        );
+    }
+    if has_vba {
+        body.push_str(
+            r#"<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>"#,
         );
     }
     if theme.is_some() {
@@ -967,11 +990,16 @@ fn push_xml_element(out: &mut String, tag: &str, value: &str) {
     out.push('>');
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "relationship flags mirror independent part-presence decisions"
+)]
 fn workbook_rels(
     sheet_count: usize,
     has_strings: bool,
     has_theme: bool,
     has_metadata: bool,
+    has_vba: bool,
 ) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
@@ -1011,6 +1039,14 @@ fn workbook_rels(
         write!(
             body,
             r#"<Relationship Id="rId{next_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.bin"/>"#
+        )
+        .expect("writing to String cannot fail");
+        next_id += 1;
+    }
+    if has_vba {
+        write!(
+            body,
+            r#"<Relationship Id="rId{next_id}" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/>"#
         )
         .expect("writing to String cannot fail");
     }
@@ -1365,14 +1401,14 @@ mod tests {
         BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing, BrtExternSheet,
         BrtFileSharing, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont,
         BrtHLink, BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName, BrtRowHdr,
-        BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
-        CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
-        CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-        CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
-        CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
-        CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
-        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
-        CFVO_PERCENT, CFVO_PERCENTILE,
+        BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtWsProp,
+        BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+        CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
+        CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
+        CF_TEMPLATE_TIME_PERIOD_TODAY, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS,
+        CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
+        CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -4866,6 +4902,124 @@ mod tests {
         assert!(drawing.contains(
             "<xdr:to><xdr:col>0</xdr:col><xdr:colOff>857250</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>381000</xdr:rowOff></xdr:to>"
         ));
+    }
+
+    #[test]
+    fn vba_project_and_code_names_are_packaged() {
+        let path =
+            std::env::temp_dir().join(format!("rust_xlsb_vba_project_{}.bin", std::process::id()));
+        std::fs::write(&path, b"test vba project").expect("project");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_vba_name("DataSheet").expect("sheet name");
+        workbook.set_vba_name("ProjectBook").expect("book name");
+        workbook.add_vba_project(&path).expect("vba project");
+        let bytes = workbook.save_to_buffer().expect("saves");
+        std::fs::remove_file(path).expect("cleanup");
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/>"#
+        ));
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("utf8");
+        assert!(rels.contains(
+            r#"Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin""#
+        ));
+        assert_eq!(
+            part_bytes(&bytes, "xl/vbaProject.bin").expect("project"),
+            b"test vba project"
+        );
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let props = records::<BrtWbProp>(&workbook_part);
+        assert_eq!(props.len(), 1);
+        assert_eq!(
+            props[0].strName.to_optional_string().as_deref(),
+            Some("ProjectBook")
+        );
+
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let props = records::<BrtWsProp>(&sheet_part);
+        assert_eq!(props.len(), 1);
+        assert_eq!(
+            props[0].strName.to_optional_string().as_deref(),
+            Some("DataSheet")
+        );
+    }
+
+    #[test]
+    fn vba_project_defaults_workbook_and_worksheet_code_names() {
+        let path =
+            std::env::temp_dir().join(format!("rust_xlsb_vba_default_{}.bin", std::process::id()));
+        std::fs::write(&path, b"project").expect("project");
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.add_worksheet();
+        workbook
+            .worksheet_from_index(0)
+            .expect("sheet")
+            .set_name("Data")
+            .expect("name");
+        workbook.add_vba_project(&path).expect("vba project");
+        let bytes = workbook.save_to_buffer().expect("saves");
+        std::fs::remove_file(path).expect("cleanup");
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let props = records::<BrtWbProp>(&workbook_part);
+        assert_eq!(
+            props[0].strName.to_optional_string().as_deref(),
+            Some("ThisWorkbook")
+        );
+        for index in 1..=2 {
+            let sheet_part =
+                part_bytes(&bytes, &format!("xl/worksheets/sheet{index}.bin")).expect("sheet");
+            let props = records::<BrtWsProp>(&sheet_part);
+            assert_eq!(props.len(), 1);
+            assert_eq!(
+                props[0].strName.to_optional_string().as_deref(),
+                Some(format!("Sheet{index}").as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_vba_names_are_rejected() {
+        let mut workbook = crate::Workbook::new();
+        let mut sheet = crate::Worksheet::new();
+        for name in ["", "9Book", "Has Space", "Has-Dash"] {
+            assert!(matches!(
+                workbook.set_vba_name(name),
+                Err(crate::Error::VbaNameError(_))
+            ));
+            assert!(matches!(
+                sheet.set_vba_name(name),
+                Err(crate::Error::VbaNameError(_))
+            ));
+        }
+        assert!(matches!(
+            workbook.set_vba_name("A".repeat(32)),
+            Err(crate::Error::VbaNameError(_))
+        ));
+    }
+
+    #[test]
+    fn workbook_without_vba_has_no_project_part() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(!content_types.contains("vbaProject"));
+        assert!(part_bytes(&bytes, "xl/vbaProject.bin").is_err());
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("utf8");
+        assert!(!rels.contains("vbaProject"));
     }
 
     #[test]
