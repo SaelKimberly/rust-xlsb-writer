@@ -8,7 +8,7 @@ use deku::DekuContainerRead;
 use rust_xlsb_core::prelude::{BErr, BrtBeginCellXFs, BrtBeginFonts, BrtFont};
 use rust_xlsb_core::{BiffHead, CheckedBiff};
 
-use crate::{ExcelDateTime, Format, Workbook};
+use crate::{ExcelDateTime, Format, Formula, Workbook};
 
 fn records<T>(part: &[u8]) -> Vec<T>
 where
@@ -54,6 +54,42 @@ fn values_roundtrip_through_the_public_api() {
     assert_eq!(range.get((3, 0)), Some(&Data::Bool(true)));
     assert!(matches!(range.get((4, 0)), Some(Data::Error(_))));
     assert_eq!(range.get((5, 0)), Some(&Data::Empty));
+}
+
+#[test]
+fn formulas_roundtrip_cached_results() {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.write_formula(0, 0, "=1+2").expect("number formula");
+    sheet
+        .write_formula(1, 0, "=1+2")
+        .expect("bool formula")
+        .set_formula_result(1, 0, "TRUE");
+    sheet
+        .write_formula(2, 0, "=1+2")
+        .expect("string formula")
+        .set_formula_result(2, 0, "ok");
+    sheet
+        .write_formula(3, 0, "=1/0")
+        .expect("error formula")
+        .set_formula_result(3, 0, "#DIV/0!");
+    sheet
+        .write_formula(4, 0, Formula::new("=SUM(A1:A3)").set_result("4"))
+        .expect("formula struct");
+    sheet
+        .write(5, 0, Formula::new("=1+1").set_result("2"))
+        .expect("generic formula write");
+
+    let range = range(&mut workbook);
+
+    assert_eq!(range.get((0, 0)), Some(&Data::Float(0.0)));
+    assert_eq!(range.get((1, 0)), Some(&Data::Bool(true)));
+    assert_eq!(range.get((2, 0)), Some(&Data::String("ok".to_owned())));
+    // calamine exposes the cached error formula as an empty cell; the package
+    // test asserts the actual BrtFmlaError record and error code.
+    assert_eq!(range.get((3, 0)), Some(&Data::Empty));
+    assert_eq!(range.get((4, 0)), Some(&Data::Float(4.0)));
+    assert_eq!(range.get((5, 0)), Some(&Data::Float(2.0)));
 }
 
 #[test]

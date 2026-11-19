@@ -33,6 +33,7 @@ mod e2e;
 mod error;
 mod filter;
 mod format;
+mod formula;
 mod package;
 mod properties;
 mod protection;
@@ -66,6 +67,7 @@ pub use format::{
     Color, FontScheme, Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern,
     FormatScript, FormatUnderline,
 };
+pub use formula::Formula;
 pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
 pub use table::{Table, TableColumn, TableStyle};

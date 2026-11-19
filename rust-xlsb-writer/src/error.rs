@@ -100,6 +100,10 @@ pub enum Error {
     /// A string could not be parsed as a date or time.
     #[error("cannot parse date/time: {0}")]
     DateTimeParseError(String),
+
+    /// A formula is malformed or uses syntax this writer does not encode.
+    #[error("formula error: {0}")]
+    FormulaError(String),
 }
 
 /// Writer result type.

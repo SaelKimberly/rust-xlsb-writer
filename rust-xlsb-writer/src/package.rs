@@ -294,6 +294,8 @@ fn workbook_part(
     write_defined_names(sheets, defined_names, &mut out)?;
     if let Some(mode) = settings.calculation_mode {
         write_calculation_properties(mode, &mut out)?;
+    } else if sheets.iter().any(Worksheet::has_formulas) {
+        write_calculation_properties(CalculationMode::Automatic, &mut out)?;
     }
     push_record(&mut out, &BrtEndBook::default())?;
     Ok(out)
@@ -1080,15 +1082,16 @@ mod tests {
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
         BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
         BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
-        BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont,
-        BrtHLink, BrtListPart, BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient,
-        BrtWbProp, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS,
-        CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
-        CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER,
-        CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
-        CF_TEMPLATE_TIME_PERIOD_TODAY, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS,
-        CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
-        CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
+        BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFmlaBool,
+        BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtName,
+        BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
+        CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
+        CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+        CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+        CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
+        CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
+        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
+        CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -3138,6 +3141,133 @@ mod tests {
         assert_eq!(sharing[0].fReadOnlyRec, 1);
         assert_eq!(sharing[0].wResPass, 0);
         assert_eq!(sharing[0].stUserName.to_optional_string(), None);
+    }
+
+    #[test]
+    fn formulas_emit_result_records_and_force_recalculation() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .write_formula(0, 0, "=1+2")
+            .expect("formula")
+            .set_formula_result(0, 0, "3");
+        worksheet
+            .write_formula(1, 0, crate::Formula::new("=A1+1").set_result("TRUE"))
+            .expect("bool formula");
+        worksheet
+            .write_formula(2, 0, crate::Formula::new("=A1+1").set_result("#DIV/0!"))
+            .expect("error formula");
+        worksheet
+            .write_formula(3, 0, crate::Formula::new("=A1&\"x\"").set_result("done"))
+            .expect("string formula");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let numbers = records::<BrtFmlaNum>(&sheet);
+        assert_eq!(numbers.len(), 1);
+        assert_eq!(*numbers[0].xnum, 3.0);
+        assert_eq!(&numbers[0].formula.rgce, &[0x1E, 1, 0, 0x1E, 2, 0, 0x03]);
+
+        let booleans = records::<BrtFmlaBool>(&sheet);
+        assert_eq!(booleans.len(), 1);
+        assert!(booleans[0].bBool);
+
+        let errors = records::<BrtFmlaError>(&sheet);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].bError, rust_xlsb_core::prelude::BErr::Div0);
+
+        let strings = records::<BrtFmlaString>(&sheet);
+        assert_eq!(strings.len(), 1);
+        assert_eq!(
+            strings[0].value.to_optional_string().as_deref(),
+            Some("done")
+        );
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let calc = records::<BrtCalcProp>(&workbook_part);
+        assert_eq!(calc.len(), 1);
+        assert_eq!(calc[0].fAutoRecalc, 1);
+        assert!(calc[0].fFullCalcOnLoad);
+        assert!(calc[0].fSaveRecalc);
+    }
+
+    #[test]
+    fn formula_result_oversize_string_is_rejected_on_save() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_formula(0, 0, "=1+1").expect("formula");
+        worksheet.set_formula_result(0, 0, "x".repeat(32_768));
+
+        assert!(matches!(
+            workbook.save_to_buffer(),
+            Err(crate::Error::StringTooLong)
+        ));
+    }
+
+    #[test]
+    fn formula_result_only_updates_formula_cells() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_number(0, 0, 1).expect("number");
+        worksheet.set_formula_result(0, 0, "2");
+
+        assert_eq!(
+            worksheet
+                .cells()
+                .get(&0)
+                .and_then(|row| row.get(&0))
+                .map(|cell| &cell.data),
+            Some(&CellData::Number(1.0))
+        );
+    }
+
+    #[test]
+    fn formatted_formula_uses_the_registered_style() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        let bold = crate::Format::new().set_bold();
+        worksheet
+            .write_formula_with_format(0, 0, "=1+2", &bold)
+            .expect("formatted formula");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let numbers = records::<BrtFmlaNum>(&sheet);
+
+        assert_eq!(numbers.len(), 1);
+        assert_ne!(numbers[0].cell.iStyleRef, 0);
+    }
+
+    #[test]
+    fn formula_defaults_control_the_cached_result_type() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_formula(0, 0, "=1+2").expect("default");
+        worksheet.set_formula_result_default("");
+        worksheet.write_formula(1, 0, "=1+2").expect("empty");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        assert_eq!(records::<BrtFmlaNum>(&sheet).len(), 1);
+        let strings = records::<BrtFmlaString>(&sheet);
+        assert_eq!(strings.len(), 1);
+        assert_eq!(strings[0].value.to_optional_string().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn explicit_calculation_mode_wins_over_formula_defaults() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        worksheet.write_formula(0, 0, "=1+2").expect("formula");
+        workbook.set_calculation_mode(crate::CalculationMode::Manual);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let calc = records::<BrtCalcProp>(&part);
+
+        assert_eq!(calc.len(), 1);
+        assert_eq!(calc[0].fAutoRecalc, 0);
+        assert!(!calc[0].fFullCalcOnLoad);
     }
 
     #[test]

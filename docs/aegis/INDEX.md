@@ -44,6 +44,7 @@
 - [Conditional formatting: text, blank, and error rules](plans/2026-11-19-conditional-format-text-blank-error.md)
 - [Conditional formatting: date-occurring rules](plans/2026-11-19-conditional-format-date-rules.md)
 - [Excel 2023 theme support](plans/2026-11-19-excel-2023-theme.md)
+- [Scalar formulas](plans/2026-11-19-formulas.md)
 
 ## Analysis
 

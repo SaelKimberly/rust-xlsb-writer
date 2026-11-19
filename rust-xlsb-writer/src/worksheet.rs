@@ -5,10 +5,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use rust_xlsb_core::prelude::UncheckedRfX;
 
 use crate::conditional_format::{ConditionalFormat, ConditionalFormatRange};
-use crate::data::{CellData, IntoExcelData, IntoExcelDateTime, RichRun, RichString};
+use crate::data::{
+    CellData, FormulaCell, FormulaResult, IntoExcelData, IntoExcelDateTime, RichRun, RichString,
+};
 use crate::data_validation::{DataValidation, DataValidationRange};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
+use crate::formula::{Formula, cached_result, compile, result_is_too_long};
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
 use crate::table::{Table, TableRange};
 use crate::{Color, Error, Format, Result, Url};
@@ -302,6 +305,7 @@ pub struct Worksheet {
     filter_automatic_off: bool,
     filter_hidden_rows: BTreeSet<RowNum>,
     has_rich_strings: bool,
+    default_formula_result: Box<str>,
     conditional_formats: Vec<ConditionalFormatRange>,
     view: SheetView,
     visibility: Visibility,
@@ -375,6 +379,7 @@ impl Worksheet {
             filter_automatic_off: false,
             filter_hidden_rows: BTreeSet::new(),
             has_rich_strings: false,
+            default_formula_result: "0".into(),
             conditional_formats: Vec::new(),
             view: SheetView::default(),
             visibility: Visibility::Visible,
@@ -868,6 +873,97 @@ impl Worksheet {
     /// Returns [`Error::RowColumnLimit`] when the row/column is out of range.
     pub fn write_blank(&mut self, row: RowNum, col: ColNum, format: &Format) -> Result<&mut Self> {
         self.write_with_format(row, col, (), format)
+    }
+
+    /// Writes a formula.
+    ///
+    /// The formula uses US-English Excel syntax. A leading `=` is optional.
+    /// The writer stores a cached result of `0` unless
+    /// [`Formula::set_result`](crate::Formula::set_result) or
+    /// [`Self::set_formula_result`] supplies one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the cell is out of range or
+    /// [`Error::FormulaError`] when the formula is malformed or uses syntax
+    /// this writer does not encode.
+    pub fn write_formula(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        formula: impl Into<Formula>,
+    ) -> Result<&mut Self> {
+        self.store_formula(row, col, formula.into(), None)
+    }
+
+    /// Writes a formula with formatting.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::write_formula`].
+    pub fn write_formula_with_format(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        formula: impl Into<Formula>,
+        format: &Format,
+    ) -> Result<&mut Self> {
+        self.store_formula(row, col, formula.into(), Some(format))
+    }
+
+    /// Replaces the cached result of an existing formula cell.
+    ///
+    /// Non-formula cells and empty cells are ignored.
+    pub fn set_formula_result(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        result: impl Into<String>,
+    ) -> &mut Self {
+        if let Some(cell) = self
+            .cells
+            .get_mut(&row)
+            .and_then(|cells| cells.get_mut(&col))
+            && let CellData::Formula(formula) = &mut cell.data
+        {
+            formula.result = cached_result(&result.into());
+        }
+        self
+    }
+
+    /// Sets the cached result used by formulas written afterward.
+    ///
+    /// Defaults to `0`.
+    pub fn set_formula_result_default(&mut self, result: impl Into<String>) -> &mut Self {
+        self.default_formula_result = result.into().into_boxed_str();
+        self
+    }
+
+    pub(crate) fn store_formula(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        formula: Formula,
+        format: Option<&Format>,
+    ) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        let (text, result) = formula.into_parts();
+        let result = result.as_deref().map_or_else(
+            || cached_result(&self.default_formula_result),
+            cached_result,
+        );
+        if result_is_too_long(&result) {
+            return Err(Error::StringTooLong);
+        }
+        let formula = compile(&text)?;
+        self.store(
+            row,
+            col,
+            CellData::Formula(FormulaCell { formula, result }),
+            format,
+        )?;
+        Ok(self)
     }
 
     /// Writes a date.
@@ -2922,6 +3018,13 @@ impl Worksheet {
         self.has_rich_strings
     }
 
+    pub(crate) fn has_formulas(&self) -> bool {
+        self.cells.values().any(|row| {
+            row.values()
+                .any(|cell| matches!(&cell.data, CellData::Formula(_)))
+        })
+    }
+
     pub(crate) fn data_validations(&self) -> &[DataValidationRange] {
         &self.data_validations
     }
@@ -3203,6 +3306,13 @@ fn autofit_cell_width(data: &CellData) -> u32 {
         CellData::RichString(rich) => rich.text.lines().map(pixel_width).max().unwrap_or(0),
         CellData::Integer(value) => 7 * integer_digits(*value) + if *value < 0 { 7 } else { 0 },
         CellData::Number(value) => 7 * display_len(*value),
+        CellData::Formula(formula) => match &formula.result {
+            FormulaResult::Number(value) => 7 * display_len(*value),
+            FormulaResult::String(text) => text.lines().map(pixel_width).max().unwrap_or(0),
+            FormulaResult::Bool(true) => 31,
+            FormulaResult::Bool(false) => 36,
+            FormulaResult::Error(_) => 0,
+        },
         CellData::Bool(true) => 31,
         CellData::Bool(false) => 36,
         CellData::Date(_)

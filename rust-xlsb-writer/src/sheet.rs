@@ -11,17 +11,18 @@ use rust_xlsb_core::prelude::{
     BrtColSpan, BrtCustomFilter, BrtEndAFilter, BrtEndCFRule, BrtEndCellIgnoreECs, BrtEndColBrk,
     BrtEndColInfos, BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals,
     BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells,
-    BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtFont,
-    BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRowHdr, BrtSel, BrtWsDim, BrtWsFmtInfo, BrtWsProp, Cell, HeaderFooterString, RichStr,
-    StrRun, StrRuns, UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString,
-    Xnum, conditional_format_block,
+    BrtEndRwBrk, BrtEndSheet, BrtEndSheetData, BrtEndWsView, BrtEndWsViews, BrtFilter, BrtFmlaBool,
+    BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtListPart, BrtMargins,
+    BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim,
+    BrtWsFmtInfo, BrtWsProp, Cell, HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX,
+    UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    conditional_format_block,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
 };
 
-use crate::data::CellData;
+use crate::data::{CellData, FormulaResult};
 use crate::filter::{FilterCriteria, FilterData};
 use crate::worksheet::{ColumnOptions, IgnoreError, MAX_COL, MAX_ROW, Worksheet};
 use crate::{Error, Result};
@@ -913,6 +914,49 @@ fn push_cell(
                 bError: *value,
             },
         ),
+        CellData::Formula(formula) => match &formula.result {
+            FormulaResult::Number(value) => push(
+                out,
+                &BrtFmlaNum {
+                    cell,
+                    xnum: Xnum::from(*value),
+                    grbitFlags: 0,
+                    formula: formula.formula.clone(),
+                },
+            ),
+            FormulaResult::String(text) => {
+                if text.encode_utf16().count() > 32_767 {
+                    return Err(Error::StringTooLong);
+                }
+                push(
+                    out,
+                    &BrtFmlaString {
+                        cell,
+                        value: XlWideString::construct(Some(text.as_ref())),
+                        grbitFlags: 0,
+                        formula: formula.formula.clone(),
+                    },
+                )
+            }
+            FormulaResult::Bool(value) => push(
+                out,
+                &BrtFmlaBool {
+                    cell,
+                    bBool: *value,
+                    grbitFlags: 0,
+                    formula: formula.formula.clone(),
+                },
+            ),
+            FormulaResult::Error(value) => push(
+                out,
+                &BrtFmlaError {
+                    cell,
+                    bError: *value,
+                    grbitFlags: 0,
+                    formula: formula.formula.clone(),
+                },
+            ),
+        },
         CellData::String(text) => push(
             out,
             &BrtCellIsst {

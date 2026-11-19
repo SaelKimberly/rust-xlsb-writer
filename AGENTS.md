@@ -15,7 +15,7 @@ value-conversion contract (`ToCellValue`/`CellValue`), the workbook context
 registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
 public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
-widths/formats, approximate autofit, multi-sheet package assembly with optional DEFLATE compression, ZIP64 mode, and an optional Excel 2023 theme part, workbook calculation mode,
+widths/formats, approximate autofit, scalar formulas with cached results, multi-sheet package assembly with optional DEFLATE compression, ZIP64 mode, and an optional Excel 2023 theme part, workbook calculation mode,
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range with list/custom filter conditions and automatic row hiding,
@@ -84,6 +84,16 @@ resulting `BrtFont` index map to the sheet serializer, which emits
 `BrtCellRString` with a `RichStr`/`StrRun` payload. Run formats contribute font
 properties only; there are no rich fills, borders, or phonetic-generation
 paths.
+
+Formulas are parsed when written, not at save. `formula.rs` compiles same-sheet
+A1 references, ranges, literals, operators, and a fixed table of classic Excel
+functions directly into a `CellParsedFormula` Ptg stream; unsupported syntax is
+rejected with `Error::FormulaError`. The worksheet stores the token stream plus
+a cached number, string, boolean, or error result. The sheet writer emits
+`BrtFmlaNum`/`BrtFmlaString`/`BrtFmlaBool`/`BrtFmlaError`, and a workbook with
+formulas gets `BrtCalcProp` with `fFullCalcOnLoad` unless the caller selected a
+calculation mode. Array, dynamic-array, shared, table, external, cross-sheet,
+and named-range formulas are not implemented.
 
 Conditional formats are stored on the worksheet as a range, a boxed
 `ConditionalFormat` rule, and an optional differential format. Cell-value,
@@ -185,9 +195,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 583 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 604 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 587 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 608 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -284,6 +294,8 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/theme.rs` | Excel 2023 theme selection and `theme_2023.xml` asset |
 | `rust-xlsb-core/src/prelude/record/brt_wb_prop.rs` | `BrtWbProp` workbook flags, theme version, and code name |
 | `rust-xlsb-writer/src/defined_name.rs` | User-defined name model, validation, and `NameParsedFormula` token encoding |
+| `rust-xlsb-writer/src/formula.rs` | `Formula`, scalar formula parser, Ptg encoder, function table, and cached-result typing |
+| `rust-xlsb-core/src/prelude/record/brt_fmla.rs` | `CellParsedFormula` and the four formula cell records |
 | `rust-xlsb-writer/src/properties.rs` | `DocProperties`, custom values, and chrono creation timestamps |
 | `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, view, and print API |
 | `rust-xlsb-writer/src/format.rs` | `Format`, `Color`, enums, `CellStyle` mapping |
@@ -334,9 +346,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 583 unit tests and 7 doctests in default builds: 273 in core, 310 in writer.
+- 604 unit tests and 7 doctests in default builds: 281 in core, 323 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 594 total. Most core
+  `rust_decimal` adapters, for 615 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

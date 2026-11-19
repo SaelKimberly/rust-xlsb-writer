@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, Utc};
 #[cfg(feature = "rust_decimal")]
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-use rust_xlsb_core::prelude::{BErr, BrtFont};
+use rust_xlsb_core::prelude::{BErr, BrtFont, CellParsedFormula};
 
 use crate::{Error, ExcelDateTime, Format, Result, Worksheet};
 
@@ -26,12 +26,31 @@ pub struct RichString {
     pub runs: Vec<RichRun>,
 }
 
+/// A parsed formula and its cached result.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormulaCell {
+    pub(crate) formula: CellParsedFormula,
+    pub(crate) result: FormulaResult,
+}
+
+/// Cached value stored with a formula cell.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormulaResult {
+    Number(f64),
+    String(Box<str>),
+    Bool(bool),
+    Error(BErr),
+}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CellData {
     Blank,
     Bool(bool),
     Error(BErr),
+    Formula(FormulaCell),
     Integer(i64),
     Number(f64),
     String(String),

@@ -20,15 +20,15 @@ pub use record::{
     BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar,
     BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
     BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
-    BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink,
-    BrtListPart, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
-    BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
-    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS,
-    CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
-    CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
-    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
-    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+    BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError,
+    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell,
+    BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem,
+    BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp, BrtWsDim,
+    BrtWsFmtInfo, BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
+    CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS,
+    CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
+    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
     CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
     CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
     CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
@@ -37,8 +37,8 @@ pub use record::{
     CF_TEXTOPER_BEGINS_WITH, CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS,
     CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
     CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
-    CFVO_PERCENTILE, DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula, ReadingOrder, VAlign,
-    XFProp, XFProps, Xti, conditional_format_block,
+    CFVO_PERCENTILE, CellParsedFormula, DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula,
+    ReadingOrder, VAlign, XFProp, XFProps, Xti, conditional_format_block,
 };
 pub use scope::*;
 pub use structure::{
@@ -158,6 +158,11 @@ mod tests {
     #[case::brt_begin_fmts(|| checked_test::<BrtBeginFmts>(4))]
     #[case::brt_end_fmts(|| checked_test::<BrtEndFmts>(0))]
     #[case::brt_cell_isst(|| checked_test::<BrtCellIsst>(12))]
+    #[case::cell_parsed_formula(|| checked_test::<CellParsedFormula>(11))]
+    #[case::brt_fmla_bool(|| checked_test::<BrtFmlaBool>(22))]
+    #[case::brt_fmla_error(|| checked_test::<BrtFmlaError>(22))]
+    #[case::brt_fmla_num(|| checked_test::<BrtFmlaNum>(29))]
+    #[case::brt_fmla_string(|| checked_test::<BrtFmlaString>(25))]
     #[case::brt_sst_item(|| checked_test::<BrtSSTItem>(5))]
     #[case::brt_begin_header_footer(|| checked_test::<BrtBeginHeaderFooter>(26))]
     #[case::brt_end_header_footer(|| checked_test::<BrtEndHeaderFooter>(0))]

@@ -25,6 +25,7 @@ mod brt_extern_sheet;
 mod brt_file_sharing;
 mod brt_fill;
 mod brt_filter;
+mod brt_fmla;
 mod brt_fmt;
 mod brt_font;
 mod brt_hlink;
@@ -94,6 +95,7 @@ pub use brt_filter::{
     BrtBeginCustomFilters, BrtBeginFilterColumn, BrtBeginFilters, BrtCustomFilter,
     BrtEndCustomFilters, BrtEndFilterColumn, BrtEndFilters, BrtFilter,
 };
+pub use brt_fmla::{BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, CellParsedFormula};
 pub use brt_fmt::BrtFmt;
 pub use brt_font::BrtFont;
 pub use brt_hlink::BrtHLink;
