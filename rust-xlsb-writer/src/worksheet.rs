@@ -10,7 +10,7 @@ use crate::data::{
     RichRun, RichString,
 };
 use crate::data_validation::{DataValidation, DataValidationRange};
-use crate::drawing::PlacedImage;
+use crate::drawing::{PlacedImage, centered_offset, column_pixels, row_pixels};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::formula::{Formula, cached_result, compile, result_is_too_long, subtotal_formula};
@@ -3367,9 +3367,9 @@ impl Worksheet {
 
     /// Inserts a foreground image at a cell.
     ///
-    /// The image keeps its native pixel size. It is written to
-    /// `xl/media/imageN.<ext>` and anchored through an `xl/drawings/drawingN.xml`
-    /// part.
+    /// The image uses its native pixel size unless `Image` scaling was set. It
+    /// is written to `xl/media/imageN.<ext>` and anchored through an
+    /// `xl/drawings/drawingN.xml` part.
     ///
     /// # Errors
     ///
@@ -3401,6 +3401,67 @@ impl Worksheet {
             col,
             x_offset,
             y_offset,
+        )?);
+        Ok(self)
+    }
+
+    /// Inserts a foreground image scaled to fit a cell.
+    ///
+    /// The target size is the cell's current pixel width and height, including
+    /// default formats and hidden cells. When `keep_aspect_ratio` is `true`,
+    /// the image is scaled by the lesser axis scale and may not fill the other
+    /// axis. The image stays anchored at the cell origin. A zero-sized target,
+    /// such as a hidden row or column, leaves the image unscaled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] for an out-of-range cell, or
+    /// [`Error::ImageError`] when the image header has no readable dimensions.
+    pub fn insert_image_fit_to_cell(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        image: &Image,
+        keep_aspect_ratio: bool,
+    ) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        let width = column_pixels(self, col);
+        let height = row_pixels(self, row);
+        let image = image
+            .clone()
+            .set_scale_to_size(width, height, keep_aspect_ratio);
+        self.images.push(PlacedImage::new(image, row, col, 0, 0)?);
+        Ok(self)
+    }
+
+    /// Inserts a foreground image scaled to fit and centered in a cell.
+    ///
+    /// The aspect ratio is preserved, and the image is centered in the cell
+    /// along both axes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] for an out-of-range cell, or
+    /// [`Error::ImageError`] when the image header has no readable dimensions.
+    pub fn insert_image_fit_to_cell_centered(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        image: &Image,
+    ) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        let width = column_pixels(self, col);
+        let height = row_pixels(self, row);
+        let image = image.clone().set_scale_to_size(width, height, true);
+        let (image_width, image_height) = image.scaled_size()?;
+        self.images.push(PlacedImage::new(
+            image,
+            row,
+            col,
+            centered_offset(width, image_width.round()),
+            centered_offset(height, image_height.round()),
         )?);
         Ok(self)
     }

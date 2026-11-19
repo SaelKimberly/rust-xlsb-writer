@@ -7,6 +7,7 @@ use crate::{Error, Image, Result};
 use crate::worksheet::{MAX_COL, MAX_ROW, Worksheet};
 
 const EMU_PER_PIXEL: u64 = 9_525;
+const EMU_PER_PIXEL_F64: f64 = 9_525.0;
 const DEFAULT_COL_WIDTH: f64 = 8.43;
 const DEFAULT_ROW_HEIGHT: f64 = 15.0;
 
@@ -18,8 +19,8 @@ pub struct PlacedImage {
     pub(crate) col: u16,
     pub(crate) x_offset: u32,
     pub(crate) y_offset: u32,
-    width: u32,
-    height: u32,
+    width: f64,
+    height: f64,
 }
 
 impl PlacedImage {
@@ -33,7 +34,7 @@ impl PlacedImage {
         if row > MAX_ROW || col > MAX_COL {
             return Err(Error::RowColumnLimit);
         }
-        let (width, height) = image.pixel_size()?;
+        let (width, height) = image.scaled_size()?;
         Ok(Self {
             image,
             row,
@@ -54,8 +55,8 @@ pub fn drawing_xml(sheet: &Worksheet, images: &[PlacedImage]) -> String {
     for (index, image) in images.iter().enumerate() {
         let anchor = anchor(sheet, image);
         let rel_id = index + 1;
-        let width = u64::from(image.width) * EMU_PER_PIXEL;
-        let height = u64::from(image.height) * EMU_PER_PIXEL;
+        let width = pixels_to_emu(image.width);
+        let height = pixels_to_emu(image.height);
         write!(
             xml,
             concat!(
@@ -110,6 +111,15 @@ pub fn drawing_rels(images: &[PlacedImage], media_indices: &[usize]) -> String {
     xml
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "scaled pixels are positive and fit u64 EMU"
+)]
+fn pixels_to_emu(pixels: f64) -> u64 {
+    (pixels * EMU_PER_PIXEL_F64).round() as u64
+}
+
 struct Anchor {
     from_col: u16,
     from_col_off: u64,
@@ -155,9 +165,9 @@ fn anchor(sheet: &Worksheet, image: &PlacedImage) -> Anchor {
     clippy::cast_precision_loss,
     reason = "anchor offsets are non-negative and fit u64"
 )]
-fn advance_columns(sheet: &Worksheet, col: u16, offset: u32, width: u32) -> (u16, u64) {
+fn advance_columns(sheet: &Worksheet, col: u16, offset: u32, width: f64) -> (u16, u64) {
     let mut col = col;
-    let mut remaining = f64::from(width) + f64::from(offset);
+    let mut remaining = width + f64::from(offset);
     loop {
         let cell_width = column_pixels(sheet, col);
         if remaining <= cell_width || col == MAX_COL {
@@ -174,9 +184,9 @@ fn advance_columns(sheet: &Worksheet, col: u16, offset: u32, width: u32) -> (u16
     clippy::cast_precision_loss,
     reason = "anchor offsets are non-negative and fit u64"
 )]
-fn advance_rows(sheet: &Worksheet, row: u32, offset: u32, height: u32) -> (u32, u64) {
+fn advance_rows(sheet: &Worksheet, row: u32, offset: u32, height: f64) -> (u32, u64) {
     let mut row = row;
-    let mut remaining = f64::from(height) + f64::from(offset);
+    let mut remaining = height + f64::from(offset);
     loop {
         let cell_height = row_pixels(sheet, row);
         if remaining <= cell_height || row == MAX_ROW {
@@ -187,7 +197,16 @@ fn advance_rows(sheet: &Worksheet, row: u32, offset: u32, height: u32) -> (u32, 
     }
 }
 
-fn column_pixels(sheet: &Worksheet, col: u16) -> f64 {
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "cell dimensions are non-negative and fit u32"
+)]
+pub fn centered_offset(cell: f64, image: f64) -> u32 {
+    ((cell - image).max(0.0) / 2.0).round() as u32
+}
+
+pub fn column_pixels(sheet: &Worksheet, col: u16) -> f64 {
     let default = sheet.default_col_width().unwrap_or(DEFAULT_COL_WIDTH);
     let Some(options) = sheet.column_options().get(&col) else {
         return width_pixels(default, sheet.default_column_metrics());
@@ -202,7 +221,7 @@ fn column_pixels(sheet: &Worksheet, col: u16) -> f64 {
     }
 }
 
-fn row_pixels(sheet: &Worksheet, row: u32) -> f64 {
+pub fn row_pixels(sheet: &Worksheet, row: u32) -> f64 {
     if sheet.filter_hidden_rows().contains(&row) {
         return 0.0;
     }
@@ -329,6 +348,18 @@ mod tests {
         assert_eq!(anchor.to_col_off, 285_750);
         assert_eq!(anchor.to_row, 1);
         assert_eq!(anchor.to_row_off, 47_625);
+    }
+
+    #[test]
+    fn anchor_uses_the_scaled_size() {
+        let image = png(20, 20).set_scale_width(2.0).set_scale_height(3.0);
+        let placed = PlacedImage::new(image, 0, 0, 0, 0).expect("placement");
+        let sheet = Worksheet::new();
+        let anchor = anchor(&sheet, &placed);
+        assert_eq!(anchor.to_col, 0);
+        assert_eq!(anchor.to_col_off, 381_000);
+        assert_eq!(anchor.to_row, 2);
+        assert_eq!(anchor.to_row_off, 190_500);
     }
 
     #[test]

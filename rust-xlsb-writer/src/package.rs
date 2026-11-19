@@ -4685,6 +4685,18 @@ mod tests {
             sheet.insert_image(0, MAX_COL + 1, &image),
             Err(Error::RowColumnLimit)
         ));
+        assert!(matches!(
+            sheet.insert_image_fit_to_cell(MAX_ROW + 1, 0, &image, true),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            sheet.insert_image_fit_to_cell_centered(0, MAX_COL + 1, &image),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            sheet.insert_image_fit_to_cell(0, 0, &bad, true),
+            Err(Error::ImageError(_))
+        ));
     }
 
     #[test]
@@ -4806,6 +4818,74 @@ mod tests {
             String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
                 .expect("utf8");
         assert!(content_types.contains(r#"<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#));
+    }
+
+    #[test]
+    fn foreground_images_scale_and_fit_to_cell() {
+        let image = crate::Image::new_from_buffer(&png(100, 50)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_column_width_pixels(0, 100).expect("column");
+        sheet.set_row_height_pixels(2, 40).expect("row");
+        sheet.set_row_height_pixels(4, 40).expect("row");
+        sheet
+            .insert_image(
+                0,
+                0,
+                &image.clone().set_scale_width(0.5).set_scale_height(0.5),
+            )
+            .expect("scaled image");
+        sheet
+            .insert_image_fit_to_cell(2, 0, &image, true)
+            .expect("fit image");
+        sheet
+            .insert_image_fit_to_cell_centered(4, 0, &image)
+            .expect("centered image");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert_eq!(
+            part_bytes(&bytes, "xl/media/image1.png").expect("media"),
+            png(100, 50)
+        );
+        let drawing =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/drawing1.xml").expect("drawing"))
+                .expect("utf8");
+        assert!(
+            drawing.contains(r#"<a:ext cx="476250" cy="238125"/>"#),
+            "{drawing}"
+        );
+        assert_eq!(
+            drawing
+                .matches(r#"<a:ext cx="762000" cy="381000"/>"#)
+                .count(),
+            2
+        );
+        assert!(drawing.contains(
+            "<xdr:from><xdr:col>0</xdr:col><xdr:colOff>95250</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        ));
+        assert!(drawing.contains(
+            "<xdr:to><xdr:col>0</xdr:col><xdr:colOff>857250</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>381000</xdr:rowOff></xdr:to>"
+        ));
+    }
+
+    #[test]
+    fn fit_to_cell_leaves_a_hidden_target_unscaled() {
+        let image = crate::Image::new_from_buffer(&png(10, 10)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_column_hidden(0).expect("column");
+        sheet
+            .insert_image_fit_to_cell(0, 0, &image, true)
+            .expect("image");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let drawing =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/drawing1.xml").expect("drawing"))
+                .expect("utf8");
+        assert!(drawing.contains(r#"<a:ext cx="95250" cy="95250"/>"#));
+        assert!(drawing.contains(
+            "<xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        ));
     }
 
     #[test]
