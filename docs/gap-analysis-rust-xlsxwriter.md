@@ -34,12 +34,12 @@ It is not a feature-equivalent replacement. The largest gaps are:
 4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
-   user-defined names, and the Excel 2023 theme part are available, but
-   custom themes, chartsheets, and VBA are missing; core/app/custom document
+   user-defined names, the Excel 2023 theme, and custom theme files are
+   available, but chartsheets and VBA are missing; core/app/custom document
    properties are present.
-6. **Data ecosystem** — no `Formula`, serde, or Polars adapters; optional
-   `jiff` and `rust_decimal` features and the native `ExcelDateTime` type are
-   present.
+6. **Data ecosystem** — `Formula` is supported; serde and Polars adapters are
+   missing. Optional `jiff` and `rust_decimal` features and the native
+   `ExcelDateTime` type are present.
 7. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
 The current API surface is deliberately narrow: roughly 13 `Workbook`, 110
@@ -66,9 +66,9 @@ the breadth gap.
 | Format | bold, italic, font color/name/size, number format code/index, alignment, wrap, fill pattern/colors, four border sides/colors, underline, strikethrough, script, indent, rotation, reading direction, shrink, font scheme/family/charset, diagonal borders, locked/unlocked/hidden, quote prefix |
 | Styles | value-based `Format` interning, font/fill/border/XF deduplication, Calibri 11 default, custom `iFmt` ids from 164 |
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
-| Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
-| Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, and formula errors |
-| Verification | 284 core + 330 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
+| Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
+| Verification | 284 core + 334 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -96,7 +96,7 @@ Status meanings:
 | `set_properties` | Supported | Core/app/custom strings, typed values, and chrono, jiff, or `ExcelDateTime` creation times |
 | `set_default_format` | Supported | Workbook default format; set before worksheets |
 | `use_excel_2023_theme` | Supported | Theme part, theme version, Aptos Narrow 11 default format |
-| `use_custom_theme` | Missing | User-supplied theme XML, `.thmx`, or `.xlsx` extraction |
+| `use_custom_theme` | Supported | Raw XML, `.thmx`, or `.xlsx` extraction; image fills rejected |
 | `add_vba_project`, `add_vba_project_with_signature`, `set_vba_name` | Missing | Macro-enabled XLSB |
 | `set_zip_compression_level` | Supported | Deflate levels 1–9; default store-only |
 | `use_zip_large_file` | Supported | ZIP64 entry extensions and oversized-directory records |
@@ -254,7 +254,7 @@ Status meanings:
 | Constant-memory writer | Missing | Streaming worksheet |
 | Low-memory writer | Missing | Reduced cell retention |
 | Temp-dir control | Missing | Streaming scratch space |
-| Document properties/themes/macros/chartsheets | Partial | Core/app/custom document properties and Excel 2023 theme; custom themes, macros, and chartsheets missing |
+| Document properties/themes/macros/chartsheets | Partial | Core/app/custom document properties, Excel 2023 theme, and custom theme files; macros and chartsheets missing |
 | Deterministic output timestamps | Supported | Fixed DOS timestamp |
 
 ## 4. Behavioral And Contract Differences
@@ -297,7 +297,7 @@ records or package parts that do not exist yet.
 | Notes | Comment/note parts and VML/drawing linkage |
 | Defined names | User literals and absolute A1 references, plus print-area and print-title names |
 | Document properties | Shipped: core/app strings, custom values, and creation timestamps; macros remain |
-| Themes | Shipped: Excel 2023 theme part, `BrtWbProp.dwThemeVersion`, and theme color indexes; custom themes remain |
+| Themes | Shipped: Excel 2023 and custom theme parts, `BrtWbProp.dwThemeVersion`, theme color indexes, and `.thmx`/`.xlsx` extraction |
 | VBA | Macro project parts and content types |
 | Memory modes | Streaming row/cell sink instead of retained `BTreeMap` |
 | Deflate | Shipped: method 8, levels 1–9, streamed local headers, ZIP64 mode and end records; per-entry strategy remains |
@@ -397,7 +397,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 | ✅ Defined names | Literals and absolute A1 cell/range references; built-in print names | — |
 | ✅ Document properties | Core/app/custom properties; chrono, jiff, and `ExcelDateTime` creation times | — |
 | ✅ Excel 2023 theme and theme colors | Excel 2023 Office/Aptos theme part and `BrtWbProp` version | — |
-| Custom themes | User-supplied theme XML, `.thmx`, or `.xlsx` extraction | M |
+| ✅ Custom themes | Raw XML, `.thmx`, and `.xlsx` extraction; `dwThemeVersion = 0` | — |
 | Chartsheets | Dashboard structure | L |
 | VBA project/signature | Macro-enabled workbooks | XL |
 | ✅ Calculation mode, read-only recommended, tab ratio | Workbook behavior | S |
@@ -461,12 +461,15 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 284 core + 330 writer unit tests and 7 doctests in default
+- Test evidence: 284 core + 334 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
-  `rust-xlsb-writer/examples/showcase.rs`. LibreOffice imports static array
-  formulas from XLSB, preserves their `ref` ranges, and recalculates the
-  cached results; calamine reads the top-left cached value.
+  `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
+  `.xlsx` and `.thmx` ZIP extraction, missing theme parts, image-fill
+  rejection, verbatim part bytes, and `BrtWbProp.dwThemeVersion = 0`.
+  LibreOffice imports static array formulas from XLSB, preserves their `ref`
+  ranges, and recalculates the cached results; calamine reads the top-left
+  cached value.
   LibreOffice opens the view fixtures but does not preserve XLSB panes on
   conversion, so view records are proven by record-level decode tests, not a
   rendered freeze. It preserves orientation, page order, margins, print

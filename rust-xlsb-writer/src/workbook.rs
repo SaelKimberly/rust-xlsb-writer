@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::defined_name::{DefinedName, sheet_index};
-use crate::theme::Theme;
+use crate::theme::{Theme, read_theme_from_path, theme_error};
 use crate::worksheet::{Worksheet, default_column_metrics, validate_sheet_name};
 use crate::{DocProperties, Error, FontScheme, Format, Result};
 
@@ -20,7 +20,7 @@ pub enum CalculationMode {
     Partial,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct WorkbookSettings {
     pub calculation_mode: Option<CalculationMode>,
     pub read_only_recommended: bool,
@@ -97,6 +97,34 @@ impl Workbook {
             .set_font_scheme(FontScheme::Body);
         self.set_default_format(&format, 20, 64)?;
         self.settings.theme = Some(Theme::Excel2023);
+        Ok(self)
+    }
+
+    /// Uses a theme XML file, `.thmx` file, or `.xlsx` workbook as the theme.
+    ///
+    /// The theme is stored verbatim. Older theme files can use image fills
+    /// that this writer does not emit, so those files are rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ThemeError`] when the file is not XML, contains no
+    /// `theme1.xml`, or uses an image fill. Returns [`Error::Io`] when the file
+    /// cannot be read.
+    pub fn use_custom_theme<P: AsRef<Path>>(&mut self, path: P) -> Result<&mut Self> {
+        let path = path.as_ref();
+        let theme_xml = read_theme_from_path(path)?;
+
+        if !theme_xml.starts_with("<?xml") {
+            return Err(theme_error(path, "Invalid XML theme file"));
+        }
+        if theme_xml.contains("<a:blipFill") {
+            return Err(theme_error(
+                path,
+                "Theme file contains image fills which aren't currently supported",
+            ));
+        }
+
+        self.settings.theme = Some(Theme::Custom(theme_xml.into_boxed_str()));
         Ok(self)
     }
 
@@ -290,7 +318,7 @@ impl Workbook {
         self.prepare()?;
         crate::package::build_package(
             &self.worksheets,
-            self.settings,
+            &self.settings,
             self.doc_properties.as_ref(),
             self.default_format.as_ref(),
             &self.defined_names,

@@ -15,7 +15,7 @@ value-conversion contract (`ToCellValue`/`CellValue`), the workbook context
 registry (`CellStyle`/`StyleRegistry`), and `chrono` temporal values. The
 public XLSB writer lives in `rust-xlsb-writer`: `Workbook`, `Worksheet`,
 `Format`, `Color`, `IntoExcelData`/`IntoExcelDateTime`, row/column
-widths/formats, approximate autofit, scalar and static array formulas with cached results, multi-sheet package assembly with optional DEFLATE compression, ZIP64 mode, and an optional Excel 2023 theme part, workbook calculation mode,
+widths/formats, approximate autofit, scalar and static array formulas with cached results, multi-sheet package assembly with optional DEFLATE compression, ZIP64 mode, and optional Excel 2023 or custom themes, workbook calculation mode,
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range with list/custom filter conditions and automatic row hiding,
@@ -197,9 +197,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 614 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 618 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 618 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 622 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -293,7 +293,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/record/brt_dxf.rs` | Differential-format records and XF property blobs |
 | `rust-xlsb-core/src/prelude/structure/rich_str.rs` | `RichStr`, `StrRun`, `PhRun`, and run validation |
 | `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, defined names, document properties, theme/default-format selection, save entry points |
-| `rust-xlsb-writer/src/theme.rs` | Excel 2023 theme selection and `theme_2023.xml` asset |
+| `rust-xlsb-writer/src/theme.rs` | Excel 2023 and custom theme selection, `.thmx`/`.xlsx` theme extraction, and `theme_2023.xml` asset |
 | `rust-xlsb-core/src/prelude/record/brt_wb_prop.rs` | `BrtWbProp` workbook flags, theme version, and code name |
 | `rust-xlsb-writer/src/defined_name.rs` | User-defined name model, validation, and `NameParsedFormula` token encoding |
 | `rust-xlsb-writer/src/formula.rs` | `Formula`, formula parser, Ptg encoder, function table, cached-result typing, and array expansion helper |
@@ -348,9 +348,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 614 unit tests and 7 doctests in default builds: 284 in core, 330 in writer.
+- 618 unit tests and 7 doctests in default builds: 284 in core, 334 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 625 total. Most core
+  `rust_decimal` adapters, for 629 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

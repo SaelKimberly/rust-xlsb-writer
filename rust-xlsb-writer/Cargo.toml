@@ -27,6 +27,7 @@ mimalloc = "0.1.52"
 thiserror = "^2.0.21"
 chrono = { version = "0.4.40", default-features = false, features = ["std"] }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 jiff = { version = "0.2", optional = true, default-features = false }
 rust_decimal = { version = "1.40", optional = true }
 

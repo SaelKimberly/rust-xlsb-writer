@@ -25,7 +25,7 @@ use crate::{DocProperties, Error, Format, Result};
 
 pub fn build_package(
     sheets: &[Worksheet],
-    settings: WorkbookSettings,
+    settings: &WorkbookSettings,
     properties: Option<&DocProperties>,
     default_format: Option<&Format>,
     defined_names: &[DefinedName],
@@ -125,7 +125,7 @@ pub fn build_package(
                 has_strings,
                 properties.is_some(),
                 has_custom_properties,
-                settings.theme,
+                settings.theme.as_ref(),
                 &table_ids,
             )
             .into_bytes(),
@@ -144,7 +144,7 @@ pub fn build_package(
         ),
         ("xl/styles.bin".to_owned(), styles),
     ];
-    if let Some(theme) = settings.theme {
+    if let Some(theme) = settings.theme.as_ref() {
         parts.push((
             "xl/theme/theme1.xml".to_owned(),
             theme.xml().as_bytes().to_vec(),
@@ -225,7 +225,7 @@ const fn visible_state(sheet: &Worksheet, index: usize, active: usize) -> u32 {
 
 fn workbook_part(
     sheets: &[Worksheet],
-    settings: WorkbookSettings,
+    settings: &WorkbookSettings,
     defined_names: &[DefinedName],
 ) -> Result<Vec<u8>> {
     let view = workbook_view(sheets);
@@ -241,7 +241,7 @@ fn workbook_part(
             },
         )?;
     }
-    if let Some(theme) = settings.theme {
+    if let Some(theme) = settings.theme.as_ref() {
         push_record(
             &mut out,
             &BrtWbProp {
@@ -519,7 +519,7 @@ fn content_types(
     has_strings: bool,
     has_properties: bool,
     has_custom_properties: bool,
-    theme: Option<crate::theme::Theme>,
+    theme: Option<&crate::theme::Theme>,
     table_ids: &[u32],
 ) -> String {
     let mut body = String::from(concat!(
@@ -2851,6 +2851,42 @@ mod tests {
         assert_eq!(formats.len(), 1);
         assert_eq!(formats[0].miyDefRwHeight, 300);
         assert_eq!(formats[0].dxGCol, 2_158);
+    }
+
+    #[test]
+    fn custom_theme_emits_verbatim_xml_and_zero_version() {
+        let theme_xml = r#"<?xml version="1.0"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Custom"/>"#;
+        let path =
+            std::env::temp_dir().join(format!("rust_xlsb_custom_theme_{}.xml", std::process::id()));
+        std::fs::write(&path, theme_xml).expect("theme file");
+
+        let mut workbook = crate::Workbook::new();
+        workbook.use_custom_theme(&path).expect("theme");
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+        std::fs::remove_file(path).expect("remove theme file");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let theme = part_bytes(&bytes, "xl/theme/theme1.xml").expect("theme part");
+        assert_eq!(String::from_utf8(theme).expect("theme UTF-8"), theme_xml);
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("content types UTF-8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#
+        ));
+
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("rels UTF-8");
+        assert!(rels.contains(
+            r#"Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml""#
+        ));
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let props = records::<BrtWbProp>(&workbook_part);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].dwThemeVersion, 0);
     }
 
     #[test]

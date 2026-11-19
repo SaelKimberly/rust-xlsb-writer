@@ -104,6 +104,10 @@ pub enum Error {
     /// A formula is malformed or uses syntax this writer does not encode.
     #[error("formula error: {0}")]
     FormulaError(String),
+
+    /// A custom theme file is invalid or unsupported.
+    #[error("theme error: {0}")]
+    ThemeError(String),
 }
 
 /// Writer result type.
