@@ -55,7 +55,7 @@ pub enum Color {
 }
 
 impl Color {
-    const fn named_rgb(self) -> Option<u32> {
+    pub(crate) const fn named_rgb(self) -> Option<u32> {
         match self {
             Self::Black => Some(0x0000_0000),
             Self::Blue => Some(0x0000_00FF),

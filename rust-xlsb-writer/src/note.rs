@@ -4,7 +4,7 @@
 ///
 /// Notes are inserted with [`Worksheet::insert_note`](crate::Worksheet::insert_note).
 /// Text is stored as one plain rich-text run; author-prefix formatting and
-/// note colors are not part of this slice.
+/// threaded comments are not part of this slice.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Note {
     text: String,
@@ -12,6 +12,8 @@ pub struct Note {
     visible: Option<bool>,
     width: f64,
     height: f64,
+    fill_color: u32,
+    alt_text: String,
 }
 
 impl Note {
@@ -24,6 +26,8 @@ impl Note {
             visible: None,
             width: 128.0,
             height: 74.0,
+            fill_color: 0x00FF_FFE1,
+            alt_text: String::new(),
         }
     }
 
@@ -41,6 +45,44 @@ impl Note {
     #[must_use]
     pub const fn set_visible(mut self, enable: bool) -> Self {
         self.visible = Some(enable);
+        self
+    }
+
+    /// Sets the note background color.
+    ///
+    /// Theme, default, and automatic colors are ignored because Excel notes
+    /// accept only RGB colors.
+    #[must_use]
+    pub fn set_background_color(mut self, color: impl Into<Color>) -> Self {
+        let color = color.into();
+        let rgb = match color {
+            Color::RGB(value) if value <= 0x00FF_FFFF => Some(value),
+            Color::Default | Color::Automatic | Color::Theme(_, _) | Color::RGB(_) => None,
+            named => named.named_rgb(),
+        };
+        if let Some(rgb) = rgb {
+            self.fill_color = rgb;
+        }
+        self
+    }
+
+    /// Sets the alternative text shown by accessibility tools.
+    ///
+    /// Text longer than 255 UTF-16 code units is ignored.
+    #[must_use]
+    pub fn set_alt_text(mut self, alt_text: impl Into<String>) -> Self {
+        let alt_text = alt_text.into();
+        if alt_text.encode_utf16().count() <= 255 {
+            self.alt_text = alt_text;
+        }
+        self
+    }
+
+    /// Replaces the note text so one note can be reused.
+    pub fn reset_text(&mut self, text: impl Into<String>) -> &mut Self {
+        let text = text.into();
+        self.text.clear();
+        self.text.push_str(&text);
         self
     }
 
@@ -81,6 +123,14 @@ impl Note {
     pub(crate) const fn height(&self) -> f64 {
         self.height
     }
+
+    pub(crate) const fn fill_color(&self) -> u32 {
+        self.fill_color
+    }
+
+    pub(crate) fn alt_text(&self) -> &str {
+        &self.alt_text
+    }
 }
 
 use std::fmt::Write;
@@ -97,6 +147,7 @@ use crate::drawing::{
     absolute_column_pixels, absolute_row_pixels, advance_columns, advance_rows, column_pixels,
     row_pixels,
 };
+use crate::format::Color;
 use crate::worksheet::{MAX_COL, Worksheet};
 
 const EMU_PER_PIXEL: u64 = 9_525;
@@ -218,10 +269,20 @@ pub fn vml_notes_xml(sheet: &Worksheet, data_id: u32) -> String {
         let height = vml_dpi_size(note.height());
         let visible = note.is_visible(visible_all);
         let visibility = if visible { "visible" } else { "hidden" };
+        let fill_color = note.fill_color();
         let shape_id = 1025 + (data_id - 1) * 1024 + u32::try_from(index).expect("fits u32");
+        write!(out, r#"<v:shape id="_x0000_s{shape_id}" "#).expect("writing to String cannot fail");
+        if !note.alt_text().is_empty() {
+            write!(
+                out,
+                r#"alt="{}" "#,
+                crate::url::escape_xml_attribute(note.alt_text())
+            )
+            .expect("writing to String cannot fail");
+        }
         write!(
             out,
-            r##"<v:shape id="_x0000_s{shape_id}" type="#_x0000_t202" style="position:absolute;margin-left:{left}pt;margin-top:{top}pt;width:{width}pt;height:{height}pt;z-index:{index};visibility:{visibility};" fillcolor="#FFFFE1" o:insetmode="auto"><v:fill color2="#FFFFE1" /><v:shadow on="t" color="black" obscured="t" /><v:path o:connecttype="none" /><v:textbox style="mso-direction-alt:auto"><div style="text-align:Left" /></v:textbox><x:ClientData ObjectType="Note"><x:MoveWithCells /><x:SizeWithCells /><x:Anchor>{},{},{},{},{},{},{},{}</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{row}</x:Row><x:Column>{col}</x:Column>"##,
+            r##"type="#_x0000_t202" style="position:absolute;margin-left:{left}pt;margin-top:{top}pt;width:{width}pt;height:{height}pt;z-index:{index};visibility:{visibility};" fillcolor="#{fill_color:06X}" o:insetmode="auto"><v:fill color2="#{fill_color:06X}" /><v:shadow on="t" color="black" obscured="t" /><v:path o:connecttype="none" /><v:textbox style="mso-direction-alt:auto"><div style="text-align:Left" /></v:textbox><x:ClientData ObjectType="Note"><x:MoveWithCells /><x:SizeWithCells /><x:Anchor>{},{},{},{},{},{},{},{}</x:Anchor><x:AutoFill>False</x:AutoFill><x:Row>{row}</x:Row><x:Column>{col}</x:Column>"##,
             anchor.start_col,
             anchor.start_col_off,
             anchor.start_row,
@@ -326,6 +387,7 @@ fn vml_dpi_size(dimension: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{comments_bin, vml_notes_xml};
+    use crate::format::Color;
     use crate::{Note, Worksheet};
 
     #[test]
@@ -404,6 +466,38 @@ mod tests {
             .expect("note");
         let vml = vml_notes_xml(&sheet, 1);
         assert!(vml.contains("<x:Anchor>16380,49,1048571,14,"), "{vml}");
+    }
+
+    #[test]
+    fn note_color_alt_text_and_reset_are_emitted() {
+        let mut sheet = Worksheet::new();
+        sheet
+            .insert_note(
+                0,
+                0,
+                &Note::new("note text")
+                    .set_background_color("#80FF80")
+                    .set_alt_text("a \"quote\" & <tag>"),
+            )
+            .expect("note");
+        let vml = vml_notes_xml(&sheet, 1);
+        assert!(vml.contains(r##"fillcolor="#80FF80""##), "{vml}");
+        assert!(vml.contains(r##"<v:fill color2="#80FF80" />"##), "{vml}");
+        assert!(
+            vml.contains(r#"alt="a &quot;quote&quot; &amp; &lt;tag&gt;""#),
+            "{vml}"
+        );
+
+        let mut note = Note::new("old");
+        note.reset_text("new");
+        assert_eq!(note.text(), "new");
+        assert_eq!(
+            note.clone()
+                .set_background_color(Color::Theme(0, 0))
+                .fill_color(),
+            0x00FF_FFE1
+        );
+        assert_eq!(note.clone().set_alt_text("x".repeat(256)).alt_text(), "");
     }
 
     #[test]
