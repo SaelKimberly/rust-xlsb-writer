@@ -61,6 +61,8 @@ pub const CF_TYPE_MULTISTATE: u32 = 6;
 
 /// `CF_TEMPLATE_EXPR`.
 pub const CF_TEMPLATE_EXPR: u32 = 0;
+/// `CF_TEMPLATE_FMLA`.
+pub const CF_TEMPLATE_FMLA: u32 = 1;
 /// `CF_TEMPLATE_GRADIENT`.
 pub const CF_TEMPLATE_GRADIENT: u32 = 2;
 /// `CF_TEMPLATE_DATABAR`.
@@ -234,6 +236,7 @@ impl Checked for BrtBeginCFRule {
 
         match (self.iType, self.iTemplate) {
             (CF_TYPE_CELL_IS, CF_TEMPLATE_EXPR) => self.check_cell_rule(),
+            (CF_TYPE_EXPRESSION, CF_TEMPLATE_FMLA) => self.check_formula_rule(),
             (CF_TYPE_EXPRESSION, CF_TEMPLATE_CONTAINS_TEXT) => self.check_text_rule(),
             (
                 CF_TYPE_EXPRESSION,
@@ -310,6 +313,13 @@ impl BrtBeginCFRule {
             (_, None) => {}
         }
         Ok(())
+    }
+
+    fn check_formula_rule(&self) -> Result<(), &'static str> {
+        if self.iParam != 0 {
+            return Err("formula conditional formats must have a zero parameter");
+        }
+        self.check_single_formula_rule()
     }
 
     fn check_text_rule(&self) -> Result<(), &'static str> {
@@ -692,6 +702,30 @@ mod tests {
         assert_eq!(bytes[67], 0x1F);
         assert_eq!(&bytes[68..76], &2.0_f64.to_le_bytes());
         assert_eq!(&bytes[76..80], &0_u32.to_le_bytes());
+    }
+
+    #[test]
+    fn formula_rules_require_template_one_and_one_formula() {
+        let mut rule = BrtBeginCFRule {
+            iType: CF_TYPE_EXPRESSION,
+            iTemplate: CF_TEMPLATE_FMLA,
+            iParam: 0,
+            formula1: Some(number(1.0)),
+            cbFmla1: 9,
+            ..BrtBeginCFRule::default()
+        };
+        rule.check().expect("formula rule");
+
+        rule.iParam = 1;
+        assert!(rule.check().is_err());
+        rule.iParam = 0;
+        rule.formula2 = Some(number(1.0));
+        rule.cbFmla2 = 9;
+        assert!(rule.check().is_err());
+        rule.formula2 = None;
+        rule.cbFmla2 = 0;
+        rule.iTemplate = CF_TEMPLATE_EXPR;
+        assert!(rule.check().is_err());
     }
 
     #[test]

@@ -8,20 +8,21 @@ use rust_xlsb_core::prelude::{
     CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS,
     CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
     CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE,
-    CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
-    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
-    CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
-    CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
-    CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, CF_TEMPLATE_TIME_PERIOD_TODAY,
-    CF_TEMPLATE_TIME_PERIOD_TOMORROW, CF_TEMPLATE_TIME_PERIOD_YESTERDAY, CF_TEMPLATE_UNIQUE_VALUES,
-    CF_TEXTOPER_BEGINS_WITH, CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS,
-    CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
-    CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
-    CFVO_PERCENTILE, UncheckedRfX, XlNullableWideString, XlStringExt,
+    CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
+    CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
+    CF_TEMPLATE_TIME_PERIOD_LAST_WEEK, CF_TEMPLATE_TIME_PERIOD_LAST7DAYS,
+    CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH, CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK,
+    CF_TEMPLATE_TIME_PERIOD_THIS_MONTH, CF_TEMPLATE_TIME_PERIOD_THIS_WEEK,
+    CF_TEMPLATE_TIME_PERIOD_TODAY, CF_TEMPLATE_TIME_PERIOD_TOMORROW,
+    CF_TEMPLATE_TIME_PERIOD_YESTERDAY, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_BEGINS_WITH,
+    CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS, CF_TYPE_CELL_IS,
+    CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
+    CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
+    XlNullableWideString, XlStringExt,
 };
 use rust_xlsb_core::push_record;
 
-use crate::{Color, Error, Format, Result};
+use crate::{Color, Error, Format, Formula, Result};
 
 /// A value accepted by a cell conditional-format rule.
 #[derive(Clone, Debug, PartialEq)]
@@ -212,6 +213,18 @@ pub trait ConditionalFormat {
     /// Builds the rule record for the given priority and DXF id.
     #[doc(hidden)]
     fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule>;
+
+    /// Builds the rule record with the target range's top-left cell.
+    #[doc(hidden)]
+    fn begin_rule_in_range(
+        &self,
+        priority: i32,
+        dxf_id: u32,
+        _first_row: u32,
+        _first_col: u32,
+    ) -> Result<BrtBeginCFRule> {
+        self.begin_rule(priority, dxf_id)
+    }
 
     /// Writes records nested between `BrtBeginCFRule` and `BrtEndCFRule`.
     #[doc(hidden)]
@@ -836,6 +849,116 @@ impl ConditionalFormat for ConditionalFormatError {
             self.stop_if_true,
             XlNullableWideString::construct(None::<&str>),
             error_formula(self.is_inverted)?,
+        ))
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+/// A formula conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatFormula {
+    formula: Option<Formula>,
+    pub(crate) format: Option<Format>,
+    pub(crate) stop_if_true: bool,
+}
+
+impl ConditionalFormatFormula {
+    /// Creates an empty formula rule.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            formula: None,
+            format: None,
+            stop_if_true: false,
+        }
+    }
+
+    /// Sets the rule formula.
+    ///
+    /// The formula uses the same US-English syntax and same-sheet reference
+    /// limits as [`crate::Formula`].
+    #[must_use]
+    pub fn set_rule(mut self, rule: impl Into<Formula>) -> Self {
+        self.formula = Some(rule.into());
+        self
+    }
+
+    /// Sets the differential format applied when the rule matches.
+    #[must_use]
+    pub fn set_format(mut self, format: impl Into<Format>) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
+    /// Stops evaluating lower-priority rules when this rule matches.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormatFormula {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatFormula {
+    fn validate(&self) -> Result<()> {
+        let Some(formula) = &self.formula else {
+            return Err(Error::Parameter(
+                "formula conditional format requires a formula".to_owned(),
+            ));
+        };
+        if formula.as_str().is_empty() {
+            return Err(Error::Parameter(
+                "formula conditional format requires a non-empty formula".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        self.format.as_ref()
+    }
+
+    fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
+        self.begin_rule_in_range(priority, dxf_id, 0, 0)
+    }
+
+    fn begin_rule_in_range(
+        &self,
+        priority: i32,
+        dxf_id: u32,
+        first_row: u32,
+        first_col: u32,
+    ) -> Result<BrtBeginCFRule> {
+        self.validate()?;
+        let formula = self
+            .formula
+            .as_ref()
+            .expect("validated formula conditional format has a formula");
+        let first_col = u16::try_from(first_col)
+            .map_err(|_| Error::ValueNotRepresentable("conditional-format column"))?;
+        let parsed = crate::formula::compile_relative(formula.as_str(), first_row, first_col)?;
+        let parsed = CFParsedFormula {
+            cce: parsed.cce,
+            rgce: parsed.rgce,
+            cb: parsed.cb,
+            rgcb: parsed.rgcb,
+        };
+        Ok(formula_rule(
+            CF_TEMPLATE_FMLA,
+            0,
+            dxf_id,
+            priority,
+            self.stop_if_true,
+            XlNullableWideString::construct(None::<&str>),
+            parsed,
         ))
     }
 
@@ -2283,7 +2406,12 @@ impl ConditionalFormatRange {
     }
 
     pub(crate) fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
-        self.conditional_format.begin_rule(priority, dxf_id)
+        self.conditional_format.begin_rule_in_range(
+            priority,
+            dxf_id,
+            self.range.rwFirst,
+            self.range.colFirst,
+        )
     }
 
     pub(crate) fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
@@ -2314,6 +2442,32 @@ mod tests {
         }
         result
     }
+    #[test]
+    fn formula_rules_compile_to_expression_records() {
+        let rule = ConditionalFormatFormula::new()
+            .set_rule("=ISODD(B3)")
+            .set_stop_if_true(true);
+        let record = rule.begin_rule_in_range(3, 7, 2, 1).expect("formula rule");
+        assert_eq!(record.iType, CF_TYPE_EXPRESSION);
+        assert_eq!(record.iTemplate, CF_TEMPLATE_FMLA);
+        assert_eq!(record.iParam, 0);
+        assert_eq!(record.cbFmla1, 1);
+        assert_eq!(record.dxfId, 7);
+        assert_eq!(record.iPri, 3);
+        assert!(record.stop_if_true());
+        assert!(record.strParam.is_null());
+        let formula = record.formula1.expect("formula");
+        assert_eq!(formula.rgce, [0x4C, 0, 0, 0, 0, 0, 0xC0, 0x41, 0xA5, 0x01]);
+        assert_eq!(formula.cce as usize, formula.rgce.len());
+    }
+
+    #[test]
+    fn formula_rules_require_a_formula_and_supported_syntax() {
+        assert!(ConditionalFormatFormula::new().validate().is_err());
+        let rule = ConditionalFormatFormula::new().set_rule("=Sheet2!A1");
+        assert!(rule.begin_rule(1, u32::MAX).is_err());
+    }
+
     #[test]
     fn builds_numeric_and_string_formulas() {
         let (number, second) = InternalRule::GreaterThan(ConditionalFormatValue::Number(1.5))

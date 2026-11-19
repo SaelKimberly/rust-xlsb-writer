@@ -32,6 +32,8 @@ const PTG_FUNC: u8 = 0x41;
 const PTG_FUNC_VAR: u8 = 0x42;
 const PTG_REF: u8 = 0x44;
 const PTG_AREA: u8 = 0x45;
+const PTG_REF_N: u8 = 0x4C;
+const PTG_AREA_N: u8 = 0x4D;
 
 const MAX_FORMULA_TOKENS: usize = 16_384;
 const MAX_FORMULA_DEPTH: u32 = 64;
@@ -46,7 +48,7 @@ const MAX_STRING_UTF16: usize = 32_767;
 /// ranges. Scalar writes reject cross-sheet references, defined names, and
 /// dynamic-array functions; static array formulas use
 /// [`Worksheet::write_array_formula`].
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Formula {
     formula: Box<str>,
     result: Option<Box<str>>,
@@ -81,6 +83,10 @@ impl Formula {
     pub fn set_result(mut self, result: impl Into<String>) -> Self {
         self.result = Some(result.into().into_boxed_str());
         self
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.formula
     }
 
     pub(crate) fn into_parts(self) -> (Box<str>, Option<Box<str>>) {
@@ -133,6 +139,16 @@ impl IntoExcelData for &Formula {
 }
 
 pub fn compile(formula: &str) -> Result<CellParsedFormula> {
+    compile_with_base(formula, None)
+}
+
+/// Compiles a formula whose relative references are offsets from `base_row` and
+/// `base_col`.
+pub fn compile_relative(formula: &str, base_row: u32, base_col: u16) -> Result<CellParsedFormula> {
+    compile_with_base(formula, Some((base_row, base_col)))
+}
+
+fn compile_with_base(formula: &str, base: Option<(u32, u16)>) -> Result<CellParsedFormula> {
     let formula = formula.strip_prefix('=').unwrap_or(formula);
     let mut parser = Parser {
         input: formula,
@@ -140,6 +156,7 @@ pub fn compile(formula: &str) -> Result<CellParsedFormula> {
         pos: 0,
         depth: 0,
         unary_depth: 0,
+        base,
         out: Vec::with_capacity(formula.len().min(MAX_FORMULA_TOKENS)),
     };
     parser.skip_whitespace();
@@ -222,6 +239,7 @@ struct Parser<'a> {
     pos: usize,
     depth: u32,
     unary_depth: u32,
+    base: Option<(u32, u16)>,
     out: Vec<u8>,
 }
 
@@ -572,6 +590,21 @@ impl Parser<'_> {
     }
 
     fn push_ref(&mut self, reference: &CellRef) {
+        let relative = self
+            .base
+            .filter(|_| reference.row_relative || reference.col_relative);
+        if let Some((base_row, base_col)) = relative {
+            self.out.push(PTG_REF_N);
+            let row = if reference.row_relative {
+                relative_row(reference.row, base_row)
+            } else {
+                reference.row
+            };
+            self.out.extend_from_slice(&row.to_le_bytes());
+            self.out
+                .extend_from_slice(&relative_column_word(reference, base_col).to_le_bytes());
+            return;
+        }
         self.out.push(PTG_REF);
         self.out.extend_from_slice(&reference.row.to_le_bytes());
         self.out
@@ -579,6 +612,29 @@ impl Parser<'_> {
     }
 
     fn push_area(&mut self, first: &CellRef, last: &CellRef) {
+        let relative = self.base.filter(|_| {
+            first.row_relative || first.col_relative || last.row_relative || last.col_relative
+        });
+        if let Some((base_row, base_col)) = relative {
+            self.out.push(PTG_AREA_N);
+            let first_row = if first.row_relative {
+                relative_row(first.row, base_row)
+            } else {
+                first.row
+            };
+            let last_row = if last.row_relative {
+                relative_row(last.row, base_row)
+            } else {
+                last.row
+            };
+            self.out.extend_from_slice(&first_row.to_le_bytes());
+            self.out.extend_from_slice(&last_row.to_le_bytes());
+            self.out
+                .extend_from_slice(&relative_column_word(first, base_col).to_le_bytes());
+            self.out
+                .extend_from_slice(&relative_column_word(last, base_col).to_le_bytes());
+            return;
+        }
         self.out.push(PTG_AREA);
         self.out.extend_from_slice(&first.row.to_le_bytes());
         self.out.extend_from_slice(&last.row.to_le_bytes());
@@ -662,6 +718,22 @@ impl Parser<'_> {
 const fn column_word(reference: &CellRef) -> u16 {
     reference.col
         | if reference.col_relative { 0x4000 } else { 0 }
+        | if reference.row_relative { 0x8000 } else { 0 }
+}
+
+fn relative_row(row: u32, base: u32) -> u32 {
+    u32::try_from((i64::from(row) - i64::from(base)).rem_euclid(1_048_576))
+        .expect("relative row offset is in 0..1048576")
+}
+
+fn relative_column_word(reference: &CellRef, base: u16) -> u16 {
+    let col = if reference.col_relative {
+        u16::try_from((i32::from(reference.col) - i32::from(base)).rem_euclid(16_384))
+            .expect("relative column offset is in 0..16384")
+    } else {
+        reference.col
+    };
+    col | if reference.col_relative { 0x4000 } else { 0 }
         | if reference.row_relative { 0x8000 } else { 0 }
 }
 
@@ -822,6 +894,8 @@ const FUNCTIONS: &[Function] = &[
     function("VARP", 0x00C2, Arity::Range(1, 255)),
     function("TRUNC", 0x00C5, Arity::Range(1, 2)),
     function("ISLOGICAL", 0x00C6, Arity::Fixed(1)),
+    function("ISEVEN", 0x01A4, Arity::Fixed(1)),
+    function("ISODD", 0x01A5, Arity::Fixed(1)),
     function("ROUNDUP", 0x00D4, Arity::Fixed(2)),
     function("ROUNDDOWN", 0x00D5, Arity::Fixed(2)),
     function("RANK", 0x00D8, Arity::Range(2, 3)),
@@ -950,6 +1024,50 @@ mod tests {
             [PTG_INT, 1, 0, PTG_UMINUS, PTG_FUNC, 0x18, 0]
         );
         assert_eq!(tokens("=LOG10(100)"), [PTG_INT, 100, 0, PTG_FUNC, 0x17, 0]);
+    }
+
+    #[test]
+    fn compiles_relative_references_as_offsets() {
+        assert_eq!(
+            compile_relative("=B3", 2, 1).expect("relative ref").rgce,
+            [PTG_REF_N, 0, 0, 0, 0, 0, 0xC0]
+        );
+        assert_eq!(
+            compile_relative("=A1", 2, 1)
+                .expect("negative offsets")
+                .rgce,
+            [PTG_REF_N, 0xFE, 0xFF, 0x0F, 0, 0xFF, 0xFF]
+        );
+        assert_eq!(
+            compile_relative("=$B$2", 2, 1).expect("absolute ref").rgce,
+            [PTG_REF, 1, 0, 0, 0, 1, 0]
+        );
+        assert_eq!(
+            compile_relative("=$B2", 2, 1).expect("mixed ref").rgce,
+            [PTG_REF_N, 0xFF, 0xFF, 0x0F, 0, 1, 0x80]
+        );
+        assert_eq!(
+            compile_relative("=B$3", 2, 1).expect("mixed ref").rgce,
+            [PTG_REF_N, 2, 0, 0, 0, 0, 0x40]
+        );
+        assert_eq!(
+            compile_relative("=B3:C4", 2, 1)
+                .expect("relative area")
+                .rgce,
+            [PTG_AREA_N, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0xC0, 1, 0xC0]
+        );
+    }
+
+    #[test]
+    fn compiles_isodd_and_iseven_function_ids() {
+        assert_eq!(
+            tokens("=ISODD(A1)"),
+            [PTG_REF, 0, 0, 0, 0, 0, 0xC0, PTG_FUNC, 0xA5, 0x01]
+        );
+        assert_eq!(
+            tokens("=ISEVEN(A1)"),
+            [PTG_REF, 0, 0, 0, 0, 0, 0xC0, PTG_FUNC, 0xA4, 0x01]
+        );
     }
 
     #[test]

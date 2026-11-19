@@ -49,10 +49,10 @@ pub use conditional_format::{
     ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
     ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
     ConditionalFormatDataBar, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatIconSet,
-    ConditionalFormatIconType, ConditionalFormatText, ConditionalFormatTextRule,
-    ConditionalFormatTop, ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue,
-    IntoConditionalFormatValue,
+    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
+    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    ConditionalFormatType, ConditionalFormatValue, IntoConditionalFormatValue,
 };
 #[doc(hidden)]
 pub use data::CellData;

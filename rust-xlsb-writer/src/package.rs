@@ -1087,7 +1087,7 @@ mod tests {
         BrtRowHdr, BrtSheetProtection, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
         CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
         CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-        CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+        CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
         CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
         CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
         CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
@@ -2492,6 +2492,90 @@ mod tests {
         };
         assert!(position(KnownID::BrtBeginDVals) < position(KnownID::BrtDVal));
         assert!(position(KnownID::BrtDVal) < position(KnownID::BrtEndDVals));
+    }
+
+    #[test]
+    fn formula_validations_and_conditional_formats_reach_the_sheet_part() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+
+        let limit = crate::DataValidation::new().allow_whole_number_formula(
+            crate::DataValidationRule::LessThanOrEqualTo(crate::Formula::new("=D1")),
+        );
+        worksheet
+            .add_data_validation(1, 0, 10, 0, &limit)
+            .expect("formula limit");
+
+        let list = crate::DataValidation::new().allow_list_formula(crate::Formula::new("=F1:F9"));
+        worksheet
+            .add_data_validation(1, 1, 10, 1, &list)
+            .expect("formula list");
+
+        let custom = crate::DataValidation::new().allow_custom(crate::Formula::new("=A1>0"));
+        worksheet
+            .add_data_validation(1, 2, 10, 2, &custom)
+            .expect("custom formula");
+
+        let rule = crate::ConditionalFormatFormula::new()
+            .set_rule("=ISODD(B3)")
+            .set_format(crate::Format::new().set_background_color(crate::Color::Yellow))
+            .set_stop_if_true(true);
+        worksheet
+            .add_conditional_format(2, 1, 11, 1, &rule)
+            .expect("formula conditional format");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+
+        let validations = records::<BrtDVal>(&sheet);
+        assert_eq!(validations.len(), 3);
+        assert_eq!(
+            validations
+                .iter()
+                .map(BrtDVal::val_type)
+                .collect::<Vec<_>>(),
+            [1, 3, 7]
+        );
+        assert_eq!(
+            validations
+                .iter()
+                .map(BrtDVal::operator)
+                .collect::<Vec<_>>(),
+            [7, 0, 0]
+        );
+        assert_eq!(
+            validations[0].formula1.rgce,
+            [0x4C, 0xFF, 0xFF, 0x0F, 0x00, 3, 0xC0]
+        );
+        assert_eq!(
+            validations[1].formula1.rgce,
+            [0x4D, 0xFF, 0xFF, 0x0F, 0x00, 7, 0, 0, 0, 4, 0xC0, 4, 0xC0]
+        );
+        assert_eq!(
+            validations[2].formula1.rgce,
+            [0x4C, 0xFF, 0xFF, 0x0F, 0x00, 0xFE, 0xFF, 0x1E, 0, 0, 0x0D]
+        );
+
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].iType, CF_TYPE_EXPRESSION);
+        assert_eq!(rules[0].iTemplate, CF_TEMPLATE_FMLA);
+        assert_eq!(rules[0].iParam, 0);
+        assert_eq!(rules[0].cbFmla1, 1);
+        assert!(rules[0].stop_if_true());
+        let formula = rules[0].formula1.as_ref().expect("formula");
+        assert_eq!(formula.rgce, [0x4C, 0, 0, 0, 0, 0, 0xC0, 0x41, 0xA5, 0x01]);
+        assert_eq!(formula.cce as usize, formula.rgce.len());
+
+        let ids = record_ids(&sheet);
+        let position = |id: KnownID| {
+            ids.iter()
+                .position(|record_id| *record_id == id)
+                .expect("record")
+        };
+        assert!(position(KnownID::BrtBeginDVals) < position(KnownID::BrtDVal));
+        assert!(position(KnownID::BrtDVal) < position(KnownID::BrtEndDVals));
+        assert!(ids.contains(&KnownID::BrtBeginConditionalFormatting));
     }
 
     #[test]

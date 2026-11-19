@@ -47,6 +47,7 @@
 - [Custom themes](plans/2026-11-19-custom-themes.md)
 - [Scalar formulas](plans/2026-11-19-formulas.md)
 - [Array formulas](plans/2026-11-19-array-formulas.md)
+- [Formula-driven validation and conditional formatting](plans/2026-11-19-formula-driven-validation-and-formatting.md)
 
 ## Analysis
 

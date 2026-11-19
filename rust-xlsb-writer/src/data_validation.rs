@@ -8,7 +8,7 @@ use rust_xlsb_core::prelude::{
 
 use crate::data::IntoExcelDateTime;
 use crate::datetime::ExcelDateTime;
-use crate::{Error, Result};
+use crate::{Error, Formula, Result};
 
 /// A data-validation comparison rule.
 #[derive(Clone)]
@@ -33,28 +33,48 @@ pub enum DataValidationRule<T: IntoDataValidationValue> {
 
 impl<T: IntoDataValidationValue> DataValidationRule<T> {
     fn into_internal_rule(self) -> DataValidationRuleInternal {
+        let literal = |value: T| DataValidationOperand::Literal(value.to_string_value());
         match self {
-            Self::EqualTo(value) => DataValidationRuleInternal::EqualTo(value.to_string_value()),
-            Self::NotEqualTo(value) => {
-                DataValidationRuleInternal::NotEqualTo(value.to_string_value())
-            }
-            Self::GreaterThan(value) => {
-                DataValidationRuleInternal::GreaterThan(value.to_string_value())
-            }
+            Self::EqualTo(value) => DataValidationRuleInternal::EqualTo(literal(value)),
+            Self::NotEqualTo(value) => DataValidationRuleInternal::NotEqualTo(literal(value)),
+            Self::GreaterThan(value) => DataValidationRuleInternal::GreaterThan(literal(value)),
             Self::GreaterThanOrEqualTo(value) => {
-                DataValidationRuleInternal::GreaterThanOrEqualTo(value.to_string_value())
+                DataValidationRuleInternal::GreaterThanOrEqualTo(literal(value))
             }
-            Self::LessThan(value) => DataValidationRuleInternal::LessThan(value.to_string_value()),
+            Self::LessThan(value) => DataValidationRuleInternal::LessThan(literal(value)),
             Self::LessThanOrEqualTo(value) => {
-                DataValidationRuleInternal::LessThanOrEqualTo(value.to_string_value())
+                DataValidationRuleInternal::LessThanOrEqualTo(literal(value))
             }
             Self::Between(first, last) => {
-                DataValidationRuleInternal::Between(first.to_string_value(), last.to_string_value())
+                DataValidationRuleInternal::Between(literal(first), literal(last))
             }
-            Self::NotBetween(first, last) => DataValidationRuleInternal::NotBetween(
-                first.to_string_value(),
-                last.to_string_value(),
-            ),
+            Self::NotBetween(first, last) => {
+                DataValidationRuleInternal::NotBetween(literal(first), literal(last))
+            }
+        }
+    }
+}
+
+impl DataValidationRule<Formula> {
+    fn into_formula_rule(self) -> DataValidationRuleInternal {
+        let formula = |value: Formula| DataValidationOperand::Formula(value);
+        match self {
+            Self::EqualTo(value) => DataValidationRuleInternal::EqualTo(formula(value)),
+            Self::NotEqualTo(value) => DataValidationRuleInternal::NotEqualTo(formula(value)),
+            Self::GreaterThan(value) => DataValidationRuleInternal::GreaterThan(formula(value)),
+            Self::GreaterThanOrEqualTo(value) => {
+                DataValidationRuleInternal::GreaterThanOrEqualTo(formula(value))
+            }
+            Self::LessThan(value) => DataValidationRuleInternal::LessThan(formula(value)),
+            Self::LessThanOrEqualTo(value) => {
+                DataValidationRuleInternal::LessThanOrEqualTo(formula(value))
+            }
+            Self::Between(first, last) => {
+                DataValidationRuleInternal::Between(formula(first), formula(last))
+            }
+            Self::NotBetween(first, last) => {
+                DataValidationRuleInternal::NotBetween(formula(first), formula(last))
+            }
         }
     }
 }
@@ -80,6 +100,12 @@ impl IntoDataValidationValue for u32 {
 impl IntoDataValidationValue for f64 {
     fn to_string_value(&self) -> String {
         self.to_string()
+    }
+}
+
+impl IntoDataValidationValue for Formula {
+    fn to_string_value(&self) -> String {
+        self.as_str().to_owned()
     }
 }
 
@@ -171,19 +197,27 @@ enum DataValidationType {
     Date,
     Time,
     TextLength,
+    Custom,
+}
+
+#[derive(Clone)]
+enum DataValidationOperand {
+    Literal(String),
+    Formula(Formula),
 }
 
 #[derive(Clone)]
 enum DataValidationRuleInternal {
-    EqualTo(String),
-    NotEqualTo(String),
-    GreaterThan(String),
-    GreaterThanOrEqualTo(String),
-    LessThan(String),
-    LessThanOrEqualTo(String),
-    Between(String, String),
-    NotBetween(String, String),
-    ListSource(String),
+    EqualTo(DataValidationOperand),
+    NotEqualTo(DataValidationOperand),
+    GreaterThan(DataValidationOperand),
+    GreaterThanOrEqualTo(DataValidationOperand),
+    LessThan(DataValidationOperand),
+    LessThanOrEqualTo(DataValidationOperand),
+    Between(DataValidationOperand, DataValidationOperand),
+    NotBetween(DataValidationOperand, DataValidationOperand),
+    ListSource(DataValidationOperand),
+    CustomFormula(Formula),
 }
 
 /// A worksheet cell data validation.
@@ -218,7 +252,9 @@ impl DataValidation {
     pub const fn new() -> Self {
         Self {
             validation_type: DataValidationType::Any,
-            rule: DataValidationRuleInternal::EqualTo(String::new()),
+            rule: DataValidationRuleInternal::EqualTo(
+                DataValidationOperand::Literal(String::new()),
+            ),
             ignore_blank: true,
             show_input_message: true,
             show_error_message: true,
@@ -239,10 +275,26 @@ impl DataValidation {
         self
     }
 
+    /// Restricts input to whole numbers matching a formula `rule`.
+    #[must_use]
+    pub fn allow_whole_number_formula(mut self, rule: DataValidationRule<Formula>) -> Self {
+        self.rule = rule.into_formula_rule();
+        self.validation_type = DataValidationType::Whole;
+        self
+    }
+
     /// Restricts input to decimal numbers matching `rule`.
     #[must_use]
     pub fn allow_decimal_number(mut self, rule: DataValidationRule<f64>) -> Self {
         self.rule = rule.into_internal_rule();
+        self.validation_type = DataValidationType::Decimal;
+        self
+    }
+
+    /// Restricts input to decimal numbers matching a formula `rule`.
+    #[must_use]
+    pub fn allow_decimal_number_formula(mut self, rule: DataValidationRule<Formula>) -> Self {
+        self.rule = rule.into_formula_rule();
         self.validation_type = DataValidationType::Decimal;
         self
     }
@@ -258,6 +310,14 @@ impl DataValidation {
         self
     }
 
+    /// Restricts input to dates matching a formula `rule`.
+    #[must_use]
+    pub fn allow_date_formula(mut self, rule: DataValidationRule<Formula>) -> Self {
+        self.rule = rule.into_formula_rule();
+        self.validation_type = DataValidationType::Date;
+        self
+    }
+
     /// Restricts input to times matching `rule`.
     #[must_use]
     pub fn allow_time(
@@ -269,10 +329,26 @@ impl DataValidation {
         self
     }
 
+    /// Restricts input to times matching a formula `rule`.
+    #[must_use]
+    pub fn allow_time_formula(mut self, rule: DataValidationRule<Formula>) -> Self {
+        self.rule = rule.into_formula_rule();
+        self.validation_type = DataValidationType::Time;
+        self
+    }
+
     /// Restricts input to text whose length matches `rule`.
     #[must_use]
     pub fn allow_text_length(mut self, rule: DataValidationRule<u32>) -> Self {
         self.rule = rule.into_internal_rule();
+        self.validation_type = DataValidationType::TextLength;
+        self
+    }
+
+    /// Restricts input to text whose length matches a formula `rule`.
+    #[must_use]
+    pub fn allow_text_length_formula(mut self, rule: DataValidationRule<Formula>) -> Self {
+        self.rule = rule.into_formula_rule();
         self.validation_type = DataValidationType::TextLength;
         self
     }
@@ -313,15 +389,32 @@ impl DataValidation {
             )));
         }
 
-        self.rule = DataValidationRuleInternal::ListSource(joined);
+        self.rule = DataValidationRuleInternal::ListSource(DataValidationOperand::Literal(joined));
         self.validation_type = DataValidationType::List;
         Ok(self)
+    }
+
+    /// Restricts input to a list from a formula.
+    #[must_use]
+    pub fn allow_list_formula(mut self, list: Formula) -> Self {
+        self.rule = DataValidationRuleInternal::ListSource(DataValidationOperand::Formula(list));
+        self.validation_type = DataValidationType::List;
+        self
+    }
+
+    /// Restricts input to values accepted by a custom formula.
+    #[must_use]
+    pub fn allow_custom(mut self, rule: Formula) -> Self {
+        self.rule = DataValidationRuleInternal::CustomFormula(rule);
+        self.validation_type = DataValidationType::Custom;
+        self
     }
 
     /// Removes any value restriction while keeping prompt and error options.
     #[must_use]
     pub fn allow_any_value(mut self) -> Self {
-        self.rule = DataValidationRuleInternal::EqualTo(String::new());
+        self.rule =
+            DataValidationRuleInternal::EqualTo(DataValidationOperand::Literal(String::new()));
         self.validation_type = DataValidationType::Any;
         self
     }
@@ -422,7 +515,7 @@ impl DataValidation {
     }
 
     pub(crate) fn record(&self, range: UncheckedRfX) -> Result<BrtDVal> {
-        let (val_type, operator, formula1, formula2) = self.formulas()?;
+        let (val_type, operator, formula1, formula2) = self.formulas(&range)?;
         let mut flags = u32::from(val_type) | (u32::from(operator) << 20);
         flags |= match self.error_style {
             DataValidationErrorStyle::Stop => 0,
@@ -459,7 +552,10 @@ impl DataValidation {
         })
     }
 
-    fn formulas(&self) -> Result<(u8, u8, NameParsedFormula, NameParsedFormula)> {
+    fn formulas(
+        &self,
+        range: &UncheckedRfX,
+    ) -> Result<(u8, u8, NameParsedFormula, NameParsedFormula)> {
         match &self.validation_type {
             DataValidationType::Any => Ok((
                 0,
@@ -471,39 +567,62 @@ impl DataValidation {
                 let DataValidationRuleInternal::ListSource(list) = &self.rule else {
                     return Err(unsupported_rule());
                 };
-                Ok((3, 0, string_formula(list)?, NameParsedFormula::default()))
+                Ok((
+                    3,
+                    0,
+                    list_formula(list, range)?,
+                    NameParsedFormula::default(),
+                ))
             }
-            DataValidationType::Whole => self.numeric_rule(1),
-            DataValidationType::Decimal => self.numeric_rule(2),
-            DataValidationType::Date => self.numeric_rule(4),
-            DataValidationType::Time => self.numeric_rule(5),
-            DataValidationType::TextLength => self.numeric_rule(6),
+            DataValidationType::Custom => {
+                let DataValidationRuleInternal::CustomFormula(formula) = &self.rule else {
+                    return Err(unsupported_rule());
+                };
+                Ok((
+                    7,
+                    0,
+                    formula_formula(formula, range)?,
+                    NameParsedFormula::default(),
+                ))
+            }
+            DataValidationType::Whole => self.numeric_rule(1, range),
+            DataValidationType::Decimal => self.numeric_rule(2, range),
+            DataValidationType::Date => self.numeric_rule(4, range),
+            DataValidationType::Time => self.numeric_rule(5, range),
+            DataValidationType::TextLength => self.numeric_rule(6, range),
         }
     }
 
-    fn numeric_rule(&self, val_type: u8) -> Result<(u8, u8, NameParsedFormula, NameParsedFormula)> {
-        let (operator, first, second) = match &self.rule {
-            DataValidationRuleInternal::EqualTo(value) => (2, value.as_str(), None),
-            DataValidationRuleInternal::NotEqualTo(value) => (3, value.as_str(), None),
-            DataValidationRuleInternal::GreaterThan(value) => (4, value.as_str(), None),
-            DataValidationRuleInternal::GreaterThanOrEqualTo(value) => (6, value.as_str(), None),
-            DataValidationRuleInternal::LessThan(value) => (5, value.as_str(), None),
-            DataValidationRuleInternal::LessThanOrEqualTo(value) => (7, value.as_str(), None),
-            DataValidationRuleInternal::Between(first, second) => {
-                (0, first.as_str(), Some(second.as_str()))
+    fn numeric_rule(
+        &self,
+        val_type: u8,
+        range: &UncheckedRfX,
+    ) -> Result<(u8, u8, NameParsedFormula, NameParsedFormula)> {
+        let (operator, first, second): (
+            u8,
+            &DataValidationOperand,
+            Option<&DataValidationOperand>,
+        ) = match &self.rule {
+            DataValidationRuleInternal::EqualTo(value) => (2, value, None),
+            DataValidationRuleInternal::NotEqualTo(value) => (3, value, None),
+            DataValidationRuleInternal::GreaterThan(value) => (4, value, None),
+            DataValidationRuleInternal::GreaterThanOrEqualTo(value) => (6, value, None),
+            DataValidationRuleInternal::LessThan(value) => (5, value, None),
+            DataValidationRuleInternal::LessThanOrEqualTo(value) => (7, value, None),
+            DataValidationRuleInternal::Between(first, second) => (0, first, Some(second)),
+            DataValidationRuleInternal::NotBetween(first, second) => (1, first, Some(second)),
+            DataValidationRuleInternal::ListSource(_)
+            | DataValidationRuleInternal::CustomFormula(_) => {
+                return Err(unsupported_rule());
             }
-            DataValidationRuleInternal::NotBetween(first, second) => {
-                (1, first.as_str(), Some(second.as_str()))
-            }
-            DataValidationRuleInternal::ListSource(_) => return Err(unsupported_rule()),
         };
 
         Ok((
             val_type,
             operator,
-            number_formula(first)?,
+            operand_formula(first, range)?,
             match second {
-                Some(value) => number_formula(value)?,
+                Some(value) => operand_formula(value, range)?,
                 None => NameParsedFormula::default(),
             },
         ))
@@ -530,6 +649,38 @@ fn utf16_len(text: &str) -> usize {
 
 fn nullable_string(text: &str) -> XlNullableWideString {
     XlNullableWideString::construct((!text.is_empty()).then_some(text))
+}
+
+fn formula_formula(formula: &Formula, range: &UncheckedRfX) -> Result<NameParsedFormula> {
+    let first_col = u16::try_from(range.colFirst)
+        .map_err(|_| Error::ValueNotRepresentable("validation column"))?;
+    let parsed = crate::formula::compile_relative(formula.as_str(), range.rwFirst, first_col)?;
+    Ok(NameParsedFormula {
+        cce: parsed.cce,
+        rgce: parsed.rgce,
+        cb: parsed.cb,
+        rgcb: parsed.rgcb,
+    })
+}
+
+fn operand_formula(
+    operand: &DataValidationOperand,
+    range: &UncheckedRfX,
+) -> Result<NameParsedFormula> {
+    match operand {
+        DataValidationOperand::Literal(value) => number_formula(value),
+        DataValidationOperand::Formula(formula) => formula_formula(formula, range),
+    }
+}
+
+fn list_formula(
+    operand: &DataValidationOperand,
+    range: &UncheckedRfX,
+) -> Result<NameParsedFormula> {
+    match operand {
+        DataValidationOperand::Literal(value) => string_formula(value),
+        DataValidationOperand::Formula(formula) => formula_formula(formula, range),
+    }
 }
 
 fn number_formula(value: &str) -> Result<NameParsedFormula> {
@@ -610,6 +761,101 @@ mod tests {
             colFirst: 3,
             colLast: 3,
         }
+    }
+
+    #[test]
+    fn formula_comparisons_compile_to_formula_operands() {
+        let validation = DataValidation::new().allow_whole_number_formula(
+            DataValidationRule::Between(crate::Formula::new("=D1"), crate::Formula::new("=D2")),
+        );
+        let record = validation.record(range()).expect("record");
+        assert_eq!(record.val_type(), 1);
+        assert_eq!(record.operator(), 0);
+        assert_eq!(
+            record.formula1.rgce,
+            [0x4C, 0xFF, 0xFF, 0x0F, 0x00, 0, 0xC0]
+        );
+        assert_eq!(record.formula2.rgce, [0x4C, 0, 0, 0, 0, 0, 0xC0]);
+    }
+
+    #[test]
+    fn every_formula_comparison_keeps_its_validation_type() {
+        let formula = crate::Formula::new("=D1");
+        for (validation, val_type) in [
+            (
+                DataValidation::new()
+                    .allow_whole_number_formula(DataValidationRule::EqualTo(formula.clone())),
+                1,
+            ),
+            (
+                DataValidation::new()
+                    .allow_decimal_number_formula(DataValidationRule::EqualTo(formula.clone())),
+                2,
+            ),
+            (
+                DataValidation::new()
+                    .allow_date_formula(DataValidationRule::EqualTo(formula.clone())),
+                4,
+            ),
+            (
+                DataValidation::new()
+                    .allow_time_formula(DataValidationRule::EqualTo(formula.clone())),
+                5,
+            ),
+            (
+                DataValidation::new()
+                    .allow_text_length_formula(DataValidationRule::EqualTo(formula)),
+                6,
+            ),
+        ] {
+            let record = validation.record(range()).expect("record");
+            assert_eq!(record.val_type(), val_type);
+            assert_eq!(
+                record.formula1.rgce,
+                [0x4C, 0xFF, 0xFF, 0x0F, 0x00, 0, 0xC0]
+            );
+        }
+    }
+
+    #[test]
+    fn list_and_custom_formulas_use_compiled_tokens() {
+        let list = DataValidation::new().allow_list_formula(crate::Formula::new("=B1:B9"));
+        let record = list.record(range()).expect("list formula");
+        assert_eq!(record.val_type(), 3);
+        assert_eq!(record.operator(), 0);
+        assert_eq!(
+            record.formula1.rgce,
+            [
+                0x4D, 0xFF, 0xFF, 0x0F, 0x00, 0x07, 0, 0, 0, 0xFE, 0xFF, 0xFE, 0xFF
+            ]
+        );
+
+        let custom = DataValidation::new().allow_custom(crate::Formula::new("=A1>0"));
+        let record = custom.record(range()).expect("custom formula");
+        assert_eq!(record.val_type(), 7);
+        assert_eq!(record.operator(), 0);
+        assert_eq!(
+            record.formula1.rgce,
+            [0x4C, 0xFF, 0xFF, 0x0F, 0x00, 0xFD, 0xFF, 0x1E, 0, 0, 0x0D]
+        );
+    }
+
+    #[test]
+    fn formula_rules_reject_empty_and_cross_sheet_formulas() {
+        assert!(
+            DataValidation::new()
+                .allow_custom(crate::Formula::new(""))
+                .record(range())
+                .is_err()
+        );
+        assert!(
+            DataValidation::new()
+                .allow_whole_number_formula(DataValidationRule::EqualTo(crate::Formula::new(
+                    "=Sheet2!A1"
+                )))
+                .record(range())
+                .is_err()
+        );
     }
 
     #[test]
