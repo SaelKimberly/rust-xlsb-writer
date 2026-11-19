@@ -9,11 +9,15 @@ use rust_xlsb_core::prelude::{
     CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
     CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE,
     CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
-    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_BEGINS_WITH,
-    CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS, CF_TYPE_CELL_IS,
-    CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
-    CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE, UncheckedRfX,
-    XlNullableWideString, XlStringExt,
+    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+    CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
+    CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
+    CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, CF_TEMPLATE_TIME_PERIOD_TODAY,
+    CF_TEMPLATE_TIME_PERIOD_TOMORROW, CF_TEMPLATE_TIME_PERIOD_YESTERDAY, CF_TEMPLATE_UNIQUE_VALUES,
+    CF_TEXTOPER_BEGINS_WITH, CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS,
+    CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
+    CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
+    CFVO_PERCENTILE, UncheckedRfX, XlNullableWideString, XlStringExt,
 };
 use rust_xlsb_core::push_record;
 
@@ -233,12 +237,25 @@ const PTG_STR: u8 = 0x17;
 const PTG_INT: u8 = 0x1E;
 const PTG_FUNC: u8 = 0x41;
 const PTG_FUNC_VAR: u8 = 0x42;
+const PTG_ADD: u8 = 0x03;
+const PTG_SUB: u8 = 0x04;
+const PTG_LT: u8 = 0x09;
+const PTG_LE: u8 = 0x0A;
 const PTG_EQ: u8 = 0x0B;
+const PTG_GE: u8 = 0x0C;
 const PTG_GT: u8 = 0x0D;
 
 const FUNC_ISERROR: u16 = 0x0003;
 const FUNC_LEN: u16 = 0x0020;
 const FUNC_NOT: u16 = 0x0026;
+const FUNC_AND: u16 = 36;
+const FUNC_OR: u16 = 37;
+const FUNC_MONTH: u16 = 68;
+const FUNC_YEAR: u16 = 69;
+const FUNC_WEEKDAY: u16 = 70;
+const FUNC_ROUNDDOWN: u16 = 213;
+const FUNC_TODAY: u16 = 221;
+const FUNC_FLOOR: u16 = 285;
 const FUNC_SEARCH: u16 = 0x0052;
 const FUNC_LEFT: u16 = 0x0073;
 const FUNC_RIGHT: u16 = 0x0074;
@@ -345,6 +362,184 @@ fn error_formula(inverted: bool) -> Result<CFParsedFormula> {
     push_formula_func(&mut rgce, FUNC_ISERROR);
     if inverted {
         push_formula_func(&mut rgce, FUNC_NOT);
+    }
+    parsed_formula(rgce)
+}
+
+fn push_floor_ref(out: &mut Vec<u8>) {
+    push_relative_ref(out);
+    push_formula_int(out, 1);
+    push_formula_func(out, FUNC_FLOOR);
+}
+
+fn push_rounddown_ref(out: &mut Vec<u8>) {
+    push_relative_ref(out);
+    push_formula_int(out, 0);
+    push_formula_func(out, FUNC_ROUNDDOWN);
+}
+
+fn push_today(out: &mut Vec<u8>) {
+    push_formula_func(out, FUNC_TODAY);
+}
+
+fn push_weekday_today(out: &mut Vec<u8>) {
+    push_today(out);
+    push_formula_func_var(out, 1, FUNC_WEEKDAY);
+}
+
+fn push_month_ref(out: &mut Vec<u8>) {
+    push_relative_ref(out);
+    push_formula_func(out, FUNC_MONTH);
+}
+
+fn push_month_today(out: &mut Vec<u8>) {
+    push_today(out);
+    push_formula_func(out, FUNC_MONTH);
+}
+
+fn push_year_ref(out: &mut Vec<u8>) {
+    push_relative_ref(out);
+    push_formula_func(out, FUNC_YEAR);
+}
+
+fn push_year_today(out: &mut Vec<u8>) {
+    push_today(out);
+    push_formula_func(out, FUNC_YEAR);
+}
+
+fn date_formula(rule: ConditionalFormatDateRule) -> Result<CFParsedFormula> {
+    let mut rgce = Vec::with_capacity(128);
+    match rule {
+        ConditionalFormatDateRule::Yesterday => {
+            push_floor_ref(&mut rgce);
+            push_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_EQ);
+        }
+        ConditionalFormatDateRule::Today => {
+            push_floor_ref(&mut rgce);
+            push_today(&mut rgce);
+            rgce.push(PTG_EQ);
+        }
+        ConditionalFormatDateRule::Tomorrow => {
+            push_floor_ref(&mut rgce);
+            push_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_ADD);
+            rgce.push(PTG_EQ);
+        }
+        ConditionalFormatDateRule::Last7Days => {
+            push_today(&mut rgce);
+            push_floor_ref(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_formula_int(&mut rgce, 6);
+            rgce.push(PTG_LE);
+            push_floor_ref(&mut rgce);
+            push_today(&mut rgce);
+            rgce.push(PTG_LE);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
+        ConditionalFormatDateRule::LastWeek => {
+            push_today(&mut rgce);
+            push_rounddown_ref(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_weekday_today(&mut rgce);
+            rgce.push(PTG_GE);
+            push_today(&mut rgce);
+            push_rounddown_ref(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_weekday_today(&mut rgce);
+            push_formula_int(&mut rgce, 7);
+            rgce.push(PTG_ADD);
+            rgce.push(PTG_LT);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
+        ConditionalFormatDateRule::ThisWeek => {
+            push_today(&mut rgce);
+            push_rounddown_ref(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_weekday_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_LE);
+            push_rounddown_ref(&mut rgce);
+            push_today(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_formula_int(&mut rgce, 7);
+            push_weekday_today(&mut rgce);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_LE);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
+        ConditionalFormatDateRule::NextWeek => {
+            push_rounddown_ref(&mut rgce);
+            push_today(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_formula_int(&mut rgce, 7);
+            push_weekday_today(&mut rgce);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_GT);
+            push_rounddown_ref(&mut rgce);
+            push_today(&mut rgce);
+            rgce.push(PTG_SUB);
+            push_formula_int(&mut rgce, 15);
+            push_weekday_today(&mut rgce);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_LT);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
+        ConditionalFormatDateRule::LastMonth => {
+            push_month_ref(&mut rgce);
+            push_month_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_EQ);
+            push_year_ref(&mut rgce);
+            push_year_today(&mut rgce);
+            rgce.push(PTG_EQ);
+            push_month_ref(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_EQ);
+            push_year_ref(&mut rgce);
+            push_year_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_SUB);
+            rgce.push(PTG_EQ);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+            push_formula_func_var(&mut rgce, 2, FUNC_OR);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
+        ConditionalFormatDateRule::ThisMonth => {
+            push_month_ref(&mut rgce);
+            push_month_today(&mut rgce);
+            rgce.push(PTG_EQ);
+            push_year_ref(&mut rgce);
+            push_year_today(&mut rgce);
+            rgce.push(PTG_EQ);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
+        ConditionalFormatDateRule::NextMonth => {
+            push_month_ref(&mut rgce);
+            push_month_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_ADD);
+            rgce.push(PTG_EQ);
+            push_year_ref(&mut rgce);
+            push_year_today(&mut rgce);
+            rgce.push(PTG_EQ);
+            push_month_ref(&mut rgce);
+            push_formula_int(&mut rgce, 12);
+            rgce.push(PTG_EQ);
+            push_year_ref(&mut rgce);
+            push_year_today(&mut rgce);
+            push_formula_int(&mut rgce, 1);
+            rgce.push(PTG_ADD);
+            rgce.push(PTG_EQ);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+            push_formula_func_var(&mut rgce, 2, FUNC_OR);
+            push_formula_func_var(&mut rgce, 2, FUNC_AND);
+        }
     }
     parsed_formula(rgce)
 }
@@ -641,6 +836,136 @@ impl ConditionalFormat for ConditionalFormatError {
             self.stop_if_true,
             XlNullableWideString::construct(None::<&str>),
             error_formula(self.is_inverted)?,
+        ))
+    }
+
+    fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+/// A date-occurring conditional-format rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ConditionalFormatDateRule {
+    /// Dates occurring yesterday.
+    Yesterday,
+    /// Dates occurring today.
+    Today,
+    /// Dates occurring tomorrow.
+    Tomorrow,
+    /// Dates in the last seven days.
+    Last7Days,
+    /// Dates in the previous week.
+    LastWeek,
+    /// Dates in the current week.
+    ThisWeek,
+    /// Dates in the next week.
+    NextWeek,
+    /// Dates in the previous month.
+    LastMonth,
+    /// Dates in the current month.
+    ThisMonth,
+    /// Dates in the next month.
+    NextMonth,
+}
+
+impl ConditionalFormatDateRule {
+    const fn template(self) -> u32 {
+        match self {
+            Self::Today => CF_TEMPLATE_TIME_PERIOD_TODAY,
+            Self::Tomorrow => CF_TEMPLATE_TIME_PERIOD_TOMORROW,
+            Self::Yesterday => CF_TEMPLATE_TIME_PERIOD_YESTERDAY,
+            Self::Last7Days => CF_TEMPLATE_TIME_PERIOD_LAST7DAYS,
+            Self::LastMonth => CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
+            Self::NextMonth => CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
+            Self::ThisWeek => CF_TEMPLATE_TIME_PERIOD_THIS_WEEK,
+            Self::NextWeek => CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK,
+            Self::LastWeek => CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+            Self::ThisMonth => CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
+        }
+    }
+
+    const fn parameter(self) -> u32 {
+        match self {
+            Self::Today => 0,
+            Self::Yesterday => 1,
+            Self::Last7Days => 2,
+            Self::ThisWeek => 3,
+            Self::LastWeek => 4,
+            Self::LastMonth => 5,
+            Self::Tomorrow => 6,
+            Self::NextWeek => 7,
+            Self::NextMonth => 8,
+            Self::ThisMonth => 9,
+        }
+    }
+}
+
+/// A date-occurring conditional format applied to a worksheet range.
+#[derive(Clone, Debug)]
+pub struct ConditionalFormatDate {
+    rule: ConditionalFormatDateRule,
+    pub(crate) format: Option<Format>,
+    pub(crate) stop_if_true: bool,
+}
+
+impl ConditionalFormatDate {
+    /// Creates a date rule for yesterday.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            rule: ConditionalFormatDateRule::Yesterday,
+            format: None,
+            stop_if_true: false,
+        }
+    }
+
+    /// Sets the date-occurring rule.
+    #[must_use]
+    pub const fn set_rule(mut self, rule: ConditionalFormatDateRule) -> Self {
+        self.rule = rule;
+        self
+    }
+
+    /// Sets the differential format applied when the rule matches.
+    #[must_use]
+    pub fn set_format(mut self, format: impl Into<Format>) -> Self {
+        self.format = Some(format.into());
+        self
+    }
+
+    /// Stops evaluating lower-priority rules when this rule matches.
+    #[must_use]
+    pub const fn set_stop_if_true(mut self, enable: bool) -> Self {
+        self.stop_if_true = enable;
+        self
+    }
+}
+
+impl Default for ConditionalFormatDate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConditionalFormat for ConditionalFormatDate {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn dxf_format(&self) -> Option<&Format> {
+        self.format.as_ref()
+    }
+
+    fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
+        Ok(formula_rule(
+            self.rule.template(),
+            self.rule.parameter(),
+            dxf_id,
+            priority,
+            self.stop_if_true,
+            XlNullableWideString::construct(None::<&str>),
+            date_formula(self.rule)?,
         ))
     }
 
@@ -2472,6 +2797,217 @@ mod tests {
                 .begin_rule(1, u32::MAX)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn date_rules_emit_expected_templates_and_tokens() {
+        const REF: &[u8] = &[0x4C, 0, 0, 0, 0, 0x00, 0xC0];
+        const TODAY: &[u8] = &[0x41, 0xDD, 0];
+        const FLOOR_REF: &[u8] = &[0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x1E, 1, 0, 0x41, 0x1D, 1];
+        const ROUNDDOWN_REF: &[u8] = &[0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x1E, 0, 0, 0x41, 0xD5, 0];
+        const WEEKDAY_TODAY: &[u8] = &[0x41, 0xDD, 0, 0x42, 1, 0x46, 0];
+        const MONTH_REF: &[u8] = &[0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 0x44, 0];
+        const MONTH_TODAY: &[u8] = &[0x41, 0xDD, 0, 0x41, 0x44, 0];
+        const YEAR_REF: &[u8] = &[0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x41, 0x45, 0];
+        const YEAR_TODAY: &[u8] = &[0x41, 0xDD, 0, 0x41, 0x45, 0];
+        const AND2: &[u8] = &[0x42, 2, 0x24, 0];
+        const OR2: &[u8] = &[0x42, 2, 0x25, 0];
+
+        for (rule, template, parameter, expected) in [
+            (
+                ConditionalFormatDateRule::Today,
+                CF_TEMPLATE_TIME_PERIOD_TODAY,
+                0,
+                &[REF, &[0x1E, 1, 0, 0x41, 0x1D, 1], TODAY, &[0x0B]].concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::Tomorrow,
+                CF_TEMPLATE_TIME_PERIOD_TOMORROW,
+                6,
+                &[
+                    REF,
+                    &[0x1E, 1, 0, 0x41, 0x1D, 1],
+                    TODAY,
+                    &[0x1E, 1, 0, 0x03, 0x0B],
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::Yesterday,
+                CF_TEMPLATE_TIME_PERIOD_YESTERDAY,
+                1,
+                &[
+                    REF,
+                    &[0x1E, 1, 0, 0x41, 0x1D, 1],
+                    TODAY,
+                    &[0x1E, 1, 0, 0x04, 0x0B],
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::Last7Days,
+                CF_TEMPLATE_TIME_PERIOD_LAST7DAYS,
+                2,
+                &[
+                    TODAY,
+                    FLOOR_REF,
+                    &[0x04, 0x1E, 6, 0, 0x0A],
+                    FLOOR_REF,
+                    TODAY,
+                    &[0x0A],
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::LastWeek,
+                CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+                4,
+                &[
+                    TODAY,
+                    ROUNDDOWN_REF,
+                    &[0x04],
+                    WEEKDAY_TODAY,
+                    &[0x0C],
+                    TODAY,
+                    ROUNDDOWN_REF,
+                    &[0x04],
+                    WEEKDAY_TODAY,
+                    &[0x1E, 7, 0, 0x03, 0x09],
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::ThisWeek,
+                CF_TEMPLATE_TIME_PERIOD_THIS_WEEK,
+                3,
+                &[
+                    TODAY,
+                    ROUNDDOWN_REF,
+                    &[0x04],
+                    WEEKDAY_TODAY,
+                    &[0x1E, 1, 0, 0x04, 0x0A],
+                    ROUNDDOWN_REF,
+                    TODAY,
+                    &[0x04, 0x1E, 7, 0],
+                    WEEKDAY_TODAY,
+                    &[0x04, 0x0A],
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::NextWeek,
+                CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK,
+                7,
+                &[
+                    ROUNDDOWN_REF,
+                    TODAY,
+                    &[0x04, 0x1E, 7, 0],
+                    WEEKDAY_TODAY,
+                    &[0x04, 0x0D],
+                    ROUNDDOWN_REF,
+                    TODAY,
+                    &[0x04, 0x1E, 15, 0],
+                    WEEKDAY_TODAY,
+                    &[0x04, 0x09],
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::LastMonth,
+                CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
+                5,
+                &[
+                    MONTH_REF,
+                    MONTH_TODAY,
+                    &[0x1E, 1, 0, 0x04, 0x0B],
+                    YEAR_REF,
+                    YEAR_TODAY,
+                    &[0x0B],
+                    MONTH_REF,
+                    &[0x1E, 1, 0, 0x0B],
+                    YEAR_REF,
+                    YEAR_TODAY,
+                    &[0x1E, 1, 0, 0x04, 0x0B],
+                    AND2,
+                    OR2,
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::ThisMonth,
+                CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
+                9,
+                &[
+                    MONTH_REF,
+                    MONTH_TODAY,
+                    &[0x0B],
+                    YEAR_REF,
+                    YEAR_TODAY,
+                    &[0x0B],
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+            (
+                ConditionalFormatDateRule::NextMonth,
+                CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
+                8,
+                &[
+                    MONTH_REF,
+                    MONTH_TODAY,
+                    &[0x1E, 1, 0, 0x03, 0x0B],
+                    YEAR_REF,
+                    YEAR_TODAY,
+                    &[0x0B],
+                    MONTH_REF,
+                    &[0x1E, 12, 0, 0x0B],
+                    YEAR_REF,
+                    YEAR_TODAY,
+                    &[0x1E, 1, 0, 0x03, 0x0B],
+                    AND2,
+                    OR2,
+                    AND2,
+                ]
+                .concat()[..],
+            ),
+        ] {
+            let record = ConditionalFormatDate::new()
+                .set_rule(rule)
+                .set_stop_if_true(true)
+                .begin_rule(3, 9)
+                .expect("date rule");
+            assert_eq!(record.iType, CF_TYPE_EXPRESSION);
+            assert_eq!(record.iTemplate, template);
+            assert_eq!(record.iParam, parameter);
+            assert_eq!(record.dxfId, 9);
+            assert_eq!(record.iPri, 3);
+            assert!(record.stop_if_true());
+            assert_eq!(record.cbFmla1, 1);
+            assert!(record.strParam.is_null());
+            let parsed = record.formula1.as_ref().expect("formula");
+            assert_eq!(
+                parsed.cce,
+                u32::try_from(expected.len()).expect("length"),
+                "{rule:?}"
+            );
+            assert_eq!(parsed.rgce, expected, "{rule:?}");
+            assert_eq!(record.formula2, None);
+        }
+    }
+
+    #[test]
+    fn date_rule_defaults_to_yesterday() {
+        let record = ConditionalFormatDate::new()
+            .begin_rule(1, u32::MAX)
+            .expect("date rule");
+        assert_eq!(record.dxfId, u32::MAX);
+        assert_eq!(record.iTemplate, CF_TEMPLATE_TIME_PERIOD_YESTERDAY);
+        assert_eq!(record.iParam, 1);
     }
 
     fn assert_formula_rule(rule: &impl ConditionalFormat, template: u32, formula: &[u8]) {

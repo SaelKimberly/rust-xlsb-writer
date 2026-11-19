@@ -1054,9 +1054,10 @@ mod tests {
         BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
         CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
         CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
-        CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR,
-        CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX,
-        CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
+        CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
+        CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
+        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
+        CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -1374,6 +1375,78 @@ mod tests {
 
         let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
         assert_eq!(records::<BrtDXF>(&styles).len(), 2);
+    }
+
+    #[test]
+    fn date_rules_emit_templates_parameters_and_formulas() {
+        let mut workbook = crate::Workbook::new();
+        let red = crate::Format::new().set_background_color(crate::Color::Red);
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .add_conditional_format(
+                1,
+                0,
+                20,
+                0,
+                &crate::ConditionalFormatDate::new()
+                    .set_rule(crate::ConditionalFormatDateRule::Today)
+                    .set_format(red),
+            )
+            .expect("today rule");
+        worksheet
+            .add_conditional_format(
+                1,
+                1,
+                20,
+                1,
+                &crate::ConditionalFormatDate::new()
+                    .set_rule(crate::ConditionalFormatDateRule::LastMonth),
+            )
+            .expect("last month rule");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let ids = record_ids(&sheet);
+        assert_eq!(
+            ids.iter()
+                .filter(|id| **id == KnownID::BrtBeginConditionalFormatting)
+                .count(),
+            2
+        );
+        assert!(!ids.contains(&KnownID::BrtBeginConditionalFormattings));
+        assert!(!ids.contains(&KnownID::BrtBeginCFRule14));
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 2);
+
+        assert_eq!(rules[0].iType, CF_TYPE_EXPRESSION);
+        assert_eq!(rules[0].iTemplate, CF_TEMPLATE_TIME_PERIOD_TODAY);
+        assert_eq!(rules[0].iParam, 0);
+        assert_eq!(rules[0].dxfId, 0);
+        assert_eq!(rules[0].iPri, 1);
+        assert!(rules[0].strParam.is_null());
+        assert_eq!(rules[0].cbFmla1, 1);
+        assert_eq!(
+            rules[0].formula1.as_ref().expect("today formula").rgce,
+            [
+                0x4C, 0, 0, 0, 0, 0x00, 0xC0, 0x1E, 1, 0, 0x41, 0x1D, 1, 0x41, 0xDD, 0, 0x0B,
+            ]
+        );
+
+        assert_eq!(rules[1].iTemplate, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH);
+        assert_eq!(rules[1].iParam, 5);
+        assert_eq!(rules[1].dxfId, u32::MAX);
+        assert_eq!(rules[1].iPri, 2);
+        assert!(rules[1].strParam.is_null());
+        let formula = rules[1].formula1.as_ref().expect("last month formula");
+        assert_eq!(formula.rgce[0], 0x4C);
+        assert_eq!(&formula.rgce[7..10], &[0x41, 0x44, 0]);
+        assert_eq!(
+            formula.cce,
+            u32::try_from(formula.rgce.len()).expect("length")
+        );
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        assert_eq!(records::<BrtDXF>(&styles).len(), 1);
     }
 
     #[test]

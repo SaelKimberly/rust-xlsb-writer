@@ -81,6 +81,26 @@ pub const CF_TEMPLATE_CONTAINS_NO_BLANKS: u32 = 0x0A;
 pub const CF_TEMPLATE_CONTAINS_ERRORS: u32 = 0x0B;
 /// `CF_TEMPLATE_CONTAINSNOERRORS`.
 pub const CF_TEMPLATE_CONTAINS_NO_ERRORS: u32 = 0x0C;
+/// `CF_TEMPLATE_TIMEPERIODTODAY`.
+pub const CF_TEMPLATE_TIME_PERIOD_TODAY: u32 = 0x0F;
+/// `CF_TEMPLATE_TIMEPERIODTOMORROW`.
+pub const CF_TEMPLATE_TIME_PERIOD_TOMORROW: u32 = 0x10;
+/// `CF_TEMPLATE_TIMEPERIODYESTERDAY`.
+pub const CF_TEMPLATE_TIME_PERIOD_YESTERDAY: u32 = 0x11;
+/// `CF_TEMPLATE_TIMEPERIODLAST7DAYS`.
+pub const CF_TEMPLATE_TIME_PERIOD_LAST7DAYS: u32 = 0x12;
+/// `CF_TEMPLATE_TIMEPERIODLASTMONTH`.
+pub const CF_TEMPLATE_TIME_PERIOD_LAST_MONTH: u32 = 0x13;
+/// `CF_TEMPLATE_TIMEPERIODNEXTMONTH`.
+pub const CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH: u32 = 0x14;
+/// `CF_TEMPLATE_TIMEPERIODTHISWEEK`.
+pub const CF_TEMPLATE_TIME_PERIOD_THIS_WEEK: u32 = 0x15;
+/// `CF_TEMPLATE_TIMEPERIODNEXTWEEK`.
+pub const CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK: u32 = 0x16;
+/// `CF_TEMPLATE_TIMEPERIODLASTWEEK`.
+pub const CF_TEMPLATE_TIME_PERIOD_LAST_WEEK: u32 = 0x17;
+/// `CF_TEMPLATE_TIMEPERIODTHISMONTH`.
+pub const CF_TEMPLATE_TIME_PERIOD_THIS_MONTH: u32 = 0x18;
 /// `CF_TEMPLATE_ABOVEAVERAGE`.
 pub const CF_TEMPLATE_ABOVE_AVERAGE: u32 = 0x19;
 /// `CF_TEMPLATE_BELOWAVERAGE`.
@@ -222,6 +242,19 @@ impl Checked for BrtBeginCFRule {
                 | CF_TEMPLATE_CONTAINS_ERRORS
                 | CF_TEMPLATE_CONTAINS_NO_ERRORS,
             ) => self.check_fixed_formula_rule(),
+            (
+                CF_TYPE_EXPRESSION,
+                CF_TEMPLATE_TIME_PERIOD_TODAY
+                | CF_TEMPLATE_TIME_PERIOD_TOMORROW
+                | CF_TEMPLATE_TIME_PERIOD_YESTERDAY
+                | CF_TEMPLATE_TIME_PERIOD_LAST7DAYS
+                | CF_TEMPLATE_TIME_PERIOD_LAST_MONTH
+                | CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH
+                | CF_TEMPLATE_TIME_PERIOD_THIS_WEEK
+                | CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK
+                | CF_TEMPLATE_TIME_PERIOD_LAST_WEEK
+                | CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
+            ) => self.check_date_rule(),
             (CF_TYPE_FILTER, CF_TEMPLATE_FILTER) => self.check_filter_rule(),
             (
                 CF_TYPE_EXPRESSION,
@@ -298,6 +331,29 @@ impl BrtBeginCFRule {
         }
         if !self.strParam.is_null() {
             return Err("blank and error conditional formats must not have a string parameter");
+        }
+        self.check_single_formula_rule()
+    }
+
+    fn check_date_rule(&self) -> Result<(), &'static str> {
+        let expected = match self.iTemplate {
+            CF_TEMPLATE_TIME_PERIOD_TODAY => 0,
+            CF_TEMPLATE_TIME_PERIOD_YESTERDAY => 1,
+            CF_TEMPLATE_TIME_PERIOD_LAST7DAYS => 2,
+            CF_TEMPLATE_TIME_PERIOD_THIS_WEEK => 3,
+            CF_TEMPLATE_TIME_PERIOD_LAST_WEEK => 4,
+            CF_TEMPLATE_TIME_PERIOD_LAST_MONTH => 5,
+            CF_TEMPLATE_TIME_PERIOD_TOMORROW => 6,
+            CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK => 7,
+            CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH => 8,
+            CF_TEMPLATE_TIME_PERIOD_THIS_MONTH => 9,
+            _ => return Err("unsupported date conditional-format template"),
+        };
+        if self.iParam != expected {
+            return Err("date conditional-format parameter does not match its template");
+        }
+        if !self.strParam.is_null() {
+            return Err("date conditional formats must not have a string parameter");
         }
         self.check_single_formula_rule()
     }
@@ -1077,6 +1133,74 @@ mod tests {
             ..BrtBeginCFRule::default()
         };
         assert!(invalid.check().is_err());
+    }
+
+    #[test]
+    fn date_rule_templates_require_matching_parameters() {
+        let pairs = [
+            (CF_TEMPLATE_TIME_PERIOD_TODAY, 0),
+            (CF_TEMPLATE_TIME_PERIOD_YESTERDAY, 1),
+            (CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, 2),
+            (CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, 3),
+            (CF_TEMPLATE_TIME_PERIOD_LAST_WEEK, 4),
+            (CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, 5),
+            (CF_TEMPLATE_TIME_PERIOD_TOMORROW, 6),
+            (CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, 7),
+            (CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH, 8),
+            (CF_TEMPLATE_TIME_PERIOD_THIS_MONTH, 9),
+        ];
+        for (template, parameter) in pairs {
+            let rule = BrtBeginCFRule {
+                iType: CF_TYPE_EXPRESSION,
+                iTemplate: template,
+                dxfId: 0,
+                iPri: 1,
+                iParam: parameter,
+                cbFmla1: 1,
+                formula1: Some(number(1.0)),
+                ..BrtBeginCFRule::default()
+            };
+            rule.check().expect("valid date rule");
+        }
+
+        let today = BrtBeginCFRule {
+            iType: CF_TYPE_EXPRESSION,
+            iTemplate: CF_TEMPLATE_TIME_PERIOD_TODAY,
+            dxfId: 0,
+            iPri: 1,
+            iParam: 0,
+            cbFmla1: 1,
+            formula1: Some(number(1.0)),
+            ..BrtBeginCFRule::default()
+        };
+        for invalid in [
+            BrtBeginCFRule {
+                iParam: 1,
+                ..today.clone()
+            },
+            BrtBeginCFRule {
+                strParam: XlNullableWideString::construct(Some("today")),
+                ..today.clone()
+            },
+            BrtBeginCFRule {
+                flags: BrtBeginCFRule::F_ABOVE,
+                ..today.clone()
+            },
+            BrtBeginCFRule {
+                formula2: Some(number(2.0)),
+                ..today.clone()
+            },
+            BrtBeginCFRule {
+                formula1: None,
+                ..today.clone()
+            },
+            BrtBeginCFRule {
+                cbFmla1: 0,
+                ..today
+            },
+        ] {
+            assert!(invalid.check().is_err());
+        }
     }
 
     #[test]
