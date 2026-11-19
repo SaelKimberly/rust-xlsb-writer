@@ -158,30 +158,6 @@ per-column width/format options; the writer emits coalesced `BrtColInfo`
 records and sets `BrtRowHdr.ixfe` with `fGhostDirty` for rows.
 `StyleRegistry::write_to_biff` emits the complete Styles part record sequence.
 
-Formatting is separate again. Core's `StyleRegistry` (`styles.rs`) is seeded
-with the default `BrtXF` at index 0; `set_default_style` can replace cell XF 0
-and the Normal style XF before worksheet formats are registered. `CellStyle`
-pairs a `BrtFont`, `BrtFill`, `BrtBorder`, and the direct `BrtXF` attributes;
-`add_style` interns each component, patches
-`iFont`/`iFill`/`ixBorder`/`ixfeParent`, and deduplicates the resulting XF. `add_number_format` allocates custom `iFmt` ids from 164. The
-public `Format` builder maps to `CellStyle` at save; border-aware range
-formatting copies only the requested border sides; `Worksheet` stores row and
-per-column width/format options; the writer emits coalesced `BrtColInfo`
-records and sets `BrtRowHdr.ixfe` with `fGhostDirty` for rows.
-`StyleRegistry::write_to_biff` emits the complete Styles part record sequence.
-
-Formatting is separate again. Core's `StyleRegistry` (`styles.rs`) is seeded
-with the default `BrtXF` at index 0; `set_default_style` can replace cell XF 0
-and the Normal style XF before worksheet formats are registered. `CellStyle`
-pairs a `BrtFont`, `BrtFill`, `BrtBorder`, and the direct `BrtXF` attributes;
-`add_style` interns each component, patches
-`iFont`/`iFill`/`ixBorder`/`ixfeParent`, and deduplicates the resulting XF. `add_number_format` allocates custom `iFmt` ids from 164. The
-public `Format` builder maps to `CellStyle` at save; border-aware range
-formatting copies only the requested border sides; `Worksheet` stores row and
-per-column width/format options; the writer emits coalesced `BrtColInfo`
-records and sets `BrtRowHdr.ixfe` with `fGhostDirty` for rows.
-`StyleRegistry::write_to_biff` emits the complete Styles part record sequence.
-
 Temporal conversion lives in `temporal.rs` and reuses the same path.
 `NaiveDate` becomes an integer day serial in the 1900 system, so dates are
 `BrtCellRk` ints; `NaiveTime`, `NaiveDateTime`, and `TimeDelta` become day
@@ -335,6 +311,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/record/brt_conditional.rs` | Conditional-format range block, rule record, value object, color-scale/data-bar/icon-set markers, text/blank/error/date templates, and parsed formula |
 | `rust-xlsb-core/src/prelude/record/brt_dxf.rs` | Differential-format records and XF property blobs |
 | `rust-xlsb-core/src/prelude/structure/rich_str.rs` | `RichStr`, `StrRun`, `PhRun`, and run validation |
+| `rust-xlsb-core/src/prelude/structure/frt.rs` | Future-record header, sqref, formula, and product-version payloads |
+| `rust-xlsb-core/src/prelude/record/brt_sparkline.rs` | Sparkline group and per-sparkline FRT records |
+| `rust-xlsb-core/src/prelude/record/brt_frt.rs` | `BrtFRTBegin`/`BrtFRTEnd` future-record wrappers |
 | `rust-xlsb-writer/src/workbook.rs` | `Workbook`, sheet naming/validation, defined names, document properties, theme/default-format selection, save entry points |
 | `rust-xlsb-writer/src/theme.rs` | Excel 2023 and custom theme selection, `.thmx`/`.xlsx` theme extraction, and `theme_2023.xml` asset |
 | `rust-xlsb-core/src/prelude/record/brt_wb_prop.rs` | `BrtWbProp` workbook flags, theme version, and code name |
@@ -350,8 +329,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/data_validation.rs` | Data-validation rules, prompt/error options, and `BrtDVal` encoding |
 | `rust-xlsb-writer/src/table.rs` | `Table`/`TableColumn`/`TableFunction`/`TableStyle`, total-row, calculated-formula, and format handling, validation, and Table part serialization |
 | `rust-xlsb-writer/src/conditional_format.rs` | Conditional-format trait, cell/top-bottom/average/duplicate/color-scale/data-bar/icon-set/text/blank/error/date rules, values, formula tokens, and range storage |
-| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, rich cells, autofilter, conditional-format/filter/validation/list-part records, print records |
-| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
+| `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, rich cells, autofilter, conditional-format/filter/validation/list-part/sparkline records, print records |
+| `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, Xti allocation, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
+| `rust-xlsb-writer/src/sparkline.rs` | Sparkline values, range validation, and grouped range expansion |
 | `rust-xlsb-writer/src/error.rs` | Writer `Error`, `Result`, `XlsbError` |
 | `rust-xlsb-writer/src/e2e/mod.rs` | Writer package tests read back through `calamine` |
 | `rust-xlsb-writer/examples/showcase.rs` | Public-API showcase with row bands, fills, alignment, borders, temporal formats |
