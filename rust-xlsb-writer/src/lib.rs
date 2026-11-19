@@ -36,6 +36,7 @@ mod filter;
 mod format;
 mod formula;
 mod image;
+mod note;
 mod package;
 mod properties;
 mod protection;
@@ -73,6 +74,7 @@ pub use format::{
 };
 pub use formula::Formula;
 pub use image::Image;
+pub use note::Note;
 pub use properties::{CustomProperty, DocProperties, IntoCustomDateTime, IntoCustomProperty};
 pub use protection::ProtectionOptions;
 pub use sparkline::{ChartEmptyCells, Sparkline, SparklineRange, SparklineType};

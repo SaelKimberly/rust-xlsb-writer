@@ -63,6 +63,7 @@
 - [VBA projects and code names](plans/2026-11-19-vba-projects.md)
 - [VBA project signatures](plans/2026-11-19-vba-signatures.md)
 - [Header and footer images](plans/2026-11-19-header-footer-images.md)
+- [Cell notes](plans/2026-11-19-notes.md)
 
 ## Analysis
 

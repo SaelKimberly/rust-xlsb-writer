@@ -19,12 +19,14 @@ mod brt_cell_rstring;
 mod brt_cell_st;
 mod brt_col_info;
 mod brt_color;
+mod brt_comment;
 mod brt_conditional;
 mod brt_drawing;
 mod brt_dval;
 mod brt_dxf;
 mod brt_extern_sheet;
 mod brt_frt;
+mod brt_legacy_drawing;
 mod brt_legacy_drawing_hf;
 pub use brt_frt::{BrtFRTBegin, BrtFRTEnd};
 mod brt_file_sharing;
@@ -76,6 +78,7 @@ pub use brt_cell_rstring::BrtCellRString;
 pub use brt_cell_st::BrtCellSt;
 pub use brt_col_info::BrtColInfo;
 pub use brt_color::BrtColor;
+pub use brt_comment::{BrtBeginComment, BrtCommentAuthor, BrtCommentText, BrtEndComment};
 pub use brt_conditional::{
     BrtBeginCFRule, BrtBeginColorScale, BrtBeginConditionalFormatting, BrtBeginDatabar,
     BrtBeginIconSet, BrtCFVO, BrtEndCFRule, BrtEndColorScale, BrtEndConditionalFormatting,
@@ -111,6 +114,7 @@ pub use brt_fmla::{
 pub use brt_fmt::BrtFmt;
 pub use brt_font::BrtFont;
 pub use brt_hlink::BrtHLink;
+pub use brt_legacy_drawing::BrtLegacyDrawing;
 pub use brt_legacy_drawing_hf::BrtLegacyDrawingHF;
 pub use brt_margins::BrtMargins;
 pub use brt_merge_cell::BrtMergeCell;

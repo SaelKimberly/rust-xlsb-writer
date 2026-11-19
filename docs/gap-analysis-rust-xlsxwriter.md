@@ -38,8 +38,9 @@ It is not a feature-equivalent replacement. The largest gaps are:
    multi-range data validation, and structural sheet protection are present.
 4. **Rich objects** — worksheet background images, foreground images with
    native or scaled sizing, pixel offsets, fit-to-cell placement,
-   header/footer VML images, and sparkline groups are supported; in-cell image
-   embedding, charts, notes, shapes, buttons, and checkboxes are missing.
+   header/footer VML images, cell notes with authors and visibility, and
+   sparkline groups are supported; in-cell image embedding, charts, shapes,
+   buttons, and checkboxes are missing.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
    user-defined names, the Excel 2023 theme, custom theme files, VBA projects
    with detached signatures and code names are available; chartsheets are
@@ -75,7 +76,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 326 core + 448 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose image, sparkline, signed-macro, and header-image read-back |
+| Verification | 332 core + 456 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof, Aspose image, sparkline, signed-macro, header-image, and note read-back |
 
 ## 3. Capability Matrix
 
@@ -206,11 +207,11 @@ Status meanings:
 | `embed_image`, in-cell image anchors | Missing | In-cell images |
 | `insert_background_image` | Supported | PNG/JPEG/GIF/24-bit BMP media part and worksheet relationship |
 | `insert_chart`, `insert_chart_with_offset` | Missing | Chart parts |
-| `insert_note` | Missing | Comments/notes |
+| `insert_note` | Partial | Plain-text notes with author, visibility, and pixel dimensions; comments binary part and note VML |
 | `insert_shape`, `insert_shape_with_offset` | Missing | Drawing shapes |
 | `insert_button`, `insert_button_with_offset` | Missing | Form controls |
 | `insert_checkbox`, `insert_checkbox_with_format` | Missing | Checkbox cells |
-| `show_all_notes`, `set_default_note_author` | Missing | Notes display |
+| `show_all_notes`, `set_default_note_author` | Supported | Visibility override and default author |
 
 ### 3.6 Formatting
 
@@ -306,7 +307,7 @@ records or package parts that do not exist yet.
 | Images/charts/shapes | Background images use media parts and worksheet relationships; foreground images use DrawingML pictures, two-cell anchors, DPI-aware scaled extents, fit-to-cell placement, drawing relationships, and media parts; header/footer images use VML shapes, media relationships, and `BrtLegacyDrawingHF`. In-cell embedding and charts remain |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Sparklines | Shipped `BrtBeginSparklineGroup`/`BrtSparkline` FRT records, grouped rows/columns, and `Xti` data-range formulas |
-| Notes | Comment/note parts and VML/drawing linkage |
+| Notes | Shipped: `commentsN.bin` with authors and rich text, note VML shapes, and `BrtLegacyDrawing`; author-prefix formatting, colors, and threaded comments remain |
 | Defined names | User literals, absolute A1 references, expression formulas with same-workbook sheet and worksheet-range references, references to other defined names, and print-area and print-title names; external-workbook and future-function references remain |
 | Document properties | Shipped: core/app strings, custom values, and creation timestamps |
 | Themes | Shipped: Excel 2023 and custom theme parts, `BrtWbProp.dwThemeVersion`, theme color indexes, and `.thmx`/`.xlsx` extraction |
@@ -394,7 +395,7 @@ page layout; record-level tests cover print/view records.
 | Item | Why | Size |
 |---|---|---|
 | Images: insert, offset, scaling, fit-to-cell ✅; embed remains | Common report requirement | L–XL |
-| Notes/comments | Annotation | M–L |
+| Notes/comments ✅ Partial | Plain text, authors, visibility, dimensions, comments binary and VML | — |
 | Shapes/textboxes, buttons, checkboxes | Form-like sheets | L |
 | Charts | Dashboards | XL |
 | Sparklines ✅ | Compact trend display | M |
@@ -459,7 +460,7 @@ work is future-function token coverage and shared-formula state:
 2. Shared-formula state if the reference API requires it.
 3. Cross-sheet and defined-name cell formulas.
 
-If formulas are deferred, the next bounded gaps are rich objects: notes,
+If formulas are deferred, the next bounded gaps are rich objects: shapes,
 shapes, buttons, checkboxes, in-cell image embedding, and charts. Hyperlinks,
 worksheet state, page setup, text headers/footers, manual page breaks, outline
 groups, print areas, repeat titles, foreground-image scaling/fit-to-cell, and
@@ -475,7 +476,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 326 core + 448 writer unit tests and 7 doctests in default
+- Test evidence: 332 core + 456 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,

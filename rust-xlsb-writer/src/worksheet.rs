@@ -14,6 +14,7 @@ use crate::drawing::{PlacedImage, centered_offset, column_pixels, row_pixels};
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::formula::{Formula, cached_result, compile, result_is_too_long, subtotal_formula};
+use crate::note::Note;
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
 use crate::range_list::RangeList;
 use crate::sparkline::{Sparkline, SparklineCell, SparklineGroup, SparklineRange};
@@ -358,6 +359,9 @@ pub struct Worksheet {
     header_footer: HeaderFooter,
     header_images: [Option<Image>; 3],
     footer_images: [Option<Image>; 3],
+    notes: BTreeMap<(RowNum, ColNum), Note>,
+    show_all_notes: bool,
+    default_note_author: Option<String>,
     page_breaks: Vec<u32>,
     vertical_page_breaks: Vec<u32>,
     print_area: Option<(RowNum, ColNum, RowNum, ColNum)>,
@@ -440,6 +444,9 @@ impl Worksheet {
             header_footer: HeaderFooter::default(),
             header_images: [None, None, None],
             footer_images: [None, None, None],
+            notes: BTreeMap::new(),
+            show_all_notes: false,
+            default_note_author: None,
             page_breaks: Vec::new(),
             vertical_page_breaks: Vec::new(),
             print_area: None,
@@ -3727,6 +3734,52 @@ impl Worksheet {
 
     pub(crate) const fn header_images(&self) -> &[Option<Image>; 3] {
         &self.header_images
+    }
+
+    /// Makes every note visible unless the note explicitly overrides it.
+    pub const fn show_all_notes(&mut self, enable: bool) -> &mut Self {
+        self.show_all_notes = enable;
+        self
+    }
+
+    /// Sets the fallback author for notes without an explicit author.
+    pub fn set_default_note_author(&mut self, name: impl Into<String>) -> &mut Self {
+        let name = name.into();
+        if !name.is_empty() && name.encode_utf16().count() <= 52 {
+            self.default_note_author = Some(name);
+        }
+        self
+    }
+
+    /// Inserts a note into a cell, replacing any note already there.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] when the cell is outside the
+    /// worksheet, and [`Error::Parameter`] when the text exceeds 32,767 UTF-16
+    /// code units.
+    pub fn insert_note(&mut self, row: RowNum, col: ColNum, note: &Note) -> Result<&mut Self> {
+        Self::check_row(row)?;
+        Self::check_col(col)?;
+        if note.text().encode_utf16().count() > MAX_STRING_UTF16 {
+            return Err(Error::Parameter(
+                "note text exceeds 32767 code units".into(),
+            ));
+        }
+        self.notes.insert((row, col), note.clone());
+        Ok(self)
+    }
+
+    pub(crate) const fn notes(&self) -> &BTreeMap<(RowNum, ColNum), Note> {
+        &self.notes
+    }
+
+    pub(crate) fn default_note_author(&self) -> Option<&str> {
+        self.default_note_author.as_deref()
+    }
+
+    pub(crate) const fn all_notes_visible(&self) -> bool {
+        self.show_all_notes
     }
 
     pub(crate) const fn footer_images(&self) -> &[Option<Image>; 3] {

@@ -163,9 +163,14 @@ pub fn build_package(
     let mut media_parts = Vec::new();
     let mut image_types = Vec::new();
     let mut vml_parts = Vec::new();
+    let mut comment_parts = Vec::new();
+    let mut comment_ids = Vec::new();
     let mut header_media: Vec<(crate::Image, u32)> = Vec::new();
     let mut drawing_number = 0u32;
-    let mut vml_number = 0u32;
+    let mut vml_part_number = 0u32;
+    let mut header_vml_data_id = 0u32;
+    let mut note_vml_data_id = 0u32;
+    let mut comment_number = 0u32;
     let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
         let image_index = sheet.background_image().map(|image| {
@@ -250,7 +255,7 @@ pub fn build_package(
                 };
                 let extension = image.extension();
                 header_images.push(HeaderImageSave {
-                    data_id: vml_number + 1,
+                    data_id: header_vml_data_id + 1,
                     position: [
                         HeaderImagePosition::Left,
                         HeaderImagePosition::Center,
@@ -267,20 +272,55 @@ pub fn build_package(
                 });
             }
         }
-        let vml = if header_images.is_empty() {
+        let comments = if sheet.notes().is_empty() {
             None
         } else {
-            vml_number += 1;
+            comment_number += 1;
+            comment_parts.push((
+                format!("xl/comments{comment_number}.bin"),
+                crate::note::comments_bin(sheet)?,
+            ));
+            comment_ids.push(comment_number);
+            let comments_rel_id = next_rel_id;
+            next_rel_id += 1;
+            Some((comment_number, comments_rel_id))
+        };
+        let note_vml = if sheet.notes().is_empty() {
+            None
+        } else {
+            let blocks = crate::note::note_vml_blocks(sheet);
+            let first_data_id = note_vml_data_id
+                .checked_add(1)
+                .ok_or(Error::ValueNotRepresentable("too many note blocks"))?;
+            note_vml_data_id = first_data_id
+                .checked_add(blocks - 1)
+                .ok_or(Error::ValueNotRepresentable("too many note blocks"))?;
+            vml_part_number += 1;
+            let part_number = vml_part_number;
+            vml_parts.push((
+                format!("xl/drawings/vmlDrawing{part_number}.vml"),
+                crate::note::vml_notes_xml(sheet, first_data_id).into_bytes(),
+            ));
+            let rel_id = next_rel_id;
+            next_rel_id += 1;
+            Some((part_number, rel_id))
+        };
+        let header_vml = if header_images.is_empty() {
+            None
+        } else {
+            header_vml_data_id += 1;
+            vml_part_number += 1;
+            let part_number = vml_part_number;
             let rel_id = next_rel_id;
             vml_parts.push((
-                format!("xl/drawings/vmlDrawing{vml_number}.vml"),
-                vml_header_xml(vml_number, &header_images).into_bytes(),
+                format!("xl/drawings/vmlDrawing{part_number}.vml"),
+                vml_header_xml(header_vml_data_id, &header_images).into_bytes(),
             ));
             vml_parts.push((
-                format!("xl/drawings/_rels/vmlDrawing{vml_number}.vml.rels"),
+                format!("xl/drawings/_rels/vmlDrawing{part_number}.vml.rels"),
                 vml_header_rels(&header_images).into_bytes(),
             ));
-            Some((vml_number, rel_id))
+            Some((part_number, rel_id))
         };
         let mut bytes = Vec::new();
         let selected = index == view.active && (view.explicit_active || view.active != 0);
@@ -293,12 +333,20 @@ pub fn build_package(
             &sheet_sparklines[index],
             selected,
             drawing.map(|(_, rel_id)| rel_id),
+            note_vml.map(|(_, rel_id)| rel_id),
             background_rel_id,
-            vml.map(|(_, rel_id)| rel_id),
+            header_vml.map(|(_, rel_id)| rel_id),
             &mut bytes,
         )?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
-        if let Some(rels) = sheet_rels(sheet, drawing, image_index.zip(background_rel_id), vml) {
+        if let Some(rels) = sheet_rels(
+            sheet,
+            drawing,
+            image_index.zip(background_rel_id),
+            comments,
+            note_vml,
+            header_vml,
+        ) {
             sheet_parts.push((
                 format!("xl/worksheets/_rels/sheet{}.bin.rels", index + 1),
                 rels.into_bytes(),
@@ -332,6 +380,7 @@ pub fn build_package(
                 settings.theme.as_ref(),
                 &table_ids,
                 &drawing_ids,
+                &comment_ids,
                 &image_types,
                 has_dynamic_arrays,
                 vba_project.is_some(),
@@ -387,6 +436,7 @@ pub fn build_package(
     parts.extend(sheet_parts);
     parts.extend(table_parts);
     parts.extend(drawing_parts);
+    parts.extend(comment_parts);
     parts.extend(vml_parts);
     parts.extend(media_parts);
 
@@ -836,13 +886,17 @@ fn sheet_rels(
     sheet: &Worksheet,
     drawing: Option<(u32, u32)>,
     background: Option<(usize, u32)>,
-    vml: Option<(u32, u32)>,
+    comments: Option<(u32, u32)>,
+    note_vml: Option<(u32, u32)>,
+    header_vml: Option<(u32, u32)>,
 ) -> Option<String> {
     if sheet.tables().is_empty()
         && sheet.hyperlinks().values().all(crate::Url::is_internal)
         && drawing.is_none()
         && background.is_none()
-        && vml.is_none()
+        && comments.is_none()
+        && note_vml.is_none()
+        && header_vml.is_none()
     {
         return None;
     }
@@ -890,7 +944,21 @@ fn sheet_rels(
         )
         .expect("writing to String cannot fail");
     }
-    if let Some((vml_number, vml_rel_id)) = vml {
+    if let Some((comment_number, comments_rel_id)) = comments {
+        write!(
+            body,
+            r#"<Relationship Id="rId{comments_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments{comment_number}.bin"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
+    if let Some((vml_number, vml_rel_id)) = note_vml {
+        write!(
+            body,
+            r#"<Relationship Id="rId{vml_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing{vml_number}.vml"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
+    if let Some((vml_number, vml_rel_id)) = header_vml {
         write!(
             body,
             r#"<Relationship Id="rId{vml_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing{vml_number}.vml"/>"#
@@ -913,6 +981,7 @@ fn content_types(
     theme: Option<&crate::theme::Theme>,
     table_ids: &[u32],
     drawing_ids: &[u32],
+    comment_ids: &[u32],
     image_types: &[(&str, &str)],
     has_metadata: bool,
     has_vba: bool,
@@ -1003,6 +1072,13 @@ fn content_types(
         write!(
             body,
             r#"<Override PartName="/xl/drawings/drawing{id}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
+    for id in comment_ids {
+        write!(
+            body,
+            r#"<Override PartName="/xl/comments{id}.bin" ContentType="application/vnd.ms-excel.comments"/>"#
         )
         .expect("writing to String cannot fail");
     }
@@ -1587,15 +1663,16 @@ mod tests {
 
     use deku::DekuContainerRead;
     use rust_xlsb_core::prelude::{
-        Bold, BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginConditionalFormatting,
-        BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
-        BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
-        BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellMeta,
-        BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing, BrtExternSheet,
-        BrtFileSharing, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont,
-        BrtHLink, BrtLegacyDrawingHF, BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName,
-        BrtRowHdr, BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo,
-        BrtWsProp, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+        Bold, BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginComment,
+        BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar,
+        BrtBeginFilterColumn, BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol,
+        BrtBeginListParts, BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO,
+        BrtCalcProp, BrtCellMeta, BrtCellRString, BrtColor, BrtCommentAuthor, BrtCommentText,
+        BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing, BrtExternSheet, BrtFileSharing, BrtFilter,
+        BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink, BrtLegacyDrawing,
+        BrtLegacyDrawingHF, BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName, BrtRowHdr,
+        BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtWsProp,
+        BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
         CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
         CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA,
         CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
@@ -5190,6 +5267,164 @@ mod tests {
         let position = |id| ids.iter().position(|known| *known == id).expect("record");
         assert!(position(KnownID::BrtDrawing) < position(KnownID::BrtLegacyDrawingHF));
         assert!(position(KnownID::BrtLegacyDrawingHF) < position(KnownID::BrtBkHim));
+    }
+
+    #[test]
+    fn notes_emit_comments_vml_and_legacy_drawing() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_default_note_author("Alice");
+        sheet
+            .insert_note(0, 0, &crate::Note::new("First note"))
+            .expect("note");
+        sheet
+            .insert_note(
+                2,
+                2,
+                &crate::Note::new("Other")
+                    .set_author("Bob")
+                    .set_visible(true),
+            )
+            .expect("note");
+        sheet.show_all_notes(true);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/comments1.bin" ContentType="application/vnd.ms-excel.comments"/>"#
+        ));
+        assert!(content_types.contains(
+            r#"<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>"#
+        ));
+
+        let comments = part_bytes(&bytes, "xl/comments1.bin").expect("comments");
+        let authors = records::<BrtCommentAuthor>(&comments);
+        assert_eq!(authors.len(), 2);
+        assert_eq!(
+            authors[0].author.to_optional_string().as_deref(),
+            Some("Alice")
+        );
+        assert_eq!(
+            authors[1].author.to_optional_string().as_deref(),
+            Some("Bob")
+        );
+        let begins = records::<BrtBeginComment>(&comments);
+        assert_eq!(begins.len(), 2);
+        assert_eq!((begins[0].rfx.rwFirst, begins[0].rfx.colFirst), (0, 0));
+        assert_eq!((begins[1].rfx.rwFirst, begins[1].rfx.colFirst), (2, 2));
+        assert_eq!(begins[0].iauthor, 0);
+        assert_eq!(begins[1].iauthor, 1);
+        let texts = records::<BrtCommentText>(&comments);
+        assert_eq!(texts.len(), 2);
+        assert_eq!(
+            texts[0].text.str.to_optional_string().as_deref(),
+            Some("First note")
+        );
+        assert_eq!(
+            texts[0].text.rich.as_ref().expect("runs").rgsStrRun.len(),
+            1
+        );
+
+        let vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("vml"))
+                .expect("utf8");
+        assert!(vml.contains(r#"<o:idmap v:ext="edit" data="1" />"#));
+        assert!(vml.contains(r#"id="_x0000_s1025""#));
+        assert!(vml.contains(r#"id="_x0000_s1026""#));
+        assert!(vml.contains("<x:Row>0</x:Row><x:Column>0</x:Column>"));
+        assert!(vml.contains("<x:Row>2</x:Row><x:Column>2</x:Column>"));
+        assert!(vml.contains("<x:Visible />"));
+
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(
+            r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.bin"/>"#
+        ));
+        assert!(rels.contains(
+            r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>"#
+        ));
+
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let legacy = records::<BrtLegacyDrawing>(&sheet_part);
+        assert_eq!(
+            legacy[0].stRelId.to_optional_string().as_deref(),
+            Some("rId2")
+        );
+    }
+
+    #[test]
+    fn note_vml_blocks_continue_across_sheets() {
+        let mut workbook = crate::Workbook::new();
+        let first = workbook.add_worksheet();
+        for row in 0..1025 {
+            first
+                .insert_note(row, 0, &crate::Note::new("x"))
+                .expect("note");
+        }
+        let second = workbook.add_worksheet();
+        second
+            .insert_note(0, 0, &crate::Note::new("later"))
+            .expect("note");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let first_vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("vml"))
+                .expect("utf8");
+        assert!(first_vml.contains(r#"data="1,2""#));
+        let second_vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing2.vml").expect("vml"))
+                .expect("utf8");
+        assert!(second_vml.contains(r#"data="3""#));
+        assert!(second_vml.contains(r#"id="_x0000_s3073""#));
+    }
+
+    #[test]
+    fn notes_and_header_images_use_separate_vml_parts() {
+        let image = crate::Image::new_from_buffer(&png(10, 10)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.set_header("&C&G");
+        sheet
+            .set_header_image(&image, crate::HeaderImagePosition::Center)
+            .expect("header image");
+        sheet
+            .insert_note(0, 0, &crate::Note::new("Note"))
+            .expect("note");
+        let bytes = workbook.save_to_buffer().expect("saves");
+
+        let note_vml =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/vmlDrawing1.vml").expect("note vml"))
+                .expect("utf8");
+        assert!(note_vml.contains(r#"<x:ClientData ObjectType="Note">"#));
+        let header_vml = String::from_utf8(
+            part_bytes(&bytes, "xl/drawings/vmlDrawing2.vml").expect("header vml"),
+        )
+        .expect("utf8");
+        assert!(header_vml.contains(r#"id="CH""#));
+        assert!(header_vml.contains(r#"o:spid="_x0000_s1025""#));
+
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(
+            r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.bin""#
+        ));
+        assert!(rels.contains(
+            r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml""#
+        ));
+        assert!(rels.contains(
+            r#"Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing2.vml""#
+        ));
+
+        let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let ids = record_ids(&sheet_part);
+        let position = |id| ids.iter().position(|known| *known == id).expect("record");
+        assert!(position(KnownID::BrtLegacyDrawing) < position(KnownID::BrtLegacyDrawingHF));
     }
 
     #[test]

@@ -13,11 +13,11 @@ use rust_xlsb_core::prelude::{
     BrtEndDVals, BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
     BrtEndSheetData, BrtEndSparklineGroup, BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView,
     BrtEndWsViews, BrtFRTBegin, BrtFRTEnd, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString,
-    BrtFont, BrtHLink, BrtLegacyDrawingHF, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup,
-    BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtSparkline, BrtWsDim, BrtWsFmtInfo, BrtWsProp,
-    Cell, CellParsedFormula, CodeName, FrtFormula, FrtFormulas, FrtHeader, FrtParsedFormula,
-    FrtSqref, FrtSqrefs, HeaderFooterString, RichStr, StrRun, StrRuns, UncheckedRfX,
-    UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
+    BrtFont, BrtHLink, BrtLegacyDrawing, BrtLegacyDrawingHF, BrtListPart, BrtMargins, BrtMergeCell,
+    BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtSparkline, BrtWsDim,
+    BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, CodeName, FrtFormula, FrtFormulas, FrtHeader,
+    FrtParsedFormula, FrtSqref, FrtSqrefs, HeaderFooterString, RichStr, StrRun, StrRuns,
+    UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
     conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
@@ -64,6 +64,7 @@ pub fn write_sheet(
         None,
         None,
         None,
+        None,
         out,
     )
 }
@@ -81,6 +82,7 @@ pub(crate) fn write_sheet_with_fonts(
     sparkline_groups: &[SparklineSaveGroup<'_>],
     selected: bool,
     drawing_rel_id: Option<u32>,
+    legacy_drawing_rel_id: Option<u32>,
     background_rel_id: Option<u32>,
     vml_rel_id: Option<u32>,
     out: &mut Vec<u8>,
@@ -211,6 +213,7 @@ pub(crate) fn write_sheet_with_fonts(
     write_page_breaks(sheet, out)?;
     write_ignored_errors(sheet, out)?;
     write_drawing(drawing_rel_id, out)?;
+    write_legacy_drawing(legacy_drawing_rel_id, out)?;
     write_legacy_drawing_hf(vml_rel_id, out)?;
     write_background_image(background_rel_id, out)?;
     write_list_parts(sheet, out)?;
@@ -638,6 +641,18 @@ fn write_drawing(rel_id: Option<u32>, out: &mut Vec<u8>) -> Result<()> {
             out,
             &BrtDrawing {
                 rgb: XlNullableWideString::construct(Some(format!("rId{rel_id}").as_str())),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn write_legacy_drawing(rel_id: Option<u32>, out: &mut Vec<u8>) -> Result<()> {
+    if let Some(rel_id) = rel_id {
+        push(
+            out,
+            &BrtLegacyDrawing {
+                stRelId: XlNullableWideString::construct(Some(format!("rId{rel_id}").as_str())),
             },
         )?;
     }

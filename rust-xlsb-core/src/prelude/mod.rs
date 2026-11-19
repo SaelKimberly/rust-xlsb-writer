@@ -10,21 +10,22 @@ use super::{Checked, Unchecked};
 pub use collection::*;
 pub use record::{
     BrtArrFmla, BrtBeginAFilter, BrtBeginCFRule, BrtBeginColBrk, BrtBeginColorScale,
-    BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar,
-    BrtBeginDynamicArrayPr, BrtBeginEsfmd, BrtBeginEsmdb, BrtBeginEsmdtinfo, BrtBeginFilterColumn,
-    BrtBeginFilters, BrtBeginFmd, BrtBeginHeaderFooter, BrtBeginIconSet, BrtBeginList,
-    BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginMetadata, BrtBeginRwBrk,
-    BrtBeginSparklineGroup, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBkHim,
-    BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellBlank, BrtCellBool,
-    BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellMeta, BrtCellRString, BrtCellReal,
-    BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing,
-    BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale, BrtEndConditionalFormatting,
-    BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar, BrtEndDynamicArrayPr, BrtEndEsfmd,
-    BrtEndEsmdb, BrtEndEsmdtinfo, BrtEndFilterColumn, BrtEndFilters, BrtEndFmd, BrtEndHeaderFooter,
-    BrtEndIconSet, BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndMetadata,
-    BrtEndRwBrk, BrtEndSparklineGroup, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet,
-    BrtFRTBegin, BrtFRTEnd, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError,
-    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtLegacyDrawingHF, BrtListCCFmla,
+    BrtBeginComment, BrtBeginConditionalFormatting, BrtBeginCustomFilters, BrtBeginDVals,
+    BrtBeginDatabar, BrtBeginDynamicArrayPr, BrtBeginEsfmd, BrtBeginEsmdb, BrtBeginEsmdtinfo,
+    BrtBeginFilterColumn, BrtBeginFilters, BrtBeginFmd, BrtBeginHeaderFooter, BrtBeginIconSet,
+    BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtBeginMetadata,
+    BrtBeginRwBrk, BrtBeginSparklineGroup, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView,
+    BrtBkHim, BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellBlank,
+    BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellMeta, BrtCellRString,
+    BrtCellReal, BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCommentAuthor, BrtCommentText,
+    BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing, BrtEndAFilter, BrtEndCFRule, BrtEndColBrk,
+    BrtEndColorScale, BrtEndComment, BrtEndConditionalFormatting, BrtEndCustomFilters, BrtEndDVals,
+    BrtEndDatabar, BrtEndDynamicArrayPr, BrtEndEsfmd, BrtEndEsmdb, BrtEndEsmdtinfo,
+    BrtEndFilterColumn, BrtEndFilters, BrtEndFmd, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
+    BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndMetadata, BrtEndRwBrk,
+    BrtEndSparklineGroup, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFRTBegin,
+    BrtFRTEnd, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum,
+    BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtLegacyDrawing, BrtLegacyDrawingHF, BrtListCCFmla,
     BrtListPart, BrtListTrFmla, BrtMargins, BrtMdb, BrtMdtinfo, BrtMergeCell, BrtName,
     BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel,
     BrtSheetProtection, BrtSparkline, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp,
@@ -125,6 +126,9 @@ mod tests {
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
     #[case::brt_bk_him(|| checked_test::<BrtBkHim>(4))]
     #[case::brt_drawing(|| checked_test::<BrtDrawing>(4))]
+    #[case::brt_begin_comment(|| checked_test::<BrtBeginComment>(36))]
+    #[case::brt_end_comment(|| checked_test::<BrtEndComment>(0))]
+    #[case::brt_legacy_drawing(|| checked_test::<BrtLegacyDrawing>(4))]
     #[case::brt_legacy_drawing_hf(|| checked_test::<BrtLegacyDrawingHF>(4))]
     #[case::brt_begin_metadata(|| checked_test::<BrtBeginMetadata>(0))]
     #[case::brt_end_metadata(|| checked_test::<BrtEndMetadata>(0))]

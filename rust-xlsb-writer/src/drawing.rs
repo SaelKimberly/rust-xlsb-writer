@@ -165,7 +165,7 @@ fn anchor(sheet: &Worksheet, image: &PlacedImage) -> Anchor {
     clippy::cast_precision_loss,
     reason = "anchor offsets are non-negative and fit u64"
 )]
-fn advance_columns(sheet: &Worksheet, col: u16, offset: u32, width: f64) -> (u16, u64) {
+pub fn advance_columns(sheet: &Worksheet, col: u16, offset: u32, width: f64) -> (u16, u64) {
     let mut col = col;
     let mut remaining = width + f64::from(offset);
     loop {
@@ -184,7 +184,7 @@ fn advance_columns(sheet: &Worksheet, col: u16, offset: u32, width: f64) -> (u16
     clippy::cast_precision_loss,
     reason = "anchor offsets are non-negative and fit u64"
 )]
-fn advance_rows(sheet: &Worksheet, row: u32, offset: u32, height: f64) -> (u32, u64) {
+pub fn advance_rows(sheet: &Worksheet, row: u32, offset: u32, height: f64) -> (u32, u64) {
     let mut row = row;
     let mut remaining = height + f64::from(offset);
     loop {
@@ -247,7 +247,7 @@ fn width_pixels(width: f64, (digit_width, padding): (u32, u32)) -> f64 {
     }
 }
 
-fn absolute_column_pixels(sheet: &Worksheet, col: u16) -> f64 {
+pub fn absolute_column_pixels(sheet: &Worksheet, col: u16) -> f64 {
     let metrics = sheet.default_column_metrics();
     let default = width_pixels(
         sheet.default_col_width().unwrap_or(DEFAULT_COL_WIDTH),
@@ -270,7 +270,7 @@ fn absolute_column_pixels(sheet: &Worksheet, col: u16) -> f64 {
     total
 }
 
-fn absolute_row_pixels(sheet: &Worksheet, row: u32) -> f64 {
+pub fn absolute_row_pixels(sheet: &Worksheet, row: u32) -> f64 {
     let default = sheet
         .default_row_height()
         .map_or(DEFAULT_ROW_HEIGHT * 4.0 / 3.0, |height| height * 4.0 / 3.0);
