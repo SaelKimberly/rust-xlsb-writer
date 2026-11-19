@@ -461,7 +461,7 @@ work is future-function token coverage and shared-formula state:
 3. Cross-sheet and defined-name cell formulas.
 
 If formulas are deferred, the next bounded gaps are rich objects: shapes,
-shapes, buttons, checkboxes, in-cell image embedding, and charts. Hyperlinks,
+buttons, checkboxes, in-cell image embedding, and charts. Hyperlinks,
 worksheet state, page setup, text headers/footers, manual page breaks, outline
 groups, print areas, repeat titles, foreground-image scaling/fit-to-cell, and
 approximate autofit are shipped.
