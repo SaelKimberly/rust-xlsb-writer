@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(&bytes[28..], [0, 0, 0, 0]);
 
         let (rest, decoded) = BrtRangeProtection::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
     }
 }

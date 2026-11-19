@@ -116,7 +116,8 @@ pub use brt_sheet_protection::BrtSheetProtection;
 pub use brt_style::BrtStyle;
 pub use brt_table::{
     BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtEndList, BrtEndListCol,
-    BrtEndListCols, BrtEndListParts, BrtListPart, BrtListTrFmla, BrtTableStyleClient,
+    BrtEndListCols, BrtEndListParts, BrtListCCFmla, BrtListPart, BrtListTrFmla,
+    BrtTableStyleClient,
 };
 pub use brt_wb_prop::BrtWbProp;
 pub use brt_ws_dim::BrtWsDim;

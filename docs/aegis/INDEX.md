@@ -51,6 +51,7 @@
 - [Multi-range data validation and conditional formatting](plans/2026-11-19-multi-range-validation-and-formatting.md)
 - [Autofilter matching for temporal and boolean cells](plans/2026-11-19-autofilter-temporal-boolean-matching.md)
 - [Table total rows, subtotals, and per-column formats](plans/2026-11-19-table-totals-and-column-formats.md)
+- [Table calculated-column formulas](plans/2026-11-19-table-calculated-columns.md)
 
 ## Analysis
 

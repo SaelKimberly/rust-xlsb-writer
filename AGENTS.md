@@ -21,7 +21,8 @@ protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range with list/custom filter conditions and automatic row hiding,
 data validation with multi-range, list, whole-number, decimal, date, time, and
 text-length rules, worksheet tables with header rows, built-in styles, table
-AutoFilters, total rows, subtotal/label columns, data/header formats, rich
+AutoFilters, total rows, subtotal/label columns, data/header formats,
+calculated-column formulas, rich
 strings with per-run fonts, core/app/custom document properties with explicit creation timestamps,
 user-defined names for literals and absolute A1 references, and
 `save`/`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
@@ -86,7 +87,7 @@ resulting `BrtFont` index map to the sheet serializer, which emits
 properties only; there are no rich fills, borders, or phonetic-generation
 paths.
 
-Formulas are parsed when written, not at save. `formula.rs` compiles same-sheet
+Cell formulas are parsed when written. `formula.rs` compiles same-sheet
 A1 references, ranges, literals, operators, and a fixed table of classic Excel
 functions directly into a `CellParsedFormula` Ptg stream; unsupported syntax is
 rejected with `Error::FormulaError`. The worksheet stores the token stream plus
@@ -95,8 +96,11 @@ a cached number, string, boolean, or error result. The sheet writer emits
 formulas gets `BrtCalcProp` with `fFullCalcOnLoad` unless the caller selected a
 calculation mode. Static array formulas store their range on the top-left
 cell, emit a `PtgExp` expansion formula followed by `BrtArrFmla`, and fill the
-rest of the range with numeric zero. Dynamic-array, shared, table, external,
-cross-sheet, and named-range formulas are not implemented.
+rest of the range with numeric zero. Table calculated-column formulas are
+compiled at package save, after table ids and default names are assigned, and
+emit `BrtListCCFmla` with `PtgList` structured references. Dynamic-array,
+shared, external, cross-sheet, and named-range cell formulas are not
+implemented.
 
 Conditional formats are stored on the worksheet as one or more ranges, a boxed
 `ConditionalFormat` rule, and an optional differential format. Cell-value,
@@ -198,9 +202,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 654 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 664 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 658 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 668 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -288,7 +292,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-core/src/prelude/record/brt_calc_prop.rs` | workbook calculation mode and flags |
 | `rust-xlsb-core/src/prelude/record/brt_file_sharing.rs` | read-only recommendation record |
 | `rust-xlsb-core/src/prelude/record/brt_dval.rs` | `DVALS`, `BrtDVal`, and validation string records |
-| `rust-xlsb-core/src/prelude/record/brt_table.rs` | Table, table-column, table total-formula, table-part, and table-style records |
+| `rust-xlsb-core/src/prelude/record/brt_table.rs` | Table, table-column, calculated/total formula, table-part, and table-style records |
 | `rust-xlsb-core/src/prelude/record/brt_cell_rstring.rs` | `BrtCellRString` rich-string cell record |
 | `rust-xlsb-core/src/prelude/record/brt_conditional.rs` | Conditional-format range block, rule record, value object, color-scale/data-bar/icon-set markers, text/blank/error/date templates, and parsed formula |
 | `rust-xlsb-core/src/prelude/record/brt_dxf.rs` | Differential-format records and XF property blobs |
@@ -297,7 +301,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/theme.rs` | Excel 2023 and custom theme selection, `.thmx`/`.xlsx` theme extraction, and `theme_2023.xml` asset |
 | `rust-xlsb-core/src/prelude/record/brt_wb_prop.rs` | `BrtWbProp` workbook flags, theme version, and code name |
 | `rust-xlsb-writer/src/defined_name.rs` | User-defined name model, validation, and `NameParsedFormula` token encoding |
-| `rust-xlsb-writer/src/formula.rs` | `Formula`, formula parser, Ptg encoder, function table, cached-result typing, and array expansion helper |
+| `rust-xlsb-writer/src/formula.rs` | `Formula`, A1 and structured-reference parser, Ptg encoder, function table, cached-result typing, and array expansion helper |
 | `rust-xlsb-core/src/prelude/record/brt_fmla.rs` | `CellParsedFormula`, `BrtArrFmla`, and the four formula cell records |
 | `rust-xlsb-writer/src/properties.rs` | `DocProperties`, custom values, and chrono creation timestamps |
 | `rust-xlsb-writer/src/worksheet.rs` | Sparse cells, row/column options, merge, write, layout, view, and print API |
@@ -306,7 +310,7 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
 | `rust-xlsb-writer/src/datetime.rs` | Native `ExcelDateTime`, validation, parsing, and serial conversion |
 | `rust-xlsb-writer/src/filter.rs` | Autofilter condition model and row matching |
 | `rust-xlsb-writer/src/data_validation.rs` | Data-validation rules, prompt/error options, and `BrtDVal` encoding |
-| `rust-xlsb-writer/src/table.rs` | `Table`/`TableColumn`/`TableFunction`/`TableStyle`, total-row and format handling, validation, and Table part serialization |
+| `rust-xlsb-writer/src/table.rs` | `Table`/`TableColumn`/`TableFunction`/`TableStyle`, total-row, calculated-formula, and format handling, validation, and Table part serialization |
 | `rust-xlsb-writer/src/conditional_format.rs` | Conditional-format trait, cell/top-bottom/average/duplicate/color-scale/data-bar/icon-set/text/blank/error/date rules, values, formula tokens, and range storage |
 | `rust-xlsb-writer/src/sheet.rs` | Worksheet BIFF serialization, column coalescing, row spans, rich cells, autofilter, conditional-format/filter/validation/list-part records, print records |
 | `rust-xlsb-writer/src/package.rs` | Multi-sheet package, styles, SST, rels, store-only default ZIP with optional DEFLATE and ZIP64 |
@@ -349,9 +353,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 654 unit tests and 7 doctests in default builds: 288 in core, 366 in writer.
+- 664 unit tests and 7 doctests in default builds: 290 in core, 374 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 665 total. Most core
+  `rust_decimal` adapters, for 675 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

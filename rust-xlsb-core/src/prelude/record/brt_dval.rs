@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(&bytes[0..2], &0_u16.to_le_bytes());
         assert_eq!(&bytes[14..18], &2_u32.to_le_bytes());
         let (rest, decoded) = BrtBeginDVals::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, begin);
 
         assert_eq!(
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(bytes.len(), 56);
 
         let (rest, decoded) = BrtDVal::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
     }
 
@@ -287,7 +287,7 @@ mod tests {
 
         let bytes = record.to_bytes().expect("serializes");
         let (rest, decoded) = BrtDVal::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
         assert_eq!(
             decoded.strings.strError.to_optional_string().as_deref(),

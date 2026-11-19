@@ -4,12 +4,12 @@ use std::fmt::{self, Display};
 
 use rust_xlsb_core::prelude::{
     BrtBeginAFilter, BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtEndAFilter, BrtEndList,
-    BrtEndListCol, BrtEndListCols, BrtListTrFmla, BrtTableStyleClient, CellParsedFormula,
-    UncheckedRfX, XlNullableWideString, XlStringExt,
+    BrtEndListCol, BrtEndListCols, BrtListCCFmla, BrtListTrFmla, BrtTableStyleClient,
+    CellParsedFormula, UncheckedRfX, XlNullableWideString, XlStringExt,
 };
 use rust_xlsb_core::push_record;
 
-use crate::formula::compile;
+use crate::formula::{TableInfo, compile, compile_table_formula};
 use crate::{Error, Format, Formula, Result};
 
 const NO_DXF: u32 = 0xffff_ffff;
@@ -160,6 +160,7 @@ pub struct TableColumn {
     pub(crate) header_format: Option<Format>,
     pub(crate) total_formula: Option<CellParsedFormula>,
     pub(crate) total_result: Option<Box<str>>,
+    pub(crate) formula: Option<Formula>,
 }
 
 impl TableColumn {
@@ -174,6 +175,7 @@ impl TableColumn {
             header_format: None,
             total_formula: None,
             total_result: None,
+            formula: None,
         }
     }
 
@@ -195,6 +197,17 @@ impl TableColumn {
     #[must_use]
     pub fn set_total_function(mut self, function: TableFunction) -> Self {
         self.total_function = function;
+        self
+    }
+
+    /// Sets a calculated-column formula.
+    ///
+    /// The formula may use structured references to the table, such as
+    /// `SUM(Table1[@[Q1]:[Q4]])`. The formula is stored in the Table part; it
+    /// does not write calculated cell values.
+    #[must_use]
+    pub fn set_formula(mut self, formula: impl Into<Formula>) -> Self {
+        self.formula = Some(formula.into());
         self
     }
 
@@ -383,7 +396,11 @@ pub(crate) struct TableRange {
 
 /// Serializes one Table part.
 #[expect(clippy::redundant_pub_crate, reason = "shared with the package writer")]
-pub(crate) fn write_table_part(table: &TableRange, out: &mut Vec<u8>) -> Result<()> {
+pub(crate) fn write_table_part(
+    table: &TableRange,
+    tables: &[TableInfo<'_>],
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let table_data = &table.table;
     let range = table.range;
     let name = table_data.name.as_str();
@@ -468,6 +485,10 @@ pub(crate) fn write_table_part(table: &TableRange, out: &mut Vec<u8>) -> Result<
                 stStyleAgg: XlNullableWideString::default(),
             },
         )?;
+        if let Some(formula) = &column.formula {
+            let formula = compile_table_formula(formula.as_str(), tables)?;
+            push_record(out, &BrtListCCFmla { flags: 0, formula })?;
+        }
         if let Some(formula) = custom {
             let formula = match &column.total_formula {
                 Some(compiled) => compiled.clone(),
@@ -573,9 +594,56 @@ mod tests {
     }
 
     #[test]
+    fn table_part_writes_calculated_column_formulas() {
+        let mut table = table();
+        table.table.columns[1] = TableColumn::new()
+            .set_header("Q1")
+            .set_formula("Table1[@[Q1]:[Q2]]")
+            .set_total_function(TableFunction::Custom(Formula::new("SUM(B2:B4)")));
+        let tables = [TableInfo {
+            name: "Table1",
+            id: 1,
+            ixti: 0,
+            columns: &table.table.columns,
+        }];
+        let mut part = Vec::new();
+        write_table_part(&table, &tables, &mut part).expect("table part");
+
+        let ids = record_ids(&part);
+        let calc = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtListCCFmla)
+            .expect("calculated formula");
+        let total = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtListTrFmla)
+            .expect("total formula");
+        let begin = ids[..calc]
+            .iter()
+            .rposition(|id| *id == KnownID::BrtBeginListCol)
+            .expect("begin column");
+        let end = ids[total + 1..]
+            .iter()
+            .position(|id| *id == KnownID::BrtEndListCol)
+            .expect("end column")
+            + total
+            + 1;
+        assert!(begin < calc && calc < total && total < end);
+
+        let calculated = records::<BrtListCCFmla>(&part);
+        assert_eq!(calculated.len(), 1);
+        assert_eq!(
+            calculated[0].formula,
+            compile_table_formula("Table1[@[Q1]:[Q2]]", &tables).expect("compiled")
+        );
+        assert_eq!(calculated[0].flags, 0);
+        assert_eq!(records::<BrtListTrFmla>(&part).len(), 1);
+    }
+
+    #[test]
     fn table_part_orders_records_and_style_flags() {
         let mut part = Vec::new();
-        write_table_part(&table(), &mut part).expect("table part");
+        write_table_part(&table(), &[], &mut part).expect("table part");
 
         assert_eq!(
             record_ids(&part),
@@ -636,7 +704,7 @@ mod tests {
         table.table.style = TableStyle::None;
 
         let mut part = Vec::new();
-        write_table_part(&table, &mut part).expect("table part");
+        write_table_part(&table, &[], &mut part).expect("table part");
         assert_eq!(records::<BrtBeginAFilter>(&part).len(), 0);
 
         let styles = records::<BrtTableStyleClient>(&part);

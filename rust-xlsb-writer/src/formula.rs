@@ -24,6 +24,8 @@ const PTG_PERCENT: u8 = 0x14;
 const PTG_PAREN: u8 = 0x15;
 const PTG_MISS_ARG: u8 = 0x16;
 const PTG_STR: u8 = 0x17;
+const PTG_LIST: u8 = 0x18;
+const PTG_LIST_EPTG: u8 = 0x19;
 const PTG_ERR: u8 = 0x1C;
 const PTG_BOOL: u8 = 0x1D;
 const PTG_INT: u8 = 0x1E;
@@ -48,7 +50,9 @@ const MAX_STRING_UTF16: usize = 32_767;
 /// braces are optional. Supported references are same-sheet A1 cells and
 /// ranges. Scalar writes reject cross-sheet references, defined names, and
 /// dynamic-array functions; static array formulas use
-/// [`Worksheet::write_array_formula`].
+/// [`Worksheet::write_array_formula`]. Table calculated formulas also accept
+/// structured references such as `Table1[@[Q1]:[Q4]]` via
+/// [`TableColumn::set_formula`](crate::TableColumn::set_formula).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Formula {
     formula: Box<str>,
@@ -144,16 +148,45 @@ impl IntoExcelData for &Formula {
 }
 
 pub fn compile(formula: &str) -> Result<CellParsedFormula> {
-    compile_with_base(formula, None)
+    compile_with_base(formula, None, None)
 }
 
 /// Compiles a formula whose relative references are offsets from `base_row` and
 /// `base_col`.
 pub fn compile_relative(formula: &str, base_row: u32, base_col: u16) -> Result<CellParsedFormula> {
-    compile_with_base(formula, Some((base_row, base_col)))
+    compile_with_base(formula, Some((base_row, base_col)), None)
 }
 
-fn compile_with_base(formula: &str, base: Option<(u32, u16)>) -> Result<CellParsedFormula> {
+/// A table available to a calculated-column formula.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the table and package modules"
+)]
+#[derive(Clone, Copy)]
+pub(crate) struct TableInfo<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) id: u32,
+    pub(crate) ixti: u16,
+    pub(crate) columns: &'a [crate::table::TableColumn],
+}
+
+/// Compiles a table calculated-column formula containing structured references.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the table and package modules"
+)]
+pub(crate) fn compile_table_formula(
+    formula: &str,
+    tables: &[TableInfo<'_>],
+) -> Result<CellParsedFormula> {
+    compile_with_base(formula, None, Some(tables))
+}
+
+fn compile_with_base<'t>(
+    formula: &str,
+    base: Option<(u32, u16)>,
+    tables: Option<&'t [TableInfo<'t>]>,
+) -> Result<CellParsedFormula> {
     let formula = formula.strip_prefix('=').unwrap_or(formula);
     let mut parser = Parser {
         input: formula,
@@ -162,6 +195,7 @@ fn compile_with_base(formula: &str, base: Option<(u32, u16)>) -> Result<CellPars
         depth: 0,
         unary_depth: 0,
         base,
+        tables,
         out: Vec::with_capacity(formula.len().min(MAX_FORMULA_TOKENS)),
     };
     parser.skip_whitespace();
@@ -267,17 +301,18 @@ struct CellRef {
     end: usize,
 }
 
-struct Parser<'a> {
+struct Parser<'a, 't> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
     depth: u32,
     unary_depth: u32,
     base: Option<(u32, u16)>,
+    tables: Option<&'t [TableInfo<'t>]>,
     out: Vec<u8>,
 }
 
-impl Parser<'_> {
+impl Parser<'_, '_> {
     fn parse_expression(&mut self) -> Result<()> {
         self.depth += 1;
         if self.depth > MAX_FORMULA_DEPTH {
@@ -423,6 +458,23 @@ impl Parser<'_> {
 
     fn parse_name_or_ref(&mut self) -> Result<()> {
         let start = self.pos;
+        if self.tables.is_some()
+            && let Some(bracket) = self.input[self.pos..].find('[')
+        {
+            let input = self.input;
+            let end = self.pos + bracket;
+            let name = &input[self.pos..end];
+            if !name.is_empty()
+                && self.tables.is_some_and(|tables| {
+                    tables
+                        .iter()
+                        .any(|table| table.name.eq_ignore_ascii_case(name))
+                })
+            {
+                self.pos = end;
+                return self.parse_table_reference(name);
+            }
+        }
         if let Some(reference) = self.cell_ref_at(self.pos) {
             let mut after = reference.end;
             while self
@@ -464,6 +516,14 @@ impl Parser<'_> {
             }
         }
         let name = &self.input[start..self.pos];
+        if self.peek() == Some(b'[') {
+            if self.tables.is_some() {
+                return self.parse_table_reference(name);
+            }
+            return Err(formula_error(
+                "table references require a table calculated formula",
+            ));
+        }
         self.skip_whitespace();
         if self.peek() == Some(b'!') {
             return Err(formula_error("cross-sheet references are not supported"));
@@ -480,6 +540,104 @@ impl Parser<'_> {
             return Ok(());
         }
         Err(formula_error("named ranges are not supported"))
+    }
+
+    fn parse_table_reference(&mut self, name: &str) -> Result<()> {
+        let Some(table) = self.tables.and_then(|tables| {
+            tables
+                .iter()
+                .find(|table| table.name.eq_ignore_ascii_case(name))
+                .copied()
+        }) else {
+            return Err(formula_error("unknown table reference"));
+        };
+
+        self.pos += 1; // '[' after the table name.
+        let (row_type, columns, first, last) = if self.peek() == Some(b'@') {
+            self.pos += 1;
+            if self.peek() == Some(b'[') {
+                let (columns, first, last) = self.parse_bracketed_columns(&table)?;
+                self.expect(b']')?;
+                (0x10, columns, first, last)
+            } else {
+                let name = self.read_bracket_text()?;
+                let column = table_column(&table, name)?;
+                (0x10, 1, column, column)
+            }
+        } else if self.peek() == Some(b'[') {
+            self.pos += 1;
+            let selector = self.read_bracket_text()?;
+            let row_type = selector_row_type(selector)?;
+            if self.peek() == Some(b',') {
+                self.pos += 1;
+                let (columns, first, last) = self.parse_bracketed_columns(&table)?;
+                self.expect(b']')?;
+                (row_type, columns, first, last)
+            } else {
+                self.expect(b']')?;
+                (row_type, 0, 0, 0)
+            }
+        } else {
+            let name = self.read_bracket_text()?;
+            let column = table_column(&table, name)?;
+            (0, 1, column, column)
+        };
+
+        self.push_table_ref(&table, row_type, columns, first, last)
+    }
+
+    fn parse_bracketed_columns(&mut self, table: &TableInfo<'_>) -> Result<(u8, usize, usize)> {
+        self.expect(b'[')?;
+        let name = self.read_bracket_text()?;
+        let first = table_column(table, name)?;
+        if self.peek() == Some(b':') {
+            self.pos += 1;
+            self.expect(b'[')?;
+            let name = self.read_bracket_text()?;
+            let last = table_column(table, name)?;
+            if first > last {
+                return Err(formula_error("table column range is inverted"));
+            }
+            return Ok((2, first, last));
+        }
+        Ok((1, first, first))
+    }
+
+    fn read_bracket_text(&mut self) -> Result<&str> {
+        let input = self.input;
+        let start = self.pos;
+        while self.peek().is_some_and(|byte| byte != b']') {
+            self.pos += 1;
+        }
+        if self.peek() != Some(b']') {
+            return Err(formula_error("unterminated table reference"));
+        }
+        let text = &input[start..self.pos];
+        self.pos += 1;
+        Ok(text)
+    }
+
+    fn push_table_ref(
+        &mut self,
+        table: &TableInfo<'_>,
+        row_type: u8,
+        columns: u8,
+        first: usize,
+        last: usize,
+    ) -> Result<()> {
+        let first =
+            u16::try_from(first).map_err(|_| formula_error("table column index is too large"))?;
+        let last =
+            u16::try_from(last).map_err(|_| formula_error("table column index is too large"))?;
+        self.out.push(PTG_LIST);
+        self.out.push(PTG_LIST_EPTG);
+        self.out.extend_from_slice(&table.ixti.to_le_bytes());
+        self.out.push(columns | (row_type << 2));
+        self.out.push(0x06);
+        self.out.extend_from_slice(&table.id.to_le_bytes());
+        self.out.extend_from_slice(&first.to_le_bytes());
+        self.out.extend_from_slice(&last.to_le_bytes());
+        Ok(())
     }
 
     fn parse_function(&mut self, name: &str) -> Result<()> {
@@ -955,6 +1113,30 @@ const FUNCTIONS: &[Function] = &[
     function("ROMAN", 0x0162, Arity::Range(1, 2)),
 ];
 
+fn table_column(table: &TableInfo<'_>, name: &str) -> Result<usize> {
+    table
+        .columns
+        .iter()
+        .position(|column| column.header.eq_ignore_ascii_case(name))
+        .ok_or_else(|| formula_error("unknown table column"))
+}
+
+fn selector_row_type(selector: &str) -> Result<u8> {
+    if selector.eq_ignore_ascii_case("#Headers") {
+        Ok(0x02)
+    } else if selector.eq_ignore_ascii_case("#Data") {
+        Ok(0)
+    } else if selector.eq_ignore_ascii_case("#Totals") {
+        Ok(0x08)
+    } else if selector.eq_ignore_ascii_case("#All") {
+        Ok(0x01)
+    } else if selector.eq_ignore_ascii_case("#This Row") {
+        Ok(0x10)
+    } else {
+        Err(formula_error("unknown table row selector"))
+    }
+}
+
 fn lookup_function(name: &str) -> Option<Function> {
     FUNCTIONS
         .iter()
@@ -1030,6 +1212,146 @@ mod tests {
                 0x01
             ]
         );
+    }
+
+    fn table<'a>(name: &'a str, columns: &'a [crate::table::TableColumn]) -> TableInfo<'a> {
+        TableInfo {
+            name,
+            id: 1,
+            ixti: 0,
+            columns,
+        }
+    }
+
+    #[test]
+    fn compiles_structured_references() {
+        let columns = [
+            crate::table::TableColumn::new().set_header("Q1"),
+            crate::table::TableColumn::new().set_header("Q2"),
+            crate::table::TableColumn::new().set_header("Q3"),
+            crate::table::TableColumn::new().set_header("Q4"),
+        ];
+        let tables = [table("Table1", &columns)];
+        assert_eq!(
+            compile_table_formula("SUM(Table1[@[Q1]:[Q4]])", &tables)
+                .expect("structured reference")
+                .rgce,
+            [
+                PTG_LIST,
+                0x19,
+                0,
+                0,
+                0x42,
+                0x06,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                3,
+                0,
+                PTG_FUNC_VAR,
+                1,
+                0x04,
+                0
+            ]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#Headers],[Q1]]", &tables)
+                .expect("headers")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x09, 0x06, 1, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#All]]", &tables)
+                .expect("all columns")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x04, 0x06, 1, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[Q1]", &tables)
+                .expect("data column")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x01, 0x06, 1, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[@Q1]", &tables)
+                .expect("current row")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x41, 0x06, 1, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#Data],[Q2]]", &tables)
+                .expect("data selector")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x01, 0x06, 1, 0, 0, 0, 1, 0, 1, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#Totals],[Q2]]", &tables)
+                .expect("totals selector")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x21, 0x06, 1, 0, 0, 0, 1, 0, 1, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#This Row],[Q2]]", &tables)
+                .expect("this-row selector")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x41, 0x06, 1, 0, 0, 0, 1, 0, 1, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#Headers],[Q1]:[Q4]]", &tables)
+                .expect("header range")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x0A, 0x06, 1, 0, 0, 0, 0, 0, 3, 0]
+        );
+        assert_eq!(
+            compile_table_formula("Table1[[#All],[Q2]]", &tables)
+                .expect("all rows one column")
+                .rgce,
+            [PTG_LIST, 0x19, 0, 0, 0x05, 0x06, 1, 0, 0, 0, 1, 0, 1, 0]
+        );
+        assert_eq!(
+            compile_table_formula("ABS(Table1[@Q1])", &tables)
+                .expect("value context")
+                .rgce,
+            [
+                PTG_LIST, 0x19, 0, 0, 0x41, 0x06, 1, 0, 0, 0, 0, 0, 0, 0, PTG_FUNC, 0x18, 0
+            ]
+        );
+    }
+
+    #[test]
+    fn compiles_table_names_that_start_with_cell_references_or_unicode() {
+        let columns = [crate::table::TableColumn::new().set_header("Q1")];
+        for name in ["Q1Sales", "AE1Table", "Vendasé"] {
+            let tables = [table(name, &columns)];
+            let formula = format!("{name}[Q1]");
+            let rgce = compile_table_formula(&formula, &tables)
+                .expect("table name")
+                .rgce;
+            assert_eq!(&rgce[..4], &[PTG_LIST, 0x19, 0, 0], "{name}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_or_inverted_structured_references() {
+        let columns = [
+            crate::table::TableColumn::new().set_header("Q1"),
+            crate::table::TableColumn::new().set_header("Q4"),
+        ];
+        let tables = [table("Table1", &columns)];
+        for formula in [
+            "Table2[Q1]",
+            "Table1[Missing]",
+            "Table1[@[Q4]:[Q1]]",
+            "Table1[[#Headers],[Missing]]",
+        ] {
+            assert!(
+                compile_table_formula(formula, &tables).is_err(),
+                "{formula}"
+            );
+        }
     }
 
     #[test]

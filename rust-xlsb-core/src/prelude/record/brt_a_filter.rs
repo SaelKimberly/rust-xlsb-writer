@@ -49,7 +49,7 @@ mod tests {
         assert_eq!(&bytes[12..16], &4_u32.to_le_bytes());
 
         let (rest, decoded) = BrtBeginAFilter::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
         assert_eq!(
             BrtEndAFilter::default().to_bytes().expect("bytes"),

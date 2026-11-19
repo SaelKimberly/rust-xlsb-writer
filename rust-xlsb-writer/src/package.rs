@@ -16,6 +16,7 @@ use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
 use crate::data::CellData;
 use crate::defined_name::{DefinedName, XtiCollector, area3d, sheet_index};
+use crate::formula::TableInfo;
 use crate::properties::CustomPropertyValue;
 use crate::table::write_table_part;
 use crate::url::{escape_xml, escape_xml_attribute, escape_xml_data};
@@ -79,6 +80,38 @@ pub fn build_package(
         conditional_dxf_ids.push(ids);
     }
 
+    let mut xti = XtiCollector::new(sheets.len());
+    let mut table_infos = Vec::new();
+    if sheets.iter().any(|sheet| {
+        sheet.tables().iter().any(|table| {
+            table
+                .table
+                .columns
+                .iter()
+                .any(|column| column.formula.is_some())
+        })
+    }) {
+        for (index, sheet) in sheets.iter().enumerate() {
+            if !sheet.tables().is_empty() {
+                xti.index(index)?;
+            }
+        }
+        for (index, sheet) in sheets.iter().enumerate() {
+            if sheet.tables().is_empty() {
+                continue;
+            }
+            let ixti = xti.index(index)?;
+            for table in sheet.tables() {
+                table_infos.push(TableInfo {
+                    name: &table.table.name,
+                    id: table.table.id,
+                    ixti,
+                    columns: &table.table.columns,
+                });
+            }
+        }
+    }
+
     let mut sheet_parts = Vec::with_capacity(sheets.len());
     let mut table_parts = Vec::new();
     let mut table_ids = Vec::new();
@@ -104,7 +137,7 @@ pub fn build_package(
         }
         for table in sheet.tables() {
             let mut bytes = Vec::new();
-            write_table_part(table, &mut bytes)?;
+            write_table_part(table, &table_infos, &mut bytes)?;
             table_parts.push((format!("xl/tables/table{}.bin", table.table.id), bytes));
             table_ids.push(table.table.id);
         }
@@ -140,7 +173,7 @@ pub fn build_package(
         ),
         (
             "xl/workbook.bin".to_owned(),
-            workbook_part(sheets, settings, defined_names)?,
+            workbook_part(sheets, settings, defined_names, &mut xti)?,
         ),
         ("xl/styles.bin".to_owned(), styles),
     ];
@@ -227,6 +260,7 @@ fn workbook_part(
     sheets: &[Worksheet],
     settings: &WorkbookSettings,
     defined_names: &[DefinedName],
+    xti: &mut XtiCollector,
 ) -> Result<Vec<u8>> {
     let view = workbook_view(sheets);
     let mut out = Vec::new();
@@ -291,7 +325,7 @@ fn workbook_part(
         )?;
     }
     push_record(&mut out, &BrtEndBundleShs::default())?;
-    write_defined_names(sheets, defined_names, &mut out)?;
+    write_defined_names(sheets, defined_names, xti, &mut out)?;
     if let Some(mode) = settings.calculation_mode {
         write_calculation_properties(mode, &mut out)?;
     } else if sheets.iter().any(Worksheet::has_formulas) {
@@ -328,9 +362,11 @@ fn write_calculation_properties(mode: CalculationMode, out: &mut Vec<u8>) -> Res
 fn write_defined_names(
     sheets: &[Worksheet],
     defined_names: &[DefinedName],
+    xti: &mut XtiCollector,
     out: &mut Vec<u8>,
 ) -> Result<()> {
     if defined_names.is_empty()
+        && xti.is_empty()
         && !sheets.iter().any(|sheet| {
             sheet.print_area().is_some()
                 || has_repeat_titles(sheet)
@@ -340,7 +376,6 @@ fn write_defined_names(
         return Ok(());
     }
 
-    let mut xti = XtiCollector::new(sheets.len());
     let mut names = Vec::new();
 
     // Preserve the historical Xti order: sheet order, one entry per sheet that
@@ -412,7 +447,7 @@ fn write_defined_names(
             Some(scope) => sheet_itab(sheet_index(sheets, scope)?)?,
             None => u32::MAX,
         };
-        let rgce = name.encode(sheets, &mut xti)?;
+        let rgce = name.encode(sheets, xti)?;
         push_defined_name(&mut names, itab, &name.name, 0, rgce)?;
     }
 
@@ -2889,6 +2924,154 @@ mod tests {
             formulas[0].formula,
             crate::formula::compile("=SUM(C2:C3)").expect("compiled")
         );
+    }
+
+    #[test]
+    fn table_calculated_columns_emit_formula_and_external_sheet() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        let table = Table::new().set_name("Sales").set_columns(&[
+            TableColumn::new().set_header("Product"),
+            TableColumn::new().set_header("Q1"),
+            TableColumn::new()
+                .set_header("Q2")
+                .set_formula("SUM(Sales[@[Q1]:[Q2]])"),
+        ]);
+        worksheet.add_table(0, 0, 3, 2, &table).expect("table");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let table_part = part_bytes(&bytes, "xl/tables/table1.bin").expect("table part");
+        let formulas = records::<rust_xlsb_core::prelude::BrtListCCFmla>(&table_part);
+        assert_eq!(formulas.len(), 1);
+
+        let columns = [
+            TableColumn::new().set_header("Product"),
+            TableColumn::new().set_header("Q1"),
+            TableColumn::new().set_header("Q2"),
+        ];
+        let tables = [crate::formula::TableInfo {
+            name: "Sales",
+            id: 1,
+            ixti: 0,
+            columns: &columns,
+        }];
+        assert_eq!(
+            formulas[0].formula,
+            crate::formula::compile_table_formula("SUM(Sales[@[Q1]:[Q2]])", &tables)
+                .expect("compiled")
+        );
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        assert_eq!(records::<BrtName>(&workbook_part).len(), 0);
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 1);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(extern_sheets[0].rgXti[0].lastSheet, 0);
+    }
+
+    #[test]
+    fn table_calculated_columns_use_default_table_names() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().set_columns(&[
+                    TableColumn::new().set_header("Name"),
+                    TableColumn::new()
+                        .set_header("Value")
+                        .set_formula("Table1[Value]"),
+                ]),
+            )
+            .expect("table");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let table_part = part_bytes(&bytes, "xl/tables/table1.bin").expect("table part");
+        assert_eq!(
+            records::<rust_xlsb_core::prelude::BrtListCCFmla>(&table_part).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn table_calculated_columns_reference_tables_on_other_sheets() {
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().set_name("Sales").set_columns(&[
+                    TableColumn::new().set_header("Name"),
+                    TableColumn::new()
+                        .set_header("Total")
+                        .set_formula("Other[Value]"),
+                ]),
+            )
+            .expect("first table");
+        workbook
+            .add_worksheet()
+            .add_table(
+                0,
+                0,
+                2,
+                1,
+                &Table::new().set_name("Other").set_columns(&[
+                    TableColumn::new().set_header("Name"),
+                    TableColumn::new().set_header("Value"),
+                ]),
+            )
+            .expect("second table");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let table_part = part_bytes(&bytes, "xl/tables/table1.bin").expect("table part");
+        let formulas = records::<rust_xlsb_core::prelude::BrtListCCFmla>(&table_part);
+        assert_eq!(formulas.len(), 1);
+        assert_eq!(
+            &formulas[0].formula.rgce[..4],
+            &[0x18, 0x19, 1, 0],
+            "table on the second sheet uses Xti 1"
+        );
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 2);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 0);
+        assert_eq!(extern_sheets[0].rgXti[1].firstSheet, 1);
+    }
+
+    #[test]
+    fn table_calculated_columns_reject_unknown_names() {
+        for formula in ["Missing[Value]", "Table1[Missing]"] {
+            let mut workbook = crate::Workbook::new();
+            workbook
+                .add_worksheet()
+                .add_table(
+                    0,
+                    0,
+                    2,
+                    1,
+                    &Table::new().set_columns(&[
+                        TableColumn::new().set_header("Name"),
+                        TableColumn::new().set_header("Value").set_formula(formula),
+                    ]),
+                )
+                .expect("table");
+            assert!(
+                matches!(
+                    workbook.save_to_buffer(),
+                    Err(crate::Error::FormulaError(_))
+                ),
+                "{formula}"
+            );
+        }
     }
 
     #[test]

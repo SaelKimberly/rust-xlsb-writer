@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(bytes, [1, 0, 0, 0, 0x03, 0x00]);
 
         let (rest, decoded) = BrtBeginFilterColumn::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
     }
 

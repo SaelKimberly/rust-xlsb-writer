@@ -46,7 +46,7 @@ mod tests {
         let bytes = selection.to_bytes().expect("serializes");
         assert_eq!(bytes.len(), 36);
         let (rest, decoded) = BrtSel::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, selection);
     }
 }

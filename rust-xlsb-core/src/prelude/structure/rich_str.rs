@@ -195,7 +195,7 @@ mod tests {
         );
         let (rest, decoded) = RichStr::from_bytes((&bytes, 0)).expect("deserialize rich string");
 
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
         record.check().expect("valid rich string");
         decoded.check().expect("decoded rich string is valid");

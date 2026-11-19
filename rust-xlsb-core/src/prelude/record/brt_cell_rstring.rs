@@ -59,7 +59,7 @@ mod tests {
                 0, 1, 0,
             ]
         );
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
         record.check().expect("valid rich cell");
     }

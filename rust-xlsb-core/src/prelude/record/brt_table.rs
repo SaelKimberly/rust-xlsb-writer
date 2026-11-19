@@ -197,6 +197,29 @@ impl Checked for BrtBeginListCol {
 
 assign_id!(BrtBeginListCol);
 
+/// Calculated column formula for one table column; MS-XLSB `2.4.706`.
+#[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
+pub struct BrtListCCFmla {
+    pub flags: u8,
+    pub formula: CellParsedFormula,
+}
+
+impl BrtListCCFmla {
+    /// The formula is an array formula.
+    pub const F_ARRAY: u8 = 0x02;
+}
+
+impl Checked for BrtListCCFmla {
+    fn check(&self) -> Result<(), &'static str> {
+        if self.flags & !Self::F_ARRAY != 0 {
+            return Err("reserved table calculated formula flags must be zero");
+        }
+        self.formula.check()
+    }
+}
+
+assign_id!(BrtListCCFmla);
+
 /// Total row formula for one table column; MS-XLSB `2.4.708`.
 #[derive(DekuRead, DekuWrite, Debug, Hash, PartialEq, Eq, Default)]
 pub struct BrtListTrFmla {
@@ -398,6 +421,16 @@ mod tests {
         record = BrtBeginListCol::default();
         record.ilta = 10;
         assert!(record.check().is_err(), "total function limit");
+    }
+
+    #[test]
+    fn list_calculated_formula_rejects_reserved_flags() {
+        let mut record = BrtListCCFmla::default();
+        record.check().expect("valid");
+        assert_eq!(record.to_bytes().expect("bytes").len(), 12);
+
+        record.flags = 0x04;
+        assert!(record.check().is_err(), "reserved flags");
     }
 
     #[test]

@@ -83,7 +83,7 @@ mod tests {
         let bytes = record.to_bytes().expect("serializes");
         assert_eq!(bytes.len(), 4 + 4 + 32);
         let (rest, decoded) = BrtCellIgnoreEC::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, record);
     }
 }

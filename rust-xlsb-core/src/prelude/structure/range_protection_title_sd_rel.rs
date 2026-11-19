@@ -61,7 +61,7 @@ mod tests {
         assert_eq!(&bytes[bytes.len() - 4..], [0, 0, 0, 0]);
 
         let (rest, decoded) = RangeProtectionTitleSDRel::from_bytes((&bytes, 0)).expect("decodes");
-        assert_eq!(rest.0, []);
+        assert_eq!(rest.0.len(), 0);
         assert_eq!(decoded, title);
     }
 

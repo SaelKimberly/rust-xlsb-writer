@@ -21,15 +21,16 @@ pub use record::{
     BrtEndFilterColumn, BrtEndFilters, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
     BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndRwBrk, BrtEndSst, BrtEndTableStyles,
     BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError,
-    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListPart, BrtListTrFmla, BrtMargins,
-    BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRangeProtection, BrtRowHdr,
-    BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp,
-    BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
-    CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS,
-    CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
-    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
-    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT,
-    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListCCFmla, BrtListPart,
+    BrtListTrFmla, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
+    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
+    BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
+    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS,
+    CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+    CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
+    CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+    CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
     CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
     CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
     CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, CF_TEMPLATE_TIME_PERIOD_TODAY,
@@ -271,6 +272,7 @@ mod tests {
     #[case::brt_end_list_cols(|| checked_test::<BrtEndListCols>(0))]
     #[case::brt_begin_list_parts(|| checked_test::<BrtBeginListParts>(4))]
     #[case::brt_list_part(|| checked_test::<BrtListPart>(12))]
+    #[case::brt_list_cc_fmla(|| checked_test::<BrtListCCFmla>(12))]
     #[case::brt_list_tr_fmla(|| checked_test::<BrtListTrFmla>(12))]
     #[case::brt_end_list_parts(|| checked_test::<BrtEndListParts>(0))]
     #[case::brt_table_style_client(|| checked_test::<BrtTableStyleClient>(40))]

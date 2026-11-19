@@ -2730,8 +2730,8 @@ impl Worksheet {
     ///
     /// The table writes its header and optional total rows. Column headers
     /// default to existing header-cell strings, then `Column1`, `Column2`, and
-    /// so on. Total labels, `SUBTOTAL` functions, per-column data formats, and
-    /// header formats are supported. Calculated-column formulas are not.
+    /// so on. Total labels, `SUBTOTAL` functions, per-column data formats,
+    /// header formats, and calculated-column formulas are supported.
     ///
     /// # Errors
     ///
