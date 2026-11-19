@@ -170,10 +170,11 @@ impl Workbook {
     /// range reference, or an expression using numbers, strings, booleans,
     /// errors, `+ - * / ^ & %`, comparisons, parentheses, same-workbook
     /// sheet-qualified absolute A1 cells/ranges, and the supported function set.
-    /// Global references must include a sheet name; local references resolve
-    /// against the name's worksheet. External-workbook references, multi-sheet
-    /// ranges, defined-name references, and future/`_xlfn` functions are not
-    /// supported.
+    /// A sheet range such as `Sheet1:Sheet3!$A$1` spans the worksheets between
+    /// its endpoints. Global references must include a sheet name; local
+    /// references resolve against the name's worksheet. External-workbook
+    /// references, defined-name references, and future/`_xlfn` functions are
+    /// not supported.
     ///
     /// # Errors
     ///

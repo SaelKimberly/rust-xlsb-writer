@@ -1,5 +1,7 @@
 //! Scalar formula parsing and formula value type.
 
+use std::borrow::Cow;
+
 use rust_xlsb_core::prelude::{BErr, CellParsedFormula};
 
 use crate::data::{FormulaResult, IntoExcelData};
@@ -358,7 +360,7 @@ struct Parser<'a, 't, 'c> {
     out: Vec<u8>,
 }
 
-impl Parser<'_, '_, '_> {
+impl<'a> Parser<'a, '_, '_> {
     fn parse_expression(&mut self) -> Result<()> {
         self.depth += 1;
         if self.depth > MAX_FORMULA_DEPTH {
@@ -949,6 +951,14 @@ impl Parser<'_, '_, '_> {
     }
 
     fn sheet_prefix_end(&self, start: usize) -> Option<usize> {
+        let mut index = self.sheet_token_end(start)?;
+        if self.bytes.get(index) == Some(&b':') {
+            index = self.sheet_token_end(index + 1)?;
+        }
+        (self.bytes.get(index) == Some(&b'!')).then_some(index)
+    }
+
+    fn sheet_token_end(&self, start: usize) -> Option<usize> {
         if self.bytes.get(start) == Some(&b'\'') {
             let mut index = start + 1;
             while let Some(byte) = self.bytes.get(index) {
@@ -956,7 +966,7 @@ impl Parser<'_, '_, '_> {
                     if self.bytes.get(index + 1) == Some(&b'\'') {
                         index += 2;
                     } else {
-                        return (self.bytes.get(index + 1) == Some(&b'!')).then_some(index + 1);
+                        return Some(index + 1);
                     }
                 } else {
                     index += 1;
@@ -973,28 +983,37 @@ impl Parser<'_, '_, '_> {
         {
             index += 1;
         }
-        (index > start && self.bytes.get(index) == Some(&b'!')).then_some(index)
+        (index > start).then_some(index)
     }
 
     fn parse_sheet_reference(&mut self) -> Result<()> {
-        let sheet = if self.peek() == Some(b'\'') {
-            self.read_quoted_sheet()?
+        let first = self.read_sheet_name()?;
+        let last = if self.peek() == Some(b':') {
+            self.pos += 1;
+            Some(self.read_sheet_name()?)
         } else {
-            let start = self.pos;
-            while self
-                .bytes
-                .get(self.pos)
-                .is_some_and(|byte| is_identifier_byte(*byte))
-            {
-                self.pos += 1;
-            }
-            self.input[start..self.pos].to_owned()
+            None
         };
         self.expect(b'!')?;
-        self.push_sheet_reference(&sheet)
+        self.push_sheet_reference(&first, last.as_deref())
     }
 
-    fn read_quoted_sheet(&mut self) -> Result<String> {
+    fn read_sheet_name(&mut self) -> Result<Cow<'a, str>> {
+        if self.peek() == Some(b'\'') {
+            return self.read_quoted_sheet();
+        }
+        let start = self.pos;
+        while self
+            .bytes
+            .get(self.pos)
+            .is_some_and(|byte| is_identifier_byte(*byte))
+        {
+            self.pos += 1;
+        }
+        Ok(Cow::Borrowed(&self.input[start..self.pos]))
+    }
+
+    fn read_quoted_sheet(&mut self) -> Result<Cow<'a, str>> {
         self.pos += 1;
         let start = self.pos;
         while let Some(byte) = self.bytes.get(self.pos) {
@@ -1006,9 +1025,9 @@ impl Parser<'_, '_, '_> {
                 let raw = &self.input[start..self.pos];
                 self.pos += 1;
                 return Ok(if raw.contains("''") {
-                    raw.replace("''", "'")
+                    Cow::Owned(raw.replace("''", "'"))
                 } else {
-                    raw.to_owned()
+                    Cow::Borrowed(raw)
                 });
             }
             self.pos += 1;
@@ -1016,44 +1035,50 @@ impl Parser<'_, '_, '_> {
         Err(formula_error("unterminated quoted sheet name"))
     }
 
-    fn push_sheet_reference(&mut self, sheet: &str) -> Result<()> {
-        let index = {
+    fn push_sheet_reference(&mut self, first: &str, last: Option<&str>) -> Result<()> {
+        let (first, last) = {
             let context = self
                 .name_context
                 .as_ref()
                 .expect("sheet references require a name context");
-            sheet_index(context.sheets, sheet)?
+            let first = sheet_index(context.sheets, first)?;
+            let last = match last {
+                Some(last) => sheet_index(context.sheets, last)?,
+                None => first,
+            };
+            (first, last)
         };
-        let Some(first) = self.cell_ref_at(self.pos) else {
+        let Some(first_cell) = self.cell_ref_at(self.pos) else {
             return Err(formula_error(
                 "defined-name sheet references require a cell or range",
             ));
         };
-        self.pos = first.end;
-        check_absolute_name_ref(&first)?;
+        self.pos = first_cell.end;
+        check_absolute_name_ref(&first_cell)?;
         self.skip_whitespace();
-        let last = if self.peek() == Some(b':') {
+        let last_cell = if self.peek() == Some(b':') {
             self.pos += 1;
             self.skip_whitespace();
-            let Some(last) = self.cell_ref_at(self.pos) else {
+            let Some(last_cell) = self.cell_ref_at(self.pos) else {
                 return Err(formula_error("expected a cell reference after ':'"));
             };
-            self.pos = last.end;
-            check_absolute_name_ref(&last)?;
-            Some(last)
+            self.pos = last_cell.end;
+            check_absolute_name_ref(&last_cell)?;
+            Some(last_cell)
         } else {
             None
         };
-        let ixti = self
-            .name_context
-            .as_mut()
-            .expect("name context was checked")
-            .xti
-            .index(index)?;
-        if let Some(last) = last {
-            self.push_area3d(ixti, &first, &last)?;
+        let ixti = {
+            let context = self
+                .name_context
+                .as_mut()
+                .expect("name context was checked");
+            context.xti.range(first, last)?
+        };
+        if let Some(last_cell) = last_cell {
+            self.push_area3d(ixti, &first_cell, &last_cell)?;
         } else {
-            self.push_ref3d(ixti, &first);
+            self.push_ref3d(ixti, &first_cell);
         }
         Ok(())
     }

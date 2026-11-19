@@ -49,14 +49,14 @@ impl DefinedName {
 
 /// Lazily maps worksheet indexes onto `BrtExternSheet` Xti indexes.
 pub struct XtiCollector {
-    sheets: Vec<usize>,
+    ranges: Vec<(usize, usize)>,
     indexes: Vec<Option<u16>>,
 }
 
 impl XtiCollector {
     pub(crate) fn new(sheet_count: usize) -> Self {
         Self {
-            sheets: Vec::new(),
+            ranges: Vec::new(),
             indexes: vec![None; sheet_count],
         }
     }
@@ -65,19 +65,40 @@ impl XtiCollector {
         if let Some(index) = self.indexes[sheet] {
             return Ok(index);
         }
-        let index = u16::try_from(self.sheets.len())
-            .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?;
+        let index = self.push(sheet, sheet)?;
         self.indexes[sheet] = Some(index);
-        self.sheets.push(sheet);
+        Ok(index)
+    }
+
+    pub(crate) fn range(&mut self, first: usize, last: usize) -> Result<u16> {
+        if first > last {
+            return Err(Error::Parameter(
+                "worksheet ranges must be in workbook order".to_owned(),
+            ));
+        }
+        if first == last {
+            return self.index(first);
+        }
+        if let Some(index) = self.ranges.iter().position(|range| *range == (first, last)) {
+            return u16::try_from(index)
+                .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"));
+        }
+        self.push(first, last)
+    }
+
+    fn push(&mut self, first: usize, last: usize) -> Result<u16> {
+        let index = u16::try_from(self.ranges.len())
+            .map_err(|_| Error::ValueNotRepresentable("too many defined-name ranges"))?;
+        self.ranges.push((first, last));
         Ok(index)
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.sheets.is_empty()
+        self.ranges.is_empty()
     }
 
-    pub(crate) fn sheets(&self) -> &[usize] {
-        &self.sheets
+    pub(crate) fn ranges(&self) -> &[(usize, usize)] {
+        &self.ranges
     }
 }
 
@@ -271,7 +292,9 @@ fn split_local_name(name: &str) -> Result<Option<(Cow<'_, str>, &str)>> {
 fn split_sheet_prefix(formula: &str) -> Result<Option<(Cow<'_, str>, &str)>> {
     if formula.starts_with('\'') {
         let (sheet, rest) = quoted_sheet(formula).ok_or_else(|| unsupported(formula))?;
-        let reference = rest.strip_prefix('!').ok_or_else(|| unsupported(formula))?;
+        let Some(reference) = rest.strip_prefix('!') else {
+            return Ok(None);
+        };
         if sheet.is_empty() {
             return Err(unsupported(formula));
         }
@@ -541,7 +564,7 @@ mod tests {
         assert_eq!(rgce.len(), 9);
         assert_eq!(rgce[0], 0x3A);
         assert_eq!(&rgce[1..3], &[0, 0]);
-        assert_eq!(xti.sheets(), &[1]);
+        assert_eq!(xti.ranges(), &[(1, 1)]);
     }
 
     #[test]
@@ -550,7 +573,94 @@ mod tests {
         let rgce = encode_formula("='Data Sheet'!$A$1:$B$2", None, &sheets, &mut xti)
             .expect("quoted range");
         assert_eq!(rgce, area3d(0, 0, 0, 1, 1));
-        assert_eq!(xti.sheets(), &[1]);
+        assert_eq!(xti.ranges(), &[(1, 1)]);
+    }
+
+    #[test]
+    fn repeated_ranges_reuse_the_same_xti() {
+        let mut xti = XtiCollector::new(3);
+        assert_eq!(xti.range(0, 2).expect("range"), 0);
+        assert_eq!(xti.range(0, 2).expect("repeated range"), 0);
+        assert_eq!(xti.index(1).expect("single sheet"), 1);
+        assert_eq!(xti.ranges(), &[(0, 2), (1, 1)]);
+    }
+
+    #[test]
+    fn worksheet_ranges_span_one_xti() {
+        let sheets = vec![
+            Worksheet::new_named("Sheet1".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+            Worksheet::new_named("Sheet3".to_owned()),
+        ];
+        let mut xti = XtiCollector::new(3);
+        let mut expected = area3d(0, 0, 0, 2, 0).to_vec();
+        expected.extend_from_slice(&[0x42, 1, 0x04, 0]);
+        assert_eq!(
+            encode_formula("=SUM(Sheet1:Sheet3!$A$1:$A$3)", None, &sheets, &mut xti)
+                .expect("worksheet range"),
+            expected
+        );
+        assert_eq!(xti.ranges(), &[(0, 2)]);
+    }
+
+    #[test]
+    fn bare_worksheet_ranges_encode_a_reference() {
+        let sheets = vec![
+            Worksheet::new_named("Sheet1".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+            Worksheet::new_named("Sheet3".to_owned()),
+        ];
+        let mut xti = XtiCollector::new(3);
+        assert_eq!(
+            encode_formula("=Sheet1:Sheet3!$A$1", None, &sheets, &mut xti)
+                .expect("bare worksheet range"),
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(xti.ranges(), &[(0, 2)]);
+    }
+
+    #[test]
+    fn quoted_worksheet_ranges_span_one_xti() {
+        let sheets = vec![
+            Worksheet::new_named("Data Sheet".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+            Worksheet::new_named("Sheet3".to_owned()),
+        ];
+        let mut xti = XtiCollector::new(3);
+        assert_eq!(
+            encode_formula("=SUM('Data Sheet':'Sheet3'!$A$1)", None, &sheets, &mut xti)
+                .expect("quoted worksheet range"),
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 1, 0x04, 0]
+        );
+        assert_eq!(xti.ranges(), &[(0, 2)]);
+    }
+
+    #[test]
+    fn escaped_quotes_resolve_in_worksheet_ranges() {
+        let sheets = vec![
+            Worksheet::new_named("a'b".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+        ];
+        let mut xti = XtiCollector::new(2);
+        assert_eq!(
+            encode_formula("=SUM('a''b':'Sheet2'!$A$1)", None, &sheets, &mut xti)
+                .expect("escaped range"),
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 1, 0x04, 0]
+        );
+        assert_eq!(xti.ranges(), &[(0, 1)]);
+    }
+
+    #[test]
+    fn reversed_worksheet_ranges_are_rejected() {
+        let sheets = vec![
+            Worksheet::new_named("Sheet1".to_owned()),
+            Worksheet::new_named("Sheet2".to_owned()),
+            Worksheet::new_named("Sheet3".to_owned()),
+        ];
+        let mut xti = XtiCollector::new(3);
+        let error = encode_formula("=SUM(Sheet3:Sheet1!$A$1)", None, &sheets, &mut xti)
+            .expect_err("reversed range");
+        assert!(error.to_string().contains("workbook order"));
     }
 
     #[test]
@@ -581,7 +691,7 @@ mod tests {
                 .expect("quoted sheet expression"),
             [0x3A, 1, 0, 0, 0, 0, 0, 0, 0, 0x1E, 1, 0, 0x03]
         );
-        assert_eq!(xti.sheets(), &[0, 1]);
+        assert_eq!(xti.ranges(), &[(0, 0), (1, 1)]);
     }
 
     #[test]
@@ -592,7 +702,7 @@ mod tests {
                 .expect("local expression"),
             [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x1E, 1, 0, 0x03]
         );
-        assert_eq!(xti.sheets(), &[1]);
+        assert_eq!(xti.ranges(), &[(1, 1)]);
         assert!(encode_formula("=A1+1", Some("Data Sheet"), &sheets, &mut xti).is_err());
     }
 
@@ -652,7 +762,7 @@ mod tests {
             encode_formula("=SUM(Sheet1!$A$1)", None, &sheets, &mut xti).expect("function"),
             [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 1, 0x04, 0]
         );
-        assert_eq!(xti.sheets(), &[1]);
+        assert_eq!(xti.ranges(), &[(1, 1)]);
     }
 
     #[test]
@@ -689,7 +799,7 @@ mod tests {
         let rgce = encode_formula("='a''b'!$A$1", None, &sheets, &mut xti).expect("quoted");
         assert_eq!(rgce[0], 0x3A);
         assert_eq!(&rgce[1..3], &[0, 0]);
-        assert_eq!(xti.sheets(), &[0]);
+        assert_eq!(xti.ranges(), &[(0, 0)]);
 
         let name = DefinedName::new("'a''b'!Rate", "=1").expect("name");
         assert_eq!(name.scope.as_deref(), Some("a'b"));
