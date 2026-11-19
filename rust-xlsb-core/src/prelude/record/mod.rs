@@ -41,6 +41,7 @@ mod brt_sel;
 mod brt_sheet_protection;
 mod brt_style;
 mod brt_table;
+mod brt_wb_prop;
 mod brt_ws_dim;
 mod brt_ws_fmt_info;
 mod brt_ws_prop;
@@ -112,6 +113,7 @@ pub use brt_table::{
     BrtBeginList, BrtBeginListCol, BrtBeginListCols, BrtBeginListParts, BrtEndList, BrtEndListCol,
     BrtEndListCols, BrtEndListParts, BrtListPart, BrtTableStyleClient,
 };
+pub use brt_wb_prop::BrtWbProp;
 pub use brt_ws_dim::BrtWsDim;
 pub use brt_ws_fmt_info::BrtWsFmtInfo;
 pub use brt_ws_prop::BrtWsProp;

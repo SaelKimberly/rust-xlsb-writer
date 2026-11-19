@@ -5,8 +5,9 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::defined_name::{DefinedName, sheet_index};
+use crate::theme::Theme;
 use crate::worksheet::{Worksheet, default_column_metrics, validate_sheet_name};
-use crate::{DocProperties, Error, Format, Result};
+use crate::{DocProperties, Error, FontScheme, Format, Result};
 
 /// Formula calculation mode for a workbook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,7 @@ pub struct WorkbookSettings {
     pub tab_ratio: Option<u8>,
     pub zip_compression_level: Option<u8>,
     pub zip_large_file: bool,
+    pub(crate) theme: Option<Theme>,
 }
 
 /// A workbook that owns one or more worksheets.
@@ -57,6 +59,7 @@ impl Workbook {
                 tab_ratio: None,
                 zip_compression_level: None,
                 zip_large_file: false,
+                theme: None,
             },
             doc_properties: None,
             default_format: None,
@@ -76,6 +79,25 @@ impl Workbook {
     pub const fn set_calculation_mode(&mut self, mode: CalculationMode) -> &mut Self {
         self.settings.calculation_mode = Some(mode);
         self
+    }
+
+    /// Uses the Excel 2023 Office/Aptos theme and default dimensions.
+    ///
+    /// Sets the default format to Aptos Narrow 11 with the body font scheme,
+    /// a 20-pixel row height, and a 64-pixel column width. This replaces any
+    /// earlier default format and must be called before adding worksheets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Parameter`] if a worksheet already exists.
+    pub fn use_excel_2023_theme(&mut self) -> Result<&mut Self> {
+        let format = Format::new()
+            .set_font_name("Aptos Narrow")
+            .set_font_size(11.0)
+            .set_font_scheme(FontScheme::Body);
+        self.set_default_format(&format, 20, 64)?;
+        self.settings.theme = Some(Theme::Excel2023);
+        Ok(self)
     }
 
     /// Sets the worksheet tab bar ratio as a percentage from 0 to 100.
@@ -402,6 +424,21 @@ mod tests {
 
         assert!(matches!(
             workbook.set_default_format(&format, 24, 80),
+            Err(Error::Parameter(_))
+        ));
+    }
+
+    #[test]
+    fn excel_2023_theme_sets_defaults_and_requires_no_worksheets() {
+        let mut workbook = Workbook::new();
+        workbook.use_excel_2023_theme().expect("theme");
+
+        let worksheet = workbook.add_worksheet();
+        assert_eq!(worksheet.default_row_height(), Some(15.0));
+        assert_eq!(worksheet.default_col_width(), Some(59.0 / 7.0));
+
+        assert!(matches!(
+            workbook.use_excel_2023_theme(),
             Err(Error::Parameter(_))
         ));
     }

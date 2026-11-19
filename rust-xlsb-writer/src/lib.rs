@@ -38,6 +38,7 @@ mod properties;
 mod protection;
 mod sheet;
 pub(crate) mod table;
+mod theme;
 mod url;
 mod workbook;
 mod worksheet;

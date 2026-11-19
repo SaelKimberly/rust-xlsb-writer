@@ -23,12 +23,13 @@ pub use record::{
     BrtEndWsView, BrtExternSheet, BrtFileSharing, BrtFill, BrtFilter, BrtFmt, BrtFont, BrtHLink,
     BrtListPart, BrtMargins, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
     BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtStyle, BrtSupSelf,
-    BrtTableStyleClient, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE,
-    CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS,
-    CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
-    CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE,
-    CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
-    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+    BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
+    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS,
+    CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
+    CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
+    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
+    CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
+    CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
     CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
     CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
     CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, CF_TEMPLATE_TIME_PERIOD_TODAY,
@@ -204,6 +205,7 @@ mod tests {
     #[case::brt_style(|| checked_test::<BrtStyle>(24))]
     #[case::brt_begin_table_styles(|| checked_test::<BrtBeginTableStyles>(12))]
     #[case::brt_begin_book(|| checked_test::<BrtBeginBook>(0))]
+    #[case::brt_wb_prop(|| checked_test::<BrtWbProp>(12))]
     #[case::brt_end_book(|| checked_test::<BrtEndBook>(0))]
     #[case::brt_begin_book_views(|| checked_test::<BrtBeginBookViews>(0))]
     #[case::brt_end_book_views(|| checked_test::<BrtEndBookViews>(0))]

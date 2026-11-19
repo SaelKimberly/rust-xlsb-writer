@@ -9,8 +9,8 @@ use flate2::write::DeflateEncoder;
 use rust_xlsb_core::prelude::{
     BrtBeginBook, BrtBeginBookViews, BrtBeginBundleShs, BrtBeginExternals, BrtBookView,
     BrtBundleSh, BrtCalcProp, BrtEndBook, BrtEndBookViews, BrtEndBundleShs, BrtEndExternals,
-    BrtExternSheet, BrtFileSharing, BrtName, BrtSupSelf, NameParsedFormula, XlNullableWideString,
-    XlStringExt, XlWideString, Xnum, Xti,
+    BrtExternSheet, BrtFileSharing, BrtName, BrtSupSelf, BrtWbProp, NameParsedFormula,
+    XlNullableWideString, XlStringExt, XlWideString, Xnum, Xti,
 };
 use rust_xlsb_core::{SSTHolder, StyleRegistry, push_record};
 
@@ -113,6 +113,7 @@ pub fn build_package(
     let has_strings = !sst.is_empty();
     let has_custom_properties =
         properties.is_some_and(|properties| !properties.custom_properties.is_empty());
+    let has_theme = settings.theme.is_some();
     let mut styles = Vec::new();
     registry.write_to_biff(&mut styles)?;
 
@@ -124,6 +125,7 @@ pub fn build_package(
                 has_strings,
                 properties.is_some(),
                 has_custom_properties,
+                settings.theme,
                 &table_ids,
             )
             .into_bytes(),
@@ -134,7 +136,7 @@ pub fn build_package(
         ),
         (
             "xl/_rels/workbook.bin.rels".to_owned(),
-            workbook_rels(sheets.len(), has_strings).into_bytes(),
+            workbook_rels(sheets.len(), has_strings, has_theme).into_bytes(),
         ),
         (
             "xl/workbook.bin".to_owned(),
@@ -142,6 +144,12 @@ pub fn build_package(
         ),
         ("xl/styles.bin".to_owned(), styles),
     ];
+    if let Some(theme) = settings.theme {
+        parts.push((
+            "xl/theme/theme1.xml".to_owned(),
+            theme.xml().as_bytes().to_vec(),
+        ));
+    }
     if let Some(properties) = properties {
         parts.push((
             "docProps/core.xml".to_owned(),
@@ -230,6 +238,15 @@ fn workbook_part(
                 fReadOnlyRec: 1,
                 stUserName: XlNullableWideString::construct(None::<&str>),
                 ..BrtFileSharing::default()
+            },
+        )?;
+    }
+    if let Some(theme) = settings.theme {
+        push_record(
+            &mut out,
+            &BrtWbProp {
+                dwThemeVersion: theme.version(),
+                ..BrtWbProp::default()
             },
         )?;
     }
@@ -500,6 +517,7 @@ fn content_types(
     has_strings: bool,
     has_properties: bool,
     has_custom_properties: bool,
+    theme: Option<crate::theme::Theme>,
     table_ids: &[u32],
 ) -> String {
     let mut body = String::from(concat!(
@@ -520,6 +538,11 @@ fn content_types(
     if has_strings {
         body.push_str(
             r#"<Override PartName="/xl/sharedStrings.bin" ContentType="application/vnd.ms-excel.sharedStrings"/>"#,
+        );
+    }
+    if theme.is_some() {
+        body.push_str(
+            r#"<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#,
         );
     }
     if has_properties {
@@ -710,7 +733,7 @@ fn push_xml_element(out: &mut String, tag: &str, value: &str) {
     out.push('>');
 }
 
-fn workbook_rels(sheet_count: usize, has_strings: bool) -> String {
+fn workbook_rels(sheet_count: usize, has_strings: bool, has_theme: bool) -> String {
     let mut body = String::from(concat!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
@@ -728,11 +751,19 @@ fn workbook_rels(sheet_count: usize, has_strings: bool) -> String {
         r#"<Relationship Id="rId{style_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.bin"/>"#
     )
     .expect("writing to String cannot fail");
+    let mut next_id = style_id + 1;
     if has_strings {
-        let strings_id = sheet_count + 2;
         write!(
             body,
-            r#"<Relationship Id="rId{strings_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.bin"/>"#
+            r#"<Relationship Id="rId{next_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.bin"/>"#
+        )
+        .expect("writing to String cannot fail");
+        next_id += 1;
+    }
+    if has_theme {
+        write!(
+            body,
+            r#"<Relationship Id="rId{next_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>"#
         )
         .expect("writing to String cannot fail");
     }
@@ -1051,13 +1082,13 @@ mod tests {
         BrtBeginWsView, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellRString, BrtColor,
         BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing, BrtFilter, BrtFont,
         BrtHLink, BrtListPart, BrtName, BrtRowHdr, BrtSheetProtection, BrtTableStyleClient,
-        BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
-        CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
-        CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER, CF_TEMPLATE_GRADIENT,
-        CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_TODAY,
-        CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION,
-        CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE, CFVO_MAX, CFVO_MIN, CFVO_NUM,
-        CFVO_PERCENT, CFVO_PERCENTILE,
+        BrtWbProp, BrtWsFmtInfo, BrtXF, CF_TEMPLATE_CONTAINS_BLANKS,
+        CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
+        CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_FILTER,
+        CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH,
+        CF_TEMPLATE_TIME_PERIOD_TODAY, CF_TEMPLATE_UNIQUE_VALUES, CF_TEXTOPER_CONTAINS,
+        CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT, CF_TYPE_MULTISTATE,
+        CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT, CFVO_PERCENTILE,
     };
     use rust_xlsb_core::{BiffHead, CheckedBiff, KnownID};
 
@@ -2754,9 +2785,85 @@ mod tests {
             .expect("write");
         let bytes = workbook.save_to_buffer().expect("saves");
         assert!(part_bytes(&bytes, "xl/tables/table1.bin").is_err());
+        assert!(part_bytes(&bytes, "xl/theme/theme1.xml").is_err());
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("content types UTF-8");
+        assert!(!content_types.contains("/xl/theme/theme1.xml"));
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("rels UTF-8");
+        assert!(!rels.contains("relationships/theme"));
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        assert_eq!(records::<BrtWbProp>(&workbook_part).len(), 0);
         let sheet_part = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
         assert_eq!(records::<BrtBeginListParts>(&sheet_part).len(), 0);
         assert!(part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").is_err());
+    }
+
+    #[test]
+    fn excel_2023_theme_emits_part_version_and_default_font() {
+        let mut workbook = crate::Workbook::new();
+        workbook.use_excel_2023_theme().expect("theme");
+        workbook.add_worksheet().write(0, 0, "x").expect("writes");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let theme = part_bytes(&bytes, "xl/theme/theme1.xml").expect("theme part");
+        let theme = String::from_utf8(theme).expect("theme UTF-8");
+        assert!(theme.contains(r#"<a:latin typeface="Aptos Narrow""#));
+        assert!(theme.contains(r#"<a:srgbClr val="156082"/>"#));
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("content types UTF-8");
+        assert!(content_types.contains(
+            r#"<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>"#
+        ));
+
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("rels UTF-8");
+        assert!(rels.contains(
+            r#"Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml""#
+        ));
+
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook");
+        let props = records::<BrtWbProp>(&workbook_part);
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].flags, 0);
+        assert_eq!(props[0].dwThemeVersion, 202_300);
+        assert_eq!(props[0].strName.to_optional_string().as_deref(), Some(""));
+
+        let styles = part_bytes(&bytes, "xl/styles.bin").expect("styles");
+        let fonts = records::<BrtFont>(&styles);
+        let default = fonts
+            .iter()
+            .find(|font| font.name.to_optional_string().as_deref() == Some("Aptos Narrow"))
+            .expect("Aptos Narrow font");
+        assert_eq!(default.dyHeight, 220);
+        assert_eq!(default.bFontScheme, 2);
+
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+        let formats = records::<BrtWsFmtInfo>(&sheet);
+        assert_eq!(formats.len(), 1);
+        assert_eq!(formats[0].miyDefRwHeight, 300);
+        assert_eq!(formats[0].dxGCol, 2_158);
+    }
+
+    #[test]
+    fn theme_relationship_uses_the_first_free_id() {
+        let mut workbook = crate::Workbook::new();
+        workbook.use_excel_2023_theme().expect("theme");
+        workbook.add_worksheet().write(0, 0, 1).expect("writes");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        assert!(part_bytes(&bytes, "xl/sharedStrings.bin").is_err());
+        let rels =
+            String::from_utf8(part_bytes(&bytes, "xl/_rels/workbook.bin.rels").expect("rels"))
+                .expect("rels UTF-8");
+        assert!(rels.contains(
+            r#"Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme""#
+        ));
     }
 
     #[test]
