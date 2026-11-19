@@ -16,7 +16,7 @@ use rust_xlsb_core::prelude::{
     BrtMergeCell, BrtPageSetup, BrtPane, BrtPrintOptions, BrtRowHdr, BrtSel, BrtWsDim,
     BrtWsFmtInfo, BrtWsProp, Cell, CellParsedFormula, HeaderFooterString, RichStr, StrRun, StrRuns,
     UncheckedRfX, UncheckedSqRfX, XlNullableWideString, XlStringExt, XlWideString, Xnum,
-    conditional_format_block,
+    conditional_format_block_ranges,
 };
 use rust_xlsb_core::{
     BiffWrite, CellValue, NumberEncoding, SSTHolder, ToCellValue, WbContext, push_record,
@@ -221,7 +221,10 @@ fn write_conditional_formats(
     }
 
     for (index, conditional_format) in formats.iter().enumerate() {
-        push(out, &conditional_format_block(conditional_format.range))?;
+        push(
+            out,
+            &conditional_format_block_ranges(conditional_format.ranges()),
+        )?;
         let priority = i32::try_from(index + 1)
             .map_err(|_| Error::ValueNotRepresentable("too many conditional formats"))?;
         push(
@@ -802,7 +805,7 @@ fn write_data_validations(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
         ),
     )?;
     for item in validations {
-        push(out, &item.validation.record(item.range)?)?;
+        push(out, &item.validation.record_ranges(item.ranges.as_slice())?)?;
     }
     push(out, &BrtEndDVals::default())?;
     Ok(())

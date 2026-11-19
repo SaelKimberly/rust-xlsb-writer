@@ -619,8 +619,8 @@ impl Checked for BrtBeginConditionalFormatting {
         if self.fPivot > 1 {
             return Err("conditional-format pivot flag must be 0 or 1");
         }
-        if self.sqrfx.crfx != 1 {
-            return Err("conditional-format block must contain one range");
+        if !(1..=8_192).contains(&self.sqrfx.crfx) {
+            return Err("conditional-format block must contain 1-8192 ranges");
         }
         self.sqrfx.check()
     }
@@ -639,12 +639,18 @@ assign_id!(BrtEndConditionalFormatting);
 /// Builds the range block used by a conditional-formatting rule.
 #[must_use]
 pub fn conditional_format_block(range: UncheckedRfX) -> BrtBeginConditionalFormatting {
+    conditional_format_block_ranges(std::slice::from_ref(&range))
+}
+
+/// Builds a conditional-formatting block for one or more ranges.
+#[must_use]
+pub fn conditional_format_block_ranges(ranges: &[UncheckedRfX]) -> BrtBeginConditionalFormatting {
     BrtBeginConditionalFormatting {
         ccf: 1,
         fPivot: 0,
         sqrfx: UncheckedSqRfX {
-            crfx: 1,
-            rgRefx: vec![range],
+            crfx: u32::try_from(ranges.len()).unwrap_or(u32::MAX),
+            rgRefx: ranges.to_vec(),
         },
     }
 }
@@ -1145,6 +1151,49 @@ mod tests {
             &bytes[12..28],
             &[1, 0, 0, 0, 3, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn encodes_a_multi_range_block_and_checks_its_count() {
+        let ranges = [
+            UncheckedRfX {
+                rwFirst: 2,
+                rwLast: 5,
+                colFirst: 1,
+                colLast: 3,
+            },
+            UncheckedRfX {
+                rwFirst: 8,
+                rwLast: 11,
+                colFirst: 8,
+                colLast: 10,
+            },
+        ];
+        let block = conditional_format_block_ranges(&ranges);
+        block.check().expect("valid block");
+        let bytes = block.to_bytes().expect("serializes");
+
+        assert_eq!(bytes.len(), 44);
+        assert_eq!(&bytes[0..4], &1_u32.to_le_bytes());
+        assert_eq!(&bytes[4..8], &0_u32.to_le_bytes());
+        assert_eq!(&bytes[8..12], &2_u32.to_le_bytes());
+        assert_eq!(
+            &bytes[12..28],
+            &[2, 0, 0, 0, 5, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0]
+        );
+        assert_eq!(
+            &bytes[28..44],
+            &[8, 0, 0, 0, 11, 0, 0, 0, 8, 0, 0, 0, 10, 0, 0, 0]
+        );
+
+        let empty = conditional_format_block_ranges(&[]);
+        assert!(empty.check().is_err());
+
+        let at_limit = conditional_format_block_ranges(&vec![UncheckedRfX::default(); 8_192]);
+        assert!(at_limit.check().is_ok());
+
+        let too_many = conditional_format_block_ranges(&vec![UncheckedRfX::default(); 8_193]);
+        assert!(too_many.check().is_err());
     }
 
     #[test]

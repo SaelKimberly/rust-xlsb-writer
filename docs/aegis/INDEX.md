@@ -48,6 +48,7 @@
 - [Scalar formulas](plans/2026-11-19-formulas.md)
 - [Array formulas](plans/2026-11-19-array-formulas.md)
 - [Formula-driven validation and conditional formatting](plans/2026-11-19-formula-driven-validation-and-formatting.md)
+- [Multi-range data validation and conditional formatting](plans/2026-11-19-multi-range-validation-and-formatting.md)
 
 ## Analysis
 

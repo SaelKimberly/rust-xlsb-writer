@@ -39,6 +39,7 @@ pub use record::{
     CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
     CFVO_PERCENTILE, CellParsedFormula, DValStrings, DVals, GrbitAtr, HAlign, NameParsedFormula,
     ReadingOrder, VAlign, XFProp, XFProps, Xti, conditional_format_block,
+    conditional_format_block_ranges,
 };
 pub use scope::*;
 pub use structure::{

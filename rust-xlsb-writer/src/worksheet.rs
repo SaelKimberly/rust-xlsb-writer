@@ -14,6 +14,7 @@ use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::formula::{Formula, cached_result, compile, result_is_too_long};
 use crate::protection::{ProtectionOptions, SheetProtection, UnprotectedRange, hash_password};
+use crate::range_list::RangeList;
 use crate::table::{Table, TableRange};
 use crate::{Color, Error, Format, Result, Url};
 
@@ -2830,13 +2831,15 @@ impl Worksheet {
     /// Adds a conditional format over a cell range.
     ///
     /// The rule is evaluated against the range; a differential format is
-    /// applied when it matches.
+    /// applied when it matches. If the rule has a non-empty `set_multi_range`
+    /// override, those same-sheet areas replace the range passed here.
     ///
     /// # Errors
     ///
     /// Returns [`Error::RowColumnLimit`] or [`Error::RowColumnOrder`] for an
-    /// invalid range, or [`Error::Parameter`] when the rule is missing or its
-    /// value is invalid.
+    /// invalid range, or [`Error::Parameter`] when the rule is missing, its
+    /// value is invalid, or the multi-range text is malformed or not
+    /// same-sheet A1 notation.
     pub fn add_conditional_format<T>(
         &mut self,
         first_row: RowNum,
@@ -2850,13 +2853,15 @@ impl Worksheet {
     {
         Self::check_range(first_row, first_col, last_row, last_col)?;
         conditional_format.validate()?;
+        let range = UncheckedRfX {
+            rwFirst: first_row,
+            rwLast: last_row,
+            colFirst: u32::from(first_col),
+            colLast: u32::from(last_col),
+        };
+        let ranges = RangeList::from_primary(range, conditional_format.multi_range(), 8_192)?;
         self.conditional_formats.push(ConditionalFormatRange::new(
-            UncheckedRfX {
-                rwFirst: first_row,
-                rwLast: last_row,
-                colFirst: u32::from(first_col),
-                colLast: u32::from(last_col),
-            },
+            ranges,
             conditional_format.box_clone(),
         ));
         Ok(self)
@@ -2865,11 +2870,15 @@ impl Worksheet {
     /// Adds a data validation for a cell range.
     ///
     /// Multiple validations can be added; each keeps its own range and options.
+    /// A non-empty `set_multi_range` override replaces the range passed here
+    /// with the listed same-sheet areas.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::RowColumnLimit`] when a corner is out of range, or
-    /// [`Error::RowColumnOrder`] when the first corner is after the last.
+    /// Returns [`Error::RowColumnLimit`] when a corner is out of range,
+    /// [`Error::RowColumnOrder`] when the first corner is after the last, or
+    /// [`Error::Parameter`] when the multi-range text is malformed or not
+    /// same-sheet A1 notation.
     pub fn add_data_validation(
         &mut self,
         first_row: RowNum,
@@ -2895,15 +2904,16 @@ impl Worksheet {
             colFirst: u32::from(first_col),
             colLast: u32::from(last_col),
         };
+        let ranges = RangeList::from_primary(range, data_validation.multi_range(), 8_191)?;
         if let Some(existing) = self
             .data_validations
             .iter_mut()
-            .find(|item| item.range == range)
+            .find(|item| item.ranges.as_slice() == ranges.as_slice())
         {
             existing.validation = data_validation.clone();
         } else {
             self.data_validations.push(DataValidationRange {
-                range,
+                ranges,
                 validation: data_validation.clone(),
             });
         }
@@ -5088,7 +5098,7 @@ mod tests {
 
         assert_eq!(worksheet.data_validations().len(), 2);
         assert_eq!(
-            worksheet.data_validations()[0].range,
+            worksheet.data_validations()[0].ranges.first(),
             UncheckedRfX {
                 rwFirst: 1,
                 rwLast: 3,
@@ -5112,11 +5122,63 @@ mod tests {
         assert_eq!(
             worksheet.data_validations()[0]
                 .validation
-                .record(worksheet.data_validations()[0].range)
+                .record_ranges(worksheet.data_validations()[0].ranges.as_slice())
                 .expect("record")
                 .val_type(),
             3
         );
+    }
+
+    #[test]
+    fn data_validations_store_multi_ranges_and_replace_matching_lists() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let first = DataValidation::new()
+            .allow_whole_number(crate::DataValidationRule::GreaterThan(0))
+            .set_multi_range("B3:D6 I3:K6");
+        worksheet
+            .add_data_validation(0, 0, 0, 0, &first)
+            .expect("multi-range validation");
+        assert_eq!(
+            worksheet.data_validations()[0].ranges.as_slice(),
+            &[
+                UncheckedRfX {
+                    rwFirst: 2,
+                    rwLast: 5,
+                    colFirst: 1,
+                    colLast: 3,
+                },
+                UncheckedRfX {
+                    rwFirst: 2,
+                    rwLast: 5,
+                    colFirst: 8,
+                    colLast: 10,
+                },
+            ]
+        );
+
+        let replacement = DataValidation::new()
+            .allow_whole_number(crate::DataValidationRule::LessThan(10))
+            .set_multi_range("B3:D6 I3:K6");
+        worksheet
+            .add_data_validation(10, 10, 10, 10, &replacement)
+            .expect("replacement");
+        assert_eq!(worksheet.data_validations().len(), 1);
+
+        let before = worksheet.data_validations().len();
+        assert!(
+            worksheet
+                .add_data_validation(
+                    0,
+                    0,
+                    0,
+                    0,
+                    &DataValidation::new()
+                        .allow_whole_number(crate::DataValidationRule::GreaterThan(0))
+                        .set_multi_range("B2:A1")
+                )
+                .is_err()
+        );
+        assert_eq!(worksheet.data_validations().len(), before);
     }
 
     #[test]
@@ -5148,10 +5210,11 @@ mod tests {
             .expect("conditional format");
         assert_eq!(worksheet.conditional_formats().len(), 1);
         let stored = &worksheet.conditional_formats()[0];
-        assert_eq!(stored.range.rwFirst, 1);
-        assert_eq!(stored.range.rwLast, 4);
-        assert_eq!(stored.range.colFirst, 2);
-        assert_eq!(stored.range.colLast, 3);
+        let range = stored.ranges.first();
+        assert_eq!(range.rwFirst, 1);
+        assert_eq!(range.rwLast, 4);
+        assert_eq!(range.colFirst, 2);
+        assert_eq!(range.colLast, 3);
         assert_eq!(stored.begin_rule(1, u32::MAX).expect("rule").iParam, 7);
 
         assert!(matches!(
@@ -5174,6 +5237,36 @@ mod tests {
             worksheet.add_conditional_format(2, 0, 1, 0, &rule),
             Err(Error::RowColumnOrder)
         ));
+    }
+
+    #[test]
+    fn conditional_formats_store_multi_ranges_and_use_the_first_for_formulas() {
+        let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
+        let rule = crate::ConditionalFormatFormula::new()
+            .set_rule("=A1")
+            .set_multi_range("$B$3:$D$6,$I$3:$K$6");
+        worksheet
+            .add_conditional_format(0, 0, 0, 0, &rule)
+            .expect("multi-range conditional format");
+
+        let stored = &worksheet.conditional_formats()[0];
+        assert_eq!(stored.ranges.as_slice().len(), 2);
+        assert_eq!(stored.ranges.as_slice()[0].rwFirst, 2);
+        assert_eq!(stored.ranges.as_slice()[0].colFirst, 1);
+        assert_eq!(stored.ranges.as_slice()[1].colFirst, 8);
+
+        let record = stored.begin_rule(1, u32::MAX).expect("rule");
+        let formula = record.formula1.expect("formula");
+        let expected = crate::formula::compile_relative("=A1", 2, 1).expect("compiled");
+        assert_eq!(formula.rgce, expected.rgce);
+
+        let before = worksheet.conditional_formats().len();
+        assert!(
+            worksheet
+                .add_conditional_format(0, 0, 0, 0, &rule.set_multi_range("B2:A1"))
+                .is_err()
+        );
+        assert_eq!(worksheet.conditional_formats().len(), before);
     }
 
     #[test]

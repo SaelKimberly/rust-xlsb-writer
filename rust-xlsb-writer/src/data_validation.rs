@@ -8,6 +8,7 @@ use rust_xlsb_core::prelude::{
 
 use crate::data::IntoExcelDateTime;
 use crate::datetime::ExcelDateTime;
+use crate::range_list::RangeList;
 use crate::{Error, Formula, Result};
 
 /// A data-validation comparison rule.
@@ -238,6 +239,7 @@ pub struct DataValidation {
     input_message: String,
     error_message: String,
     error_style: DataValidationErrorStyle,
+    multi_range: Option<Box<str>>,
 }
 
 impl Default for DataValidation {
@@ -264,6 +266,7 @@ impl DataValidation {
             input_message: String::new(),
             error_message: String::new(),
             error_style: DataValidationErrorStyle::Stop,
+            multi_range: None,
         }
     }
 
@@ -514,8 +517,31 @@ impl DataValidation {
             && self.error_message.is_empty()
     }
 
+    /// Sets a same-sheet multi-range override for this validation.
+    #[must_use]
+    pub fn set_multi_range(mut self, range: impl Into<String>) -> Self {
+        let range = range.into();
+        self.multi_range = (!range.trim().is_empty()).then(|| range.into_boxed_str());
+        self
+    }
+
+    pub(crate) fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn record(&self, range: UncheckedRfX) -> Result<BrtDVal> {
-        let (val_type, operator, formula1, formula2) = self.formulas(&range)?;
+        self.record_ranges(&[range])
+    }
+
+    pub(crate) fn record_ranges(&self, ranges: &[UncheckedRfX]) -> Result<BrtDVal> {
+        let first = ranges
+            .first()
+            .copied()
+            .ok_or_else(|| Error::Parameter("data validation requires a range".to_owned()))?;
+        let range_count = u32::try_from(ranges.len())
+            .map_err(|_| Error::ValueNotRepresentable("too many data-validation ranges"))?;
+        let (val_type, operator, formula1, formula2) = self.formulas(&first)?;
         let mut flags = u32::from(val_type) | (u32::from(operator) << 20);
         flags |= match self.error_style {
             DataValidationErrorStyle::Stop => 0,
@@ -538,8 +564,8 @@ impl DataValidation {
         Ok(BrtDVal {
             flags,
             sqrfx: rust_xlsb_core::prelude::UncheckedSqRfX {
-                crfx: 1,
-                rgRefx: vec![range],
+                crfx: range_count,
+                rgRefx: ranges.to_vec(),
             },
             strings: DValStrings {
                 strErrorTitle: nullable_string(&self.error_title),
@@ -743,7 +769,7 @@ fn string_formula(quoted: &str) -> Result<NameParsedFormula> {
 /// One worksheet validation and its target range.
 #[derive(Clone)]
 pub struct DataValidationRange {
-    pub(crate) range: UncheckedRfX,
+    pub(crate) ranges: RangeList,
     pub(crate) validation: DataValidation,
 }
 
@@ -856,6 +882,41 @@ mod tests {
                 .record(range())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn multi_range_records_keep_every_area_and_the_first_formula_base() {
+        let validation = DataValidation::new()
+            .allow_whole_number(DataValidationRule::GreaterThan(0))
+            .set_multi_range("$B$3:$D$6,$I$3:$K$6");
+        let ranges = crate::range_list::RangeList::parse(
+            validation.multi_range().expect("multi range"),
+            8_191,
+        )
+        .expect("parses");
+        let record = validation.record_ranges(ranges.as_slice()).expect("record");
+
+        assert_eq!(record.sqrfx.crfx, 2);
+        assert_eq!(record.sqrfx.rgRefx.as_slice(), ranges.as_slice());
+        assert_eq!(record.val_type(), 1);
+
+        let custom = DataValidation::new()
+            .allow_custom(crate::Formula::new("=A1>0"))
+            .set_multi_range("C3 D4");
+        let ranges =
+            crate::range_list::RangeList::parse(custom.multi_range().expect("multi range"), 8_191)
+                .expect("parses");
+        let record = custom.record_ranges(ranges.as_slice()).expect("record");
+        assert_eq!(
+            record.formula1.rgce,
+            [0x4C, 0xFE, 0xFF, 0x0F, 0x00, 0xFE, 0xFF, 0x1E, 0, 0, 0x0D]
+        );
+    }
+
+    #[test]
+    fn empty_multi_range_clears_the_override() {
+        let validation = DataValidation::new().set_multi_range("   ");
+        assert!(validation.multi_range().is_none());
     }
 
     #[test]

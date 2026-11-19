@@ -22,6 +22,7 @@ use rust_xlsb_core::prelude::{
 };
 use rust_xlsb_core::push_record;
 
+use crate::range_list::RangeList;
 use crate::{Color, Error, Format, Formula, Result};
 
 /// A value accepted by a cell conditional-format rule.
@@ -209,6 +210,12 @@ pub trait ConditionalFormat {
     /// Returns the differential format, if one was set.
     #[doc(hidden)]
     fn dxf_format(&self) -> Option<&Format>;
+
+    /// Returns the multi-range override, if one was set.
+    #[doc(hidden)]
+    fn multi_range(&self) -> Option<&str> {
+        None
+    }
 
     /// Builds the rule record for the given priority and DXF id.
     #[doc(hidden)]
@@ -619,6 +626,7 @@ pub struct ConditionalFormatText {
     rule: Option<ConditionalFormatTextRule>,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatText {
@@ -629,6 +637,7 @@ impl ConditionalFormatText {
             rule: None,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -698,6 +707,10 @@ impl ConditionalFormat for ConditionalFormatText {
         ))
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -709,6 +722,7 @@ pub struct ConditionalFormatBlank {
     is_inverted: bool,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatBlank {
@@ -719,6 +733,7 @@ impl ConditionalFormatBlank {
             is_inverted: false,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -775,6 +790,10 @@ impl ConditionalFormat for ConditionalFormatBlank {
         ))
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -786,6 +805,7 @@ pub struct ConditionalFormatError {
     is_inverted: bool,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatError {
@@ -796,6 +816,7 @@ impl ConditionalFormatError {
             is_inverted: false,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -852,6 +873,10 @@ impl ConditionalFormat for ConditionalFormatError {
         ))
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -863,6 +888,7 @@ pub struct ConditionalFormatFormula {
     formula: Option<Formula>,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatFormula {
@@ -873,6 +899,7 @@ impl ConditionalFormatFormula {
             formula: None,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -962,6 +989,10 @@ impl ConditionalFormat for ConditionalFormatFormula {
         ))
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -1030,6 +1061,7 @@ pub struct ConditionalFormatDate {
     rule: ConditionalFormatDateRule,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatDate {
@@ -1040,6 +1072,7 @@ impl ConditionalFormatDate {
             rule: ConditionalFormatDateRule::Yesterday,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -1092,6 +1125,10 @@ impl ConditionalFormat for ConditionalFormatDate {
         ))
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -1103,6 +1140,7 @@ pub struct ConditionalFormatCell {
     rule: Option<InternalRule>,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatCell {
@@ -1113,6 +1151,7 @@ impl ConditionalFormatCell {
             rule: None,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -1205,6 +1244,10 @@ impl ConditionalFormat for ConditionalFormatCell {
         })
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -1229,6 +1272,7 @@ pub struct ConditionalFormatTop {
     rule: ConditionalFormatTopRule,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatTop {
@@ -1239,6 +1283,7 @@ impl ConditionalFormatTop {
             rule: ConditionalFormatTopRule::Top(10),
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -1323,6 +1368,10 @@ impl ConditionalFormat for ConditionalFormatTop {
         })
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -1396,6 +1445,7 @@ pub struct ConditionalFormatAverage {
     rule: ConditionalFormatAverageRule,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatAverage {
@@ -1406,6 +1456,7 @@ impl ConditionalFormatAverage {
             rule: ConditionalFormatAverageRule::AboveAverage,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -1464,6 +1515,10 @@ impl ConditionalFormat for ConditionalFormatAverage {
         })
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -1475,6 +1530,7 @@ pub struct ConditionalFormatDuplicate {
     is_inverted: bool,
     pub(crate) format: Option<Format>,
     pub(crate) stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatDuplicate {
@@ -1485,6 +1541,7 @@ impl ConditionalFormatDuplicate {
             is_inverted: false,
             format: None,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -1541,6 +1598,10 @@ impl ConditionalFormat for ConditionalFormatDuplicate {
             formula1: None,
             ..BrtBeginCFRule::default()
         })
+    }
+
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
     }
 
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
@@ -1743,6 +1804,7 @@ pub struct ConditionalFormat2ColorScale {
     min_color: Color,
     max_color: Color,
     stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormat2ColorScale {
@@ -1755,6 +1817,7 @@ impl ConditionalFormat2ColorScale {
             min_color: TWO_COLOR_MIN,
             max_color: TWO_COLOR_MAX,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -1854,6 +1917,10 @@ impl ConditionalFormat for ConditionalFormat2ColorScale {
         write_scale_body(&[&self.min, &self.max], &colors, out)
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -1869,6 +1936,7 @@ pub struct ConditionalFormat3ColorScale {
     mid_color: Color,
     max_color: Color,
     stop_if_true: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormat3ColorScale {
@@ -1883,6 +1951,7 @@ impl ConditionalFormat3ColorScale {
             mid_color: THREE_COLOR_MID,
             max_color: THREE_COLOR_MAX,
             stop_if_true: false,
+            multi_range: None,
         }
     }
 
@@ -2006,6 +2075,10 @@ impl ConditionalFormat for ConditionalFormat3ColorScale {
         write_scale_body(&[&self.min, &self.mid, &self.max], &colors, out)
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
@@ -2020,6 +2093,7 @@ pub struct ConditionalFormatDataBar {
     max: Threshold,
     fill_color: Color,
     bar_only: bool,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatDataBar {
@@ -2031,6 +2105,7 @@ impl ConditionalFormatDataBar {
             max: Threshold::highest(),
             fill_color: DATA_BAR_COLOR,
             bar_only: false,
+            multi_range: None,
         }
     }
 
@@ -2119,6 +2194,10 @@ impl ConditionalFormat for ConditionalFormatDataBar {
         push_record(out, &conditional_color(self.fill_color)?)?;
         push_record(out, &BrtEndDatabar::default())?;
         Ok(())
+    }
+
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
     }
 
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
@@ -2270,6 +2349,7 @@ pub struct ConditionalFormatIconSet {
     is_reversed: bool,
     icon_only: bool,
     icons: Vec<ConditionalFormatCustomIcon>,
+    multi_range: Option<Box<str>>,
 }
 
 impl ConditionalFormatIconSet {
@@ -2282,6 +2362,7 @@ impl ConditionalFormatIconSet {
             is_reversed: false,
             icon_only: false,
             icons: icon_type.default_icons(),
+            multi_range: None,
         }
     }
 
@@ -2383,35 +2464,77 @@ impl ConditionalFormat for ConditionalFormatIconSet {
         Ok(())
     }
 
+    fn multi_range(&self) -> Option<&str> {
+        self.multi_range.as_deref()
+    }
+
     fn box_clone(&self) -> Box<dyn ConditionalFormat + Send + Sync> {
         Box::new(self.clone())
     }
 }
 
+macro_rules! impl_multi_range {
+    ($($rule:ty),* $(,)?) => {
+        $(
+            impl $rule {
+                /// Applies the rule to non-contiguous same-sheet ranges.
+                ///
+                /// Ranges may be separated by spaces or commas; `$` anchors
+                /// are accepted and ignored. An empty string clears the
+                /// override.
+                #[must_use]
+                pub fn set_multi_range(mut self, range: impl Into<String>) -> Self {
+                    let range = range.into();
+                    self.multi_range =
+                        (!range.trim().is_empty()).then(|| range.into_boxed_str());
+                    self
+                }
+            }
+        )*
+    };
+}
+
+impl_multi_range!(
+    ConditionalFormatText,
+    ConditionalFormatBlank,
+    ConditionalFormatError,
+    ConditionalFormatFormula,
+    ConditionalFormatDate,
+    ConditionalFormatCell,
+    ConditionalFormatTop,
+    ConditionalFormatAverage,
+    ConditionalFormatDuplicate,
+    ConditionalFormat2ColorScale,
+    ConditionalFormat3ColorScale,
+    ConditionalFormatDataBar,
+    ConditionalFormatIconSet,
+);
+
 /// One worksheet conditional format and its target range.
 pub struct ConditionalFormatRange {
-    pub(crate) range: UncheckedRfX,
+    pub(crate) ranges: RangeList,
     conditional_format: Box<dyn ConditionalFormat + Send + Sync>,
 }
 
 impl ConditionalFormatRange {
     pub(crate) fn new(
-        range: UncheckedRfX,
+        ranges: RangeList,
         conditional_format: Box<dyn ConditionalFormat + Send + Sync>,
     ) -> Self {
         Self {
-            range,
+            ranges,
             conditional_format,
         }
     }
 
     pub(crate) fn begin_rule(&self, priority: i32, dxf_id: u32) -> Result<BrtBeginCFRule> {
-        self.conditional_format.begin_rule_in_range(
-            priority,
-            dxf_id,
-            self.range.rwFirst,
-            self.range.colFirst,
-        )
+        let first = self.ranges.first();
+        self.conditional_format
+            .begin_rule_in_range(priority, dxf_id, first.rwFirst, first.colFirst)
+    }
+
+    pub(crate) fn ranges(&self) -> &[UncheckedRfX] {
+        self.ranges.as_slice()
     }
 
     pub(crate) fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
@@ -2459,6 +2582,33 @@ mod tests {
         let formula = record.formula1.expect("formula");
         assert_eq!(formula.rgce, [0x4C, 0, 0, 0, 0, 0, 0xC0, 0x41, 0xA5, 0x01]);
         assert_eq!(formula.cce as usize, formula.rgce.len());
+    }
+
+    #[test]
+    fn every_rule_type_supports_multi_range() {
+        let _ = ConditionalFormatText::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatBlank::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatError::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatFormula::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatDate::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatCell::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatTop::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatAverage::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatDuplicate::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormat2ColorScale::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormat3ColorScale::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatDataBar::new().set_multi_range("A1 B2");
+        let _ = ConditionalFormatIconSet::new().set_multi_range("A1 B2");
+
+        let rule = ConditionalFormatFormula::new().set_multi_range("$A$1,$B$2");
+        assert_eq!(rule.multi_range(), Some("$A$1,$B$2"));
+        assert!(ConditionalFormatFormula::new().multi_range().is_none());
+        assert!(
+            ConditionalFormatFormula::new()
+                .set_multi_range("   ")
+                .multi_range()
+                .is_none()
+        );
     }
 
     #[test]

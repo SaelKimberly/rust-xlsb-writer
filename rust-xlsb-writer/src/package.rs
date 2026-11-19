@@ -2579,6 +2579,61 @@ mod tests {
     }
 
     #[test]
+    fn multi_range_validations_and_conditional_formats_reach_the_sheet_part() {
+        let mut workbook = crate::Workbook::new();
+        let worksheet = workbook.add_worksheet();
+
+        let validation = crate::DataValidation::new()
+            .allow_whole_number(crate::DataValidationRule::GreaterThan(0))
+            .set_multi_range("B3:D6 I3:K6");
+        worksheet
+            .add_data_validation(0, 0, 0, 0, &validation)
+            .expect("multi-range validation");
+
+        let rule = crate::ConditionalFormatFormula::new()
+            .set_rule("=A1")
+            .set_multi_range("$B$3:$D$6,$I$3:$K$6");
+        worksheet
+            .add_conditional_format(0, 0, 0, 0, &rule)
+            .expect("multi-range conditional format");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("sheet");
+
+        let validations = records::<BrtDVal>(&sheet);
+        assert_eq!(validations.len(), 1);
+        assert_eq!(validations[0].sqrfx.crfx, 2);
+        assert_eq!(
+            validations[0]
+                .sqrfx
+                .rgRefx
+                .iter()
+                .map(|range| (range.rwFirst, range.rwLast, range.colFirst, range.colLast))
+                .collect::<Vec<_>>(),
+            [(2, 5, 1, 3), (2, 5, 8, 10)]
+        );
+
+        let blocks = records::<BrtBeginConditionalFormatting>(&sheet);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].sqrfx.crfx, 2);
+        assert_eq!(
+            blocks[0]
+                .sqrfx
+                .rgRefx
+                .iter()
+                .map(|range| (range.rwFirst, range.rwLast, range.colFirst, range.colLast))
+                .collect::<Vec<_>>(),
+            [(2, 5, 1, 3), (2, 5, 8, 10)]
+        );
+
+        let rules = records::<BrtBeginCFRule>(&sheet);
+        assert_eq!(rules.len(), 1);
+        let formula = rules[0].formula1.as_ref().expect("formula");
+        let expected = crate::formula::compile_relative("=A1", 2, 1).expect("compiled");
+        assert_eq!(formula.rgce, expected.rgce);
+    }
+
+    #[test]
     fn invalid_any_and_unused_validations_emit_no_dvals() {
         let mut workbook = crate::Workbook::new();
         let worksheet = workbook.add_worksheet();

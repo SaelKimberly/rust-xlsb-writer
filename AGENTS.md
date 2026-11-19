@@ -19,8 +19,8 @@ widths/formats, approximate autofit, scalar and static array formulas with cache
 read-only recommendation, tab ratio, a workbook or worksheet default cell format, sheet
 protection with unprotected ranges, ignored worksheet errors, an `AutoFilter`
 range with list/custom filter conditions and automatic row hiding,
-data validation with list, whole-number, decimal, date, time, and text-length
-rules, worksheet tables with header rows, built-in styles, and table
+data validation with multi-range, list, whole-number, decimal, date, time, and
+text-length rules, worksheet tables with header rows, built-in styles, and table
 AutoFilters, rich strings with per-run fonts, core/app/custom document properties with explicit creation timestamps,
 user-defined names for literals and absolute A1 references, and
 `save`/`save_to_buffer`/`save_to_writer`. The public write path stores strings in the shared-string
@@ -97,7 +97,7 @@ cell, emit a `PtgExp` expansion formula followed by `BrtArrFmla`, and fill the
 rest of the range with numeric zero. Dynamic-array, shared, table, external,
 cross-sheet, and named-range formulas are not implemented.
 
-Conditional formats are stored on the worksheet as a range, a boxed
+Conditional formats are stored on the worksheet as one or more ranges, a boxed
 `ConditionalFormat` rule, and an optional differential format. Cell-value,
 top/bottom, average, duplicate/unique, color-scale, data-bar, icon-set, text,
 blank, error, and date-occurring rules share that storage; color scales emit
@@ -197,9 +197,9 @@ PATH="$(dirname "$(rustup which --toolchain 1.100.0 cargo)"):$PATH" cargo test -
 
 Verified state on this branch:
 
-- `cargo test --workspace` → 628 unit tests and 7 doctests pass, 0 failures, with
+- `cargo test --workspace` → 640 unit tests and 7 doctests pass, 0 failures, with
   `rustc -V` reporting `1.100.0` for both the cargo and every spawned rustc.
-- `cargo test --workspace --all-features` → 632 unit tests and 7 doctests pass,
+- `cargo test --workspace --all-features` → 644 unit tests and 7 doctests pass,
   including the optional `jiff` and `rust_decimal` adapters.
 - `cargo clippy --workspace --all-targets` → no warnings and no code lints.
 - `cargo fmt --all --check` → clean.
@@ -348,9 +348,9 @@ and deku reads `len * 2` bytes; `FromStr` and `from_string` count
   it covers. Core has no package suite; writer has `#[cfg(test)] mod e2e`
   (`rust-xlsb-writer/src/e2e/`) using the public API and `calamine`. There is
   no `tests/`, `benches/`, or fixture directory.
-- 628 unit tests and 7 doctests in default builds: 285 in core, 343 in writer.
+- 640 unit tests and 7 doctests in default builds: 286 in core, 354 in writer.
   `--all-features` adds 4 writer tests for the optional `jiff` and
-  `rust_decimal` adapters, for 639 total. Most core
+  `rust_decimal` adapters, for 651 total. Most core
   unit tests are rstest cases in the `test_biff_export` table in
   `prelude/mod.rs`, each calling the generic `checked_test::<T>`: `Default` →
   `to_bytes` → exact byte-size assert → `from_bytes` → `check()` on both →

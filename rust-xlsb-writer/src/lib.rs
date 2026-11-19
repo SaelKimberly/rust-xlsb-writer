@@ -37,6 +37,7 @@ mod formula;
 mod package;
 mod properties;
 mod protection;
+mod range_list;
 mod sheet;
 pub(crate) mod table;
 mod theme;

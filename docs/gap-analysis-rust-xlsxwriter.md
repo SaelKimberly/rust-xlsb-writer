@@ -27,10 +27,10 @@ It is not a feature-equivalent replacement. The largest gaps are:
 3. **Analysis features** — conditional formats cover cell-value comparisons,
    top/bottom, average, duplicate/unique, 2-/3-color scales, basic data bars,
    standard icon sets, text, blank, error, date-occurring, and arbitrary
-   formula rules; x14 icon sets, data-bar extensions, and multi-range rules are
-   missing. Basic tables, `AutoFilter` ranges, list/custom filter conditions,
-   literal and formula-backed data validation, and structural sheet protection
-   are present.
+   formula rules, including multi-range rules; x14 icon sets and data-bar
+   extensions are missing. Basic tables, `AutoFilter` ranges, list/custom
+   filter conditions, literal and formula-backed multi-range data validation,
+   and structural sheet protection are present.
 4. **Rich objects** — no images, charts, notes, shapes, buttons, checkboxes, or
    sparklines.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
@@ -68,7 +68,7 @@ the breadth gap.
 | Strings | high-level strings intern to the SST and emit `BrtCellIsst`; low-level `ToCellValue` keeps inline strings; rich strings emit `BrtCellRString` with font-run indexes |
 | Package | multi-sheet workbook, styles part, shared strings part, optional Excel 2023 or custom theme part, rels/content types, store-only default ZIP with optional DEFLATE and ZIP64 |
 | Errors | `Error` / `XlsbError`, sheet-name, unknown-name, row/column, string-length, value-representation, date/time range, date/time parse, formula, and theme errors |
-| Verification | 285 core + 343 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
+| Verification | 286 core + 354 writer unit tests, 7 doctests; 4 optional-feature tests with all features; calamine round-trips, LibreOffice visual proof |
 
 ## 3. Capability Matrix
 
@@ -179,8 +179,8 @@ Status meanings:
 | `autofilter` | Supported | Range record, filter columns, and automatic row hiding |
 | `filter_column`, `filter_automatic_off` | Partial | List/custom string and number filters, blanks, AND/OR; temporal and boolean cells stay unmatched |
 | `add_table` | Partial | Header rows, custom columns, built-in styles, and table AutoFilters; totals, formulas, and per-column formats missing |
-| `add_conditional_format` | Partial | Cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, and formula rules; x14 icons, data-bar extensions, and multi-range rules missing |
-| `add_data_validation` | Partial | List, whole/decimal, date/time, and text-length rules, custom formulas, formula-valued bounds/lists, and prompt/error options; multi-range input missing |
+| `add_conditional_format` | Partial | Cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions missing |
+| `add_data_validation` | Partial | Multi-range list, whole/decimal, date/time, and text-length rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
 | `add_sparkline`, `add_sparkline_group` | Missing | Sparkline extension parts |
 | `protect`, `protect_with_password`, `protect_with_options` | Supported | `BrtSheetProtection`; legacy verifier, no encryption |
 | `unprotect_range`, `unprotect_range_with_options` | Supported | `BrtRangeProtection` records |
@@ -290,8 +290,8 @@ records or package parts that do not exist yet.
 | Rich strings | Shipped `BrtCellRString`/`RichStr`/`StrRun` with font-run indexes; no phonetic generation or rich SST interning |
 | Tables | Shipped: Table parts, `LISTPARTS`, built-in styles, and table AutoFilter ranges; totals, calculated columns, and per-column formats remain |
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, and automatic row hiding; table filters and icon/top-10/dynamic filters remain |
-| Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, and formula rules; x14 icons, data-bar extensions, and multi-range rules remain |
-| Data validation | Shipped `DVALS` records for literal rules, custom formulas, formula-valued bounds/lists, and prompt/error options; multi-range input remains |
+| Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
+| Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
@@ -349,8 +349,8 @@ records; LibreOffice renders merged ranges and links; no stubs.
 | `autofilter` ✅ | Range and filter-column records | M |
 | `filter_column` ✅ | List/custom filters, blanks, AND/OR, automatic row hiding | M |
 | `add_table` ✅ | Header rows, custom columns, built-in styles, and table AutoFilters | L |
-| `add_conditional_format` ✅ Partial | Reporting and highlighting; cell-value, top/bottom, average, duplicate/unique, 2-/3-color scales, basic data bars, standard icon sets, text, blank, error, date-occurring, and formula rules | L |
-| `add_data_validation` ✅ Partial | List/number/date/time/text-length rules, custom formulas, formula-valued bounds/lists, prompt/error options | M |
+| `add_conditional_format` ✅ Partial | Reporting and highlighting; cell-value, top/bottom, average, duplicate/unique, 2-/3-color scales, basic data bars, standard icon sets, text, blank, error, date-occurring, formula, and multi-range rules | L |
+| `add_data_validation` ✅ Partial | Multi-range list/number/date/time/text-length rules, custom formulas, formula-valued bounds/lists, prompt/error options | M |
 | `unprotect_range` ✅ | Shared-workbook safety | M |
 | `ignore_error` ✅ | Suppress worksheet error indicators | S |
 | `set_formula_result` variants | Finishing touches for computed sheets | S–M |
@@ -359,8 +359,8 @@ records; LibreOffice renders merged ranges and links; no stubs.
 basic tables are covered by record and package tests; conditional formats
 cover the non-extension rule families including 2-/3-color scales, basic data
 bars, standard icon sets, text, blank, error, date-occurring, and formula
-rules, while x14 icons, data-bar extensions, and multi-range rules remain open;
-malformed ranges rejected before output.
+rules and multi-range rules, while x14 icons and data-bar extensions remain
+open; malformed ranges rejected before output.
 
 ### P2 — Print and view
 
@@ -461,7 +461,7 @@ parts.
   and its public re-exports.
 - Reference inventory: `thirdparty/rust_xlsxwriter/src/{workbook,worksheet,format,datetime}.rs`
   and the feature list in `thirdparty/rust_xlsxwriter/src/lib.rs`.
-- Test evidence: 285 core + 343 writer unit tests and 7 doctests in default
+- Test evidence: 286 core + 354 writer unit tests and 7 doctests in default
   builds, plus 4 feature-gated writer tests for `jiff` and `rust_decimal`;
   calamine round-trips; LibreOffice render and XLSX round-trip of
   `rust-xlsb-writer/examples/showcase.rs`. Custom-theme tests cover raw XML,
@@ -471,7 +471,10 @@ parts.
   validation or conditional-format range, custom validation type 7, formula
   comparison types, and `CF_TEMPLATE_FMLA`. ExcelGen's `test-dataval.xlsb`
   confirms the relative encoding: a formula on `E2:E15` stores
-  `PtgRefN` with row offset 0 and column offset -1.
+  `PtgRefN` with row offset 0 and column offset -1. Multi-range tests decode
+  `crfx`/`rgRefx` in caller order for both `BrtDVal` and
+  `BrtBeginConditionalFormatting`; LibreOffice preserves
+  `sqref="B3:D6 I3:K6"` for both on XLSX export.
   LibreOffice imports static array formulas from XLSB, preserves their `ref`
   ranges, and recalculates the cached results; calamine reads the top-left
   cached value.

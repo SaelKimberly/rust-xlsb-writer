@@ -84,7 +84,7 @@ pub use brt_conditional::{
     CF_TEXTOPER_BEGINS_WITH, CF_TEXTOPER_CONTAINS, CF_TEXTOPER_ENDS_WITH, CF_TEXTOPER_NOT_CONTAINS,
     CF_TYPE_CELL_IS, CF_TYPE_DATABAR, CF_TYPE_EXPRESSION, CF_TYPE_FILTER, CF_TYPE_GRADIENT,
     CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
-    CFVO_PERCENTILE, conditional_format_block,
+    CFVO_PERCENTILE, conditional_format_block, conditional_format_block_ranges,
 };
 pub use brt_dval::{BrtBeginDVals, BrtDVal, BrtEndDVals, DValStrings, DVals};
 pub use brt_dxf::{BrtDXF, XFProp, XFProps};
