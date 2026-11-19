@@ -53,6 +53,7 @@
 - [Table total rows, subtotals, and per-column formats](plans/2026-11-19-table-totals-and-column-formats.md)
 - [Table calculated-column formulas](plans/2026-11-19-table-calculated-columns.md)
 - [Table filter conditions](plans/2026-11-19-table-filter-conditions.md)
+- [Formula-valued defined names](plans/2026-11-19-formula-defined-names.md)
 
 ## Analysis
 

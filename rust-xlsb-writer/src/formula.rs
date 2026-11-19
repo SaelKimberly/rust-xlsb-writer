@@ -3,6 +3,7 @@
 use rust_xlsb_core::prelude::{BErr, CellParsedFormula};
 
 use crate::data::{FormulaResult, IntoExcelData};
+use crate::defined_name::{XtiCollector, sheet_index};
 use crate::{Error, Format, Result, Worksheet};
 
 const PTG_EXP: u8 = 0x01;
@@ -30,6 +31,8 @@ const PTG_ERR: u8 = 0x1C;
 const PTG_BOOL: u8 = 0x1D;
 const PTG_INT: u8 = 0x1E;
 const PTG_NUM: u8 = 0x1F;
+const PTG_REF3D: u8 = 0x3A;
+const PTG_AREA3D: u8 = 0x3B;
 const PTG_FUNC: u8 = 0x41;
 const PTG_FUNC_VAR: u8 = 0x42;
 const PTG_REF: u8 = 0x44;
@@ -157,6 +160,38 @@ pub fn compile_relative(formula: &str, base_row: u32, base_col: u16) -> Result<C
     compile_with_base(formula, Some((base_row, base_col)), None)
 }
 
+struct NameContext<'a> {
+    sheets: &'a [Worksheet],
+    xti: &'a mut XtiCollector,
+    default_sheet: Option<usize>,
+}
+
+/// Compiles a defined-name formula with same-workbook sheet references.
+///
+/// `default_sheet` resolves unqualified references in a worksheet-scoped name.
+/// Global names pass `None`, so unqualified references are rejected.
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "shared with the defined-name encoder"
+)]
+pub(crate) fn compile_name_formula(
+    formula: &str,
+    sheets: &[Worksheet],
+    xti: &mut XtiCollector,
+    default_sheet: Option<usize>,
+) -> Result<CellParsedFormula> {
+    compile_with_context(
+        formula,
+        None,
+        None,
+        Some(NameContext {
+            sheets,
+            xti,
+            default_sheet,
+        }),
+    )
+}
+
 /// A table available to a calculated-column formula.
 #[expect(
     clippy::redundant_pub_crate,
@@ -187,6 +222,15 @@ fn compile_with_base<'t>(
     base: Option<(u32, u16)>,
     tables: Option<&'t [TableInfo<'t>]>,
 ) -> Result<CellParsedFormula> {
+    compile_with_context(formula, base, tables, None)
+}
+
+fn compile_with_context<'t>(
+    formula: &str,
+    base: Option<(u32, u16)>,
+    tables: Option<&'t [TableInfo<'t>]>,
+    name_context: Option<NameContext<'_>>,
+) -> Result<CellParsedFormula> {
     let formula = formula.strip_prefix('=').unwrap_or(formula);
     let mut parser = Parser {
         input: formula,
@@ -196,6 +240,7 @@ fn compile_with_base<'t>(
         unary_depth: 0,
         base,
         tables,
+        name_context,
         out: Vec::with_capacity(formula.len().min(MAX_FORMULA_TOKENS)),
     };
     parser.skip_whitespace();
@@ -301,7 +346,7 @@ struct CellRef {
     end: usize,
 }
 
-struct Parser<'a, 't> {
+struct Parser<'a, 't, 'c> {
     input: &'a str,
     bytes: &'a [u8],
     pos: usize,
@@ -309,10 +354,11 @@ struct Parser<'a, 't> {
     unary_depth: u32,
     base: Option<(u32, u16)>,
     tables: Option<&'t [TableInfo<'t>]>,
+    name_context: Option<NameContext<'c>>,
     out: Vec<u8>,
 }
 
-impl Parser<'_, '_> {
+impl Parser<'_, '_, '_> {
     fn parse_expression(&mut self) -> Result<()> {
         self.depth += 1;
         if self.depth > MAX_FORMULA_DEPTH {
@@ -449,6 +495,7 @@ impl Parser<'_, '_> {
                 Ok(())
             }
             Some(b'"') => self.parse_string(),
+            Some(b'\'') if self.name_context.is_some() => self.parse_sheet_reference(),
             Some(b'#') => self.parse_error(),
             Some(b'0'..=b'9' | b'.') => self.parse_number(),
             Some(b'$' | b'A'..=b'Z' | b'a'..=b'z') => self.parse_name_or_ref(),
@@ -458,6 +505,9 @@ impl Parser<'_, '_> {
 
     fn parse_name_or_ref(&mut self) -> Result<()> {
         let start = self.pos;
+        if self.name_context.is_some() && self.sheet_prefix_end(self.pos).is_some() {
+            return self.parse_sheet_reference();
+        }
         if self.tables.is_some()
             && let Some(bracket) = self.input[self.pos..].find('[')
         {
@@ -497,11 +547,11 @@ impl Parser<'_, '_> {
                     return Err(formula_error("expected a cell reference after ':'"));
                 };
                 self.pos = last.end;
-                self.push_area(&reference, &last);
+                self.push_area(&reference, &last)?;
             } else if self.peek() == Some(b'!') {
                 return Err(formula_error("cross-sheet references are not supported"));
             } else {
-                self.push_ref(&reference);
+                self.push_ref(&reference)?;
             }
             return Ok(());
         }
@@ -781,7 +831,26 @@ impl Parser<'_, '_> {
         Ok(())
     }
 
-    fn push_ref(&mut self, reference: &CellRef) {
+    fn push_ref(&mut self, reference: &CellRef) -> Result<()> {
+        if self.name_context.is_some() {
+            check_absolute_name_ref(reference)?;
+            let sheet = self
+                .name_context
+                .as_ref()
+                .and_then(|context| context.default_sheet)
+                .ok_or_else(|| {
+                    formula_error("global defined-name references must include a sheet name")
+                })?;
+            let ixti = self
+                .name_context
+                .as_mut()
+                .expect("name context was checked")
+                .xti
+                .index(sheet)?;
+            self.push_ref3d(ixti, reference);
+            return Ok(());
+        }
+
         let relative = self
             .base
             .filter(|_| reference.row_relative || reference.col_relative);
@@ -795,15 +864,36 @@ impl Parser<'_, '_> {
             self.out.extend_from_slice(&row.to_le_bytes());
             self.out
                 .extend_from_slice(&relative_column_word(reference, base_col).to_le_bytes());
-            return;
+            return Ok(());
         }
         self.out.push(PTG_REF);
         self.out.extend_from_slice(&reference.row.to_le_bytes());
         self.out
             .extend_from_slice(&column_word(reference).to_le_bytes());
+        Ok(())
     }
 
-    fn push_area(&mut self, first: &CellRef, last: &CellRef) {
+    fn push_area(&mut self, first: &CellRef, last: &CellRef) -> Result<()> {
+        if self.name_context.is_some() {
+            check_absolute_name_ref(first)?;
+            check_absolute_name_ref(last)?;
+            let sheet = self
+                .name_context
+                .as_ref()
+                .and_then(|context| context.default_sheet)
+                .ok_or_else(|| {
+                    formula_error("global defined-name references must include a sheet name")
+                })?;
+            let ixti = self
+                .name_context
+                .as_mut()
+                .expect("name context was checked")
+                .xti
+                .index(sheet)?;
+            self.push_area3d(ixti, first, last)?;
+            return Ok(());
+        }
+
         let relative = self.base.filter(|_| {
             first.row_relative || first.col_relative || last.row_relative || last.col_relative
         });
@@ -825,7 +915,7 @@ impl Parser<'_, '_> {
                 .extend_from_slice(&relative_column_word(first, base_col).to_le_bytes());
             self.out
                 .extend_from_slice(&relative_column_word(last, base_col).to_le_bytes());
-            return;
+            return Ok(());
         }
         self.out.push(PTG_AREA);
         self.out.extend_from_slice(&first.row.to_le_bytes());
@@ -833,6 +923,139 @@ impl Parser<'_, '_> {
         self.out
             .extend_from_slice(&column_word(first).to_le_bytes());
         self.out.extend_from_slice(&column_word(last).to_le_bytes());
+        Ok(())
+    }
+
+    fn push_ref3d(&mut self, ixti: u16, reference: &CellRef) {
+        self.out.push(PTG_REF3D);
+        self.out.extend_from_slice(&ixti.to_le_bytes());
+        self.out.extend_from_slice(&reference.row.to_le_bytes());
+        self.out
+            .extend_from_slice(&column_word(reference).to_le_bytes());
+    }
+
+    fn push_area3d(&mut self, ixti: u16, first: &CellRef, last: &CellRef) -> Result<()> {
+        if first.row > last.row || first.col > last.col {
+            return Err(Error::RowColumnOrder);
+        }
+        self.out.push(PTG_AREA3D);
+        self.out.extend_from_slice(&ixti.to_le_bytes());
+        self.out.extend_from_slice(&first.row.to_le_bytes());
+        self.out.extend_from_slice(&last.row.to_le_bytes());
+        self.out
+            .extend_from_slice(&column_word(first).to_le_bytes());
+        self.out.extend_from_slice(&column_word(last).to_le_bytes());
+        Ok(())
+    }
+
+    fn sheet_prefix_end(&self, start: usize) -> Option<usize> {
+        if self.bytes.get(start) == Some(&b'\'') {
+            let mut index = start + 1;
+            while let Some(byte) = self.bytes.get(index) {
+                if *byte == b'\'' {
+                    if self.bytes.get(index + 1) == Some(&b'\'') {
+                        index += 2;
+                    } else {
+                        return (self.bytes.get(index + 1) == Some(&b'!')).then_some(index + 1);
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            return None;
+        }
+
+        let mut index = start;
+        while self
+            .bytes
+            .get(index)
+            .is_some_and(|byte| is_identifier_byte(*byte))
+        {
+            index += 1;
+        }
+        (index > start && self.bytes.get(index) == Some(&b'!')).then_some(index)
+    }
+
+    fn parse_sheet_reference(&mut self) -> Result<()> {
+        let sheet = if self.peek() == Some(b'\'') {
+            self.read_quoted_sheet()?
+        } else {
+            let start = self.pos;
+            while self
+                .bytes
+                .get(self.pos)
+                .is_some_and(|byte| is_identifier_byte(*byte))
+            {
+                self.pos += 1;
+            }
+            self.input[start..self.pos].to_owned()
+        };
+        self.expect(b'!')?;
+        self.push_sheet_reference(&sheet)
+    }
+
+    fn read_quoted_sheet(&mut self) -> Result<String> {
+        self.pos += 1;
+        let start = self.pos;
+        while let Some(byte) = self.bytes.get(self.pos) {
+            if *byte == b'\'' {
+                if self.bytes.get(self.pos + 1) == Some(&b'\'') {
+                    self.pos += 2;
+                    continue;
+                }
+                let raw = &self.input[start..self.pos];
+                self.pos += 1;
+                return Ok(if raw.contains("''") {
+                    raw.replace("''", "'")
+                } else {
+                    raw.to_owned()
+                });
+            }
+            self.pos += 1;
+        }
+        Err(formula_error("unterminated quoted sheet name"))
+    }
+
+    fn push_sheet_reference(&mut self, sheet: &str) -> Result<()> {
+        let index = {
+            let context = self
+                .name_context
+                .as_ref()
+                .expect("sheet references require a name context");
+            sheet_index(context.sheets, sheet)?
+        };
+        let Some(first) = self.cell_ref_at(self.pos) else {
+            return Err(formula_error(
+                "defined-name sheet references require a cell or range",
+            ));
+        };
+        self.pos = first.end;
+        check_absolute_name_ref(&first)?;
+        self.skip_whitespace();
+        let last = if self.peek() == Some(b':') {
+            self.pos += 1;
+            self.skip_whitespace();
+            let Some(last) = self.cell_ref_at(self.pos) else {
+                return Err(formula_error("expected a cell reference after ':'"));
+            };
+            self.pos = last.end;
+            check_absolute_name_ref(&last)?;
+            Some(last)
+        } else {
+            None
+        };
+        let ixti = self
+            .name_context
+            .as_mut()
+            .expect("name context was checked")
+            .xti
+            .index(index)?;
+        if let Some(last) = last {
+            self.push_area3d(ixti, &first, &last)?;
+        } else {
+            self.push_ref3d(ixti, &first);
+        }
+        Ok(())
     }
 
     fn cell_ref_at(&self, start: usize) -> Option<CellRef> {
@@ -905,6 +1128,15 @@ impl Parser<'_, '_> {
     fn peek_n(&self, offset: usize) -> Option<u8> {
         self.bytes.get(self.pos + offset).copied()
     }
+}
+
+fn check_absolute_name_ref(reference: &CellRef) -> Result<()> {
+    if reference.row_relative || reference.col_relative {
+        return Err(formula_error(
+            "defined-name references must be absolute ($A$1 or $A$1:$B$2)",
+        ));
+    }
+    Ok(())
 }
 
 const fn column_word(reference: &CellRef) -> u16 {

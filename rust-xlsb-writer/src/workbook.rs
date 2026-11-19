@@ -166,9 +166,14 @@ impl Workbook {
     /// Defines a workbook or worksheet-scoped name.
     ///
     /// Use `Sheet1!Name` or `'Sheet 1'!Name` for a worksheet-scoped name. The
-    /// formula may be a number, string, boolean, error, or an absolute A1 cell
-    /// or range reference. Global references must include a sheet name; local
-    /// references resolve against the name's worksheet.
+    /// formula may be a number, string, boolean, error, an absolute A1 cell or
+    /// range reference, or an expression using numbers, strings, booleans,
+    /// errors, `+ - * / ^ & %`, comparisons, parentheses, same-workbook
+    /// sheet-qualified absolute A1 cells/ranges, and the supported function set.
+    /// Global references must include a sheet name; local references resolve
+    /// against the name's worksheet. External-workbook references, multi-sheet
+    /// ranges, defined-name references, and future/`_xlfn` functions are not
+    /// supported.
     ///
     /// # Errors
     ///

@@ -514,6 +514,30 @@ fn user_defined_names_roundtrip_through_calamine() {
 }
 
 #[test]
+fn formula_defined_names_roundtrip_through_calamine() {
+    // Calamine 0.38 decodes 0x0C/0x0D as '>'/'>=' reversed, so use arithmetic.
+    let mut workbook = Workbook::new();
+    workbook.add_worksheet();
+    workbook.add_worksheet();
+    workbook
+        .define_name("Total", "=SUM(Sheet1!$A$1:$A$3)")
+        .expect("global formula");
+    workbook
+        .define_name("Sheet2!Flag", "=$A$1*2")
+        .expect("local formula");
+
+    let bytes = workbook.save_to_buffer().expect("saves");
+    let opened = open_workbook_auto_from_rs(std::io::Cursor::new(bytes)).expect("opens");
+    assert_eq!(
+        opened.defined_names(),
+        &[
+            ("Flag".to_owned(), "Sheet2!$A$1*2".to_owned()),
+            ("Total".to_owned(), "SUM(Sheet1!$A$1:$A$3)".to_owned()),
+        ]
+    );
+}
+
+#[test]
 fn quoted_sheet_names_roundtrip_in_defined_names() {
     let mut workbook = Workbook::new();
     workbook

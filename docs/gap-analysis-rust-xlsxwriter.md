@@ -20,10 +20,12 @@ document properties with explicit creation timestamps.
 It is not a feature-equivalent replacement. The largest gaps are:
 
 1. **Formulas** — scalar and static array formulas, cached results, and
-   same-sheet references are supported; dynamic-array, shared, table, external,
-   cross-sheet, and named-range formulas are missing.
-2. **Worksheet layout and view** — user-defined names support literals and
-   absolute A1 references only; arbitrary formulas are missing.
+   same-sheet references are supported; dynamic-array, shared, external,
+   cross-sheet cell, and defined-name cell formulas are missing.
+2. **Worksheet layout and view** — user-defined names support literals,
+   absolute A1 references, and supported expression formulas with
+   same-workbook sheet references; external-workbook, multi-sheet-range,
+   name-to-name, and future-function formulas are missing.
 3. **Analysis features** — conditional formats cover cell-value comparisons,
    top/bottom, average, duplicate/unique, 2-/3-color scales, basic data bars,
    standard icon sets, text, blank, error, date-occurring, and arbitrary
@@ -94,7 +96,7 @@ Status meanings:
 | `new_worksheet_with_constant_memory`, `new_worksheet_with_low_memory` | Missing | Detached worksheet constructors |
 | `set_tempdir` | Missing | Temp-file policy for streaming |
 | `add_chartsheet` | Missing | Chartsheet packaging |
-| `define_name` | Partial | Global/local records; literals and absolute A1 cell/range references |
+| `define_name` | Partial | Global/local records; literals, absolute A1 cell/range references, and expressions with same-workbook sheet references; external-workbook, multi-sheet-range, name, and future-function references missing |
 | `set_properties` | Supported | Core/app/custom strings, typed values, and chrono, jiff, or `ExcelDateTime` creation times |
 | `set_default_format` | Supported | Workbook default format; set before worksheets |
 | `use_excel_2023_theme` | Supported | Theme part, theme version, Aptos Narrow 11 default format |
@@ -297,7 +299,7 @@ records or package parts that do not exist yet.
 | Images/charts/shapes | Drawing parts, relationships, anchors, media/chart parts |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Notes | Comment/note parts and VML/drawing linkage |
-| Defined names | User literals and absolute A1 references, plus print-area and print-title names |
+| Defined names | User literals, absolute A1 references, and expression formulas with same-workbook sheet references, plus print-area and print-title names; external-workbook, multi-sheet-range, name, and future-function references remain |
 | Document properties | Shipped: core/app strings, custom values, and creation timestamps; macros remain |
 | Themes | Shipped: Excel 2023 and custom theme parts, `BrtWbProp.dwThemeVersion`, theme color indexes, and `.thmx`/`.xlsx` extraction |
 | VBA | Macro project parts and content types |
@@ -396,7 +398,7 @@ media parts are present; no orphaned parts; visual render reviewed.
 
 | Item | Why | Size |
 |---|---|---|
-| ✅ Defined names | Literals and absolute A1 cell/range references; built-in print names | — |
+| ✅ Defined names | Literals, absolute A1 cell/range references, and expression formulas with same-workbook sheet references; built-in print names | — |
 | ✅ Document properties | Core/app/custom properties; chrono, jiff, and `ExcelDateTime` creation times | — |
 | ✅ Excel 2023 theme and theme colors | Excel 2023 Office/Aptos theme part and `BrtWbProp` version | — |
 | ✅ Custom themes | Raw XML, `.thmx`, and `.xlsx` extraction; `dwThemeVersion = 0` | — |

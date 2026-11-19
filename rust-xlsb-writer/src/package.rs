@@ -2021,6 +2021,48 @@ mod tests {
     }
 
     #[test]
+    fn formula_defined_names_emit_three_dimensional_tokens() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet();
+        workbook.add_worksheet();
+        workbook
+            .define_name("Total", "=SUM(Sheet1!$A$1:$A$3)")
+            .expect("formula name");
+        workbook
+            .define_name("Sheet2!Flag", "=$A$1>0")
+            .expect("local formula name");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let workbook_part = part_bytes(&bytes, "xl/workbook.bin").expect("workbook part");
+        let names = records::<BrtName>(&workbook_part);
+        let extern_sheets = records::<BrtExternSheet>(&workbook_part);
+
+        assert_eq!(extern_sheets.len(), 1);
+        assert_eq!(extern_sheets[0].cXti, 2);
+        assert_eq!(extern_sheets[0].rgXti[0].firstSheet, 1);
+        assert_eq!(extern_sheets[0].rgXti[1].firstSheet, 0);
+
+        let total = names
+            .iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Total"))
+            .expect("global formula name");
+        let mut expected = area3d(1, 0, 0, 2, 0).to_vec();
+        expected.extend_from_slice(&[0x42, 1, 0x04, 0]);
+        assert_eq!(total.itab, u32::MAX);
+        assert_eq!(total.formula.rgce, expected);
+
+        let flag = names
+            .iter()
+            .find(|name| name.name.to_optional_string().as_deref() == Some("Flag"))
+            .expect("local formula name");
+        assert_eq!(flag.itab, 1);
+        assert_eq!(
+            flag.formula.rgce,
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x1E, 0, 0, 0x0D]
+        );
+    }
+
+    #[test]
     fn local_name_on_a_second_sheet_uses_its_sheet_index() {
         let mut workbook = crate::Workbook::new();
         workbook.add_worksheet();
@@ -2115,8 +2157,17 @@ mod tests {
 
         let mut function = crate::Workbook::new();
         function.add_worksheet();
-        assert!(function.define_name("Rate", "=SUM(1,2)").is_ok());
+        assert!(function.define_name("Rate", "=NOPE(1)").is_ok());
         assert!(function.save_to_buffer().is_err());
+
+        let mut external = crate::Workbook::new();
+        external.add_worksheet();
+        assert!(
+            external
+                .define_name("Rate", "=SUM([Book]Sheet1!$A$1)")
+                .is_ok()
+        );
+        assert!(external.save_to_buffer().is_err());
     }
 
     #[test]

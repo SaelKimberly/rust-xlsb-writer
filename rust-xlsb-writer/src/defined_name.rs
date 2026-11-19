@@ -95,8 +95,10 @@ fn encode_formula(
         ));
     }
 
-    if formula.starts_with('"') {
-        return encode_string(formula);
+    if formula.starts_with('"')
+        && let Ok(rgce) = encode_string(formula)
+    {
+        return Ok(rgce);
     }
     if formula.eq_ignore_ascii_case("TRUE") {
         return Ok(vec![0x1D, 1]);
@@ -117,25 +119,47 @@ fn encode_formula(
         return Ok(rgce);
     }
 
-    let (sheet_name, reference) = match split_sheet_prefix(formula)? {
-        Some((sheet_name, reference)) => (Some(sheet_name), reference),
-        None => (None, formula),
-    };
-    let sheet = match sheet_name.as_deref().or(scope) {
-        Some(sheet_name) => sheet_index(sheets, sheet_name)?,
-        None if absolute_a1(formula).is_some()
-            || formula.split_once(':').is_some_and(|(first, last)| {
+    if let Ok(Some((sheet_name, reference))) = split_sheet_prefix(formula)
+        && is_simple_sheet_name(sheet_name.as_ref())
+        && let Ok(sheet) = sheet_index(sheets, sheet_name.as_ref())
+        && (absolute_a1(reference).is_some()
+            || reference.split_once(':').is_some_and(|(first, last)| {
                 absolute_a1(first).is_some() && absolute_a1(last).is_some()
-            }) =>
-        {
+            }))
+    {
+        let ixti = xti.index(sheet)?;
+        return encode_reference(reference, ixti);
+    }
+
+    if let Some((row, col)) = absolute_a1(formula) {
+        let Some(scope) = scope else {
             return Err(Error::Parameter(
                 "global defined-name references must include a sheet name".to_owned(),
             ));
-        }
-        None => return Err(unsupported(formula)),
-    };
-    let ixti = xti.index(sheet)?;
-    encode_reference(reference, ixti)
+        };
+        let ixti = xti.index(sheet_index(sheets, scope)?)?;
+        let mut rgce = Vec::with_capacity(9);
+        rgce.push(0x3A);
+        rgce.extend_from_slice(&ixti.to_le_bytes());
+        rgce.extend_from_slice(&row.to_le_bytes());
+        rgce.extend_from_slice(&col.to_le_bytes());
+        return Ok(rgce);
+    }
+
+    if formula
+        .split_once(':')
+        .is_some_and(|(first, last)| absolute_a1(first).is_some() && absolute_a1(last).is_some())
+        && scope.is_none()
+    {
+        return Err(Error::Parameter(
+            "global defined-name references must include a sheet name".to_owned(),
+        ));
+    }
+
+    let default_sheet = scope.map(|scope| sheet_index(sheets, scope)).transpose()?;
+    let compiled = crate::formula::compile_name_formula(formula, sheets, xti, default_sheet)?;
+    debug_assert_eq!(compiled.cb, 0);
+    Ok(compiled.rgce)
 }
 
 fn encode_reference(reference: &str, ixti: u16) -> Result<Vec<u8>> {
@@ -290,6 +314,13 @@ pub fn sheet_index(sheets: &[Worksheet], name: &str) -> Result<usize> {
         .iter()
         .position(|sheet| sheet.name_ref().to_lowercase() == folded)
         .ok_or_else(|| Error::UnknownWorksheetNameOrIndex(name.to_owned()))
+}
+
+fn is_simple_sheet_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains([
+            '(', ')', '+', '-', '*', '/', '^', '&', '%', '=', '<', '>', ',',
+        ])
 }
 
 fn absolute_a1(reference: &str) -> Option<(u32, u16)> {
@@ -463,7 +494,7 @@ fn name_error(name: &str, reason: &str) -> Error {
 
 fn unsupported(formula: &str) -> Error {
     Error::Parameter(format!(
-        "unsupported defined-name formula {formula:?}: use a constant or an absolute sheet cell/range"
+        "unsupported defined-name formula {formula:?}: use a constant, an absolute sheet cell/range, or a supported expression"
     ))
 }
 
@@ -530,10 +561,98 @@ mod tests {
     }
 
     #[test]
-    fn relative_references_and_functions_are_rejected() {
+    fn formula_expressions_encode_three_dimensional_references() {
         let (sheets, mut xti) = encoder();
-        assert!(encode_formula("=A1", Some("Sheet1"), &sheets, &mut xti).is_err());
-        assert!(encode_formula("=SUM($A$1:$A$2)", Some("Sheet1"), &sheets, &mut xti).is_err());
+        let mut expected = area3d(0, 0, 0, 2, 0).to_vec();
+        expected.extend_from_slice(&[0x42, 1, 0x04, 0x00]);
+        assert_eq!(
+            encode_formula("=SUM(Sheet1!$A$1:$A$3)", None, &sheets, &mut xti)
+                .expect("function over a range"),
+            expected
+        );
+
+        assert_eq!(
+            encode_formula("=Sheet1!$A$1*2", None, &sheets, &mut xti).expect("cell expression"),
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x1E, 2, 0, 0x05]
+        );
+
+        assert_eq!(
+            encode_formula("='Data Sheet'!$A$1+1", None, &sheets, &mut xti)
+                .expect("quoted sheet expression"),
+            [0x3A, 1, 0, 0, 0, 0, 0, 0, 0, 0x1E, 1, 0, 0x03]
+        );
+        assert_eq!(xti.sheets(), &[0, 1]);
+    }
+
+    #[test]
+    fn local_expression_references_use_the_name_scope() {
+        let (sheets, mut xti) = encoder();
+        assert_eq!(
+            encode_formula("=$A$1+1", Some("Data Sheet"), &sheets, &mut xti)
+                .expect("local expression"),
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x1E, 1, 0, 0x03]
+        );
+        assert_eq!(xti.sheets(), &[1]);
+        assert!(encode_formula("=A1+1", Some("Data Sheet"), &sheets, &mut xti).is_err());
+    }
+
+    #[test]
+    fn string_leading_expressions_reach_the_parser() {
+        let (sheets, mut xti) = encoder();
+        let mut expected = vec![0x17, 7, 0];
+        for unit in "Total: ".encode_utf16() {
+            expected.extend_from_slice(&unit.to_le_bytes());
+        }
+        expected.extend_from_slice(&[0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x08]);
+        assert_eq!(
+            encode_formula("=\"Total: \"&Sheet1!$A$1", None, &sheets, &mut xti)
+                .expect("string and reference"),
+            expected
+        );
+        assert_eq!(
+            encode_formula("=\"a\"=\"b\"", None, &sheets, &mut xti).expect("string comparison"),
+            [0x17, 1, 0, b'a', 0, 0x17, 1, 0, b'b', 0, 0x0B]
+        );
+    }
+
+    #[test]
+    fn reversed_three_dimensional_ranges_are_rejected() {
+        let (sheets, mut xti) = encoder();
+        assert!(matches!(
+            encode_formula("=$B$2:$A$1", Some("Data Sheet"), &sheets, &mut xti),
+            Err(Error::RowColumnOrder)
+        ));
+        let quoted = vec![Worksheet::new_named("Q1-2024".to_owned())];
+        assert!(matches!(
+            encode_formula(
+                "='Q1-2024'!$B$2:$A$1",
+                None,
+                &quoted,
+                &mut XtiCollector::new(1)
+            ),
+            Err(Error::RowColumnOrder)
+        ));
+    }
+
+    #[test]
+    fn global_expressions_require_a_sheet_and_external_workbooks_are_rejected() {
+        let (sheets, mut xti) = encoder();
+        assert!(encode_formula("=$A$1+1", None, &sheets, &mut xti).is_err());
+        assert!(encode_formula("=[Book]Sheet1!$A$1", None, &sheets, &mut xti).is_err());
+    }
+
+    #[test]
+    fn function_names_win_over_parenthesized_sheet_names() {
+        let sheets = vec![
+            Worksheet::new_named("SUM(Sheet1".to_owned()),
+            Worksheet::new_named("Sheet1".to_owned()),
+        ];
+        let mut xti = XtiCollector::new(2);
+        assert_eq!(
+            encode_formula("=SUM(Sheet1!$A$1)", None, &sheets, &mut xti).expect("function"),
+            [0x3A, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 1, 0x04, 0]
+        );
+        assert_eq!(xti.sheets(), &[1]);
     }
 
     #[test]
