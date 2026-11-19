@@ -20,6 +20,7 @@ mod brt_cell_st;
 mod brt_col_info;
 mod brt_color;
 mod brt_conditional;
+mod brt_drawing;
 mod brt_dval;
 mod brt_dxf;
 mod brt_extern_sheet;
@@ -92,6 +93,7 @@ pub use brt_conditional::{
     CF_TYPE_MULTISTATE, CFParsedFormula, CFVO_MAX, CFVO_MIN, CFVO_NUM, CFVO_PERCENT,
     CFVO_PERCENTILE, conditional_format_block, conditional_format_block_ranges,
 };
+pub use brt_drawing::BrtDrawing;
 pub use brt_dval::{BrtBeginDVals, BrtDVal, BrtEndDVals, DValStrings, DVals};
 pub use brt_dxf::{BrtDXF, XFProp, XFProps};
 pub use brt_extern_sheet::{BrtExternSheet, BrtSupSelf, Xti};

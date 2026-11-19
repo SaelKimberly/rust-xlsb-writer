@@ -28,6 +28,7 @@ mod data;
 mod data_validation;
 mod datetime;
 pub(crate) mod defined_name;
+pub(crate) mod drawing;
 #[cfg(test)]
 mod e2e;
 mod error;

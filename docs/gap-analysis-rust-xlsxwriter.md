@@ -36,9 +36,10 @@ It is not a feature-equivalent replacement. The largest gaps are:
    conditions, `AutoFilter` ranges, list/custom filter conditions with
    temporal and boolean matching, literal and formula-backed
    multi-range data validation, and structural sheet protection are present.
-4. **Rich objects** — worksheet background images and sparkline groups are
-   supported; foreground images, charts, notes, shapes, buttons, and
-   checkboxes are missing.
+4. **Rich objects** — worksheet background images, foreground images with
+   native sizing and pixel offsets, and sparkline groups are supported;
+   image scaling/fit-to-cell, charts, notes, shapes, buttons, and checkboxes
+   are missing.
 5. **Workbook metadata and packaging** — DEFLATE ZIP compression, ZIP64,
    user-defined names, the Excel 2023 theme, and custom theme files are
    available, but chartsheets and VBA are missing; core/app/custom document
@@ -48,7 +49,7 @@ It is not a feature-equivalent replacement. The largest gaps are:
    `ExcelDateTime` type are present.
 7. **Memory modes** — no constant-memory or low-memory worksheet writers.
 
-The current API surface is deliberately narrow: roughly 13 `Workbook`, 110
+The current API surface is deliberately narrow: roughly 13 `Workbook`, 112
 `Worksheet`, and 48 `Format` public methods, versus 31, 165, and 52 methods in
 the vendored `rust_xlsxwriter`. Method count is not feature count, but it shows
 the breadth gap.
@@ -198,7 +199,8 @@ Status meanings:
 | Capability | Current | Gap |
 |---|---|---|
 | `merge_range` | Supported | — |
-| `insert_image`, `embed_image`, image offsets/fit-to-cell | Missing | Drawing/image parts |
+| `insert_image`, `insert_image_with_offset` | Supported | DrawingML picture parts, native dimensions, cell anchors, and media relationships |
+| `embed_image`, image scaling/fit-to-cell | Missing | In-cell images and scaled/fit anchors |
 | `insert_background_image` | Supported | PNG/JPEG/GIF/24-bit BMP media part and worksheet relationship |
 | `insert_chart`, `insert_chart_with_offset` | Missing | Chart parts |
 | `insert_note` | Missing | Comments/notes |
@@ -241,7 +243,7 @@ Status meanings:
 | `ExcelDateTime` | Supported | Native constructors, parser, serial conversion, and cell writes |
 | jiff civil types | Supported | Optional `jiff` feature; borrowed dates, times, datetimes |
 | `rust_decimal::Decimal` | Supported | Optional `rust_decimal` feature; converted to `f64` |
-| `Formula` | Missing | Formula value type |
+| `Formula` | Supported | Formula input, validation, and cached results |
 | `Url` | Supported | Text, tooltip, internal/file/URL targets |
 | Serde serialization | Missing | Optional feature |
 | Polars integration | Missing | Optional feature |
@@ -298,7 +300,7 @@ records or package parts that do not exist yet.
 | Filters | Shipped: `BrtBeginFilterColumn`, list/custom filter records, automatic worksheet and table row hiding; icon/top-10/dynamic filter records remain |
 | Conditional formats | Shipped: cell-value, top/bottom, average, duplicate/unique, 2-/3-color scale, basic data-bar, standard icon-set, text, blank, error, date-occurring, formula, and multi-range rules; x14 icons and data-bar extensions remain |
 | Data validation | Shipped `DVALS` records for multi-range literal/formula rules, custom formulas, formula-valued bounds/lists, and prompt/error options |
-| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground drawings still need drawing parts, anchors, and chart parts |
+| Images/charts/shapes | Background images use media parts and worksheet relationships; foreground images use DrawingML pictures, two-cell anchors, drawing relationships, and media parts. Image scaling/fit-to-cell and charts remain |
 | Chartsheets | Chartsheet parts and workbook relationships |
 | Sparklines | Shipped `BrtBeginSparklineGroup`/`BrtSparkline` FRT records, grouped rows/columns, and `Xti` data-range formulas |
 | Notes | Comment/note parts and VML/drawing linkage |
@@ -455,7 +457,7 @@ work is future-function token coverage and shared-formula state:
 3. Cross-sheet and defined-name cell formulas.
 
 If formulas are deferred, the next bounded gaps are rich objects: notes,
-shapes, buttons, checkboxes, foreground images, and charts. Hyperlinks,
+shapes, buttons, checkboxes, image scaling/fit-to-cell, and charts. Hyperlinks,
 worksheet state, page setup, text headers/footers, manual page breaks, outline
 groups, print areas, repeat titles, and approximate autofit are shipped.
 

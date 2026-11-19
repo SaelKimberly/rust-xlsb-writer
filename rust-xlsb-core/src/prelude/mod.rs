@@ -17,23 +17,23 @@ pub use record::{
     BrtBeginSparklineGroup, BrtBeginSst, BrtBeginTableStyles, BrtBeginWsView, BrtBkHim,
     BrtBookView, BrtBorder, BrtBrk, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellBlank, BrtCellBool,
     BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellMeta, BrtCellRString, BrtCellReal,
-    BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtEndAFilter,
-    BrtEndCFRule, BrtEndColBrk, BrtEndColorScale, BrtEndConditionalFormatting, BrtEndCustomFilters,
-    BrtEndDVals, BrtEndDatabar, BrtEndDynamicArrayPr, BrtEndEsfmd, BrtEndEsmdb, BrtEndEsmdtinfo,
-    BrtEndFilterColumn, BrtEndFilters, BrtEndFmd, BrtEndHeaderFooter, BrtEndIconSet, BrtEndList,
-    BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndMetadata, BrtEndRwBrk,
-    BrtEndSparklineGroup, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet, BrtFRTBegin,
-    BrtFRTEnd, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum,
-    BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListCCFmla, BrtListPart, BrtListTrFmla,
-    BrtMargins, BrtMdb, BrtMdtinfo, BrtMergeCell, BrtName, BrtPageSetup, BrtPane, BrtPrintOptions,
-    BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection, BrtSparkline, BrtStyle,
-    BrtSupSelf, BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo, BrtWsProp, BrtXF,
-    CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE, CF_TEMPLATE_CONTAINS_BLANKS,
-    CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS,
-    CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES,
-    CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE, CF_TEMPLATE_EXPR,
-    CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
-    CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
+    BrtCellRk, BrtCellSt, BrtColInfo, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing,
+    BrtEndAFilter, BrtEndCFRule, BrtEndColBrk, BrtEndColorScale, BrtEndConditionalFormatting,
+    BrtEndCustomFilters, BrtEndDVals, BrtEndDatabar, BrtEndDynamicArrayPr, BrtEndEsfmd,
+    BrtEndEsmdb, BrtEndEsmdtinfo, BrtEndFilterColumn, BrtEndFilters, BrtEndFmd, BrtEndHeaderFooter,
+    BrtEndIconSet, BrtEndList, BrtEndListCol, BrtEndListCols, BrtEndListParts, BrtEndMetadata,
+    BrtEndRwBrk, BrtEndSparklineGroup, BrtEndSst, BrtEndTableStyles, BrtEndWsView, BrtExternSheet,
+    BrtFRTBegin, BrtFRTEnd, BrtFileSharing, BrtFill, BrtFilter, BrtFmlaBool, BrtFmlaError,
+    BrtFmlaNum, BrtFmlaString, BrtFmt, BrtFont, BrtHLink, BrtListCCFmla, BrtListPart,
+    BrtListTrFmla, BrtMargins, BrtMdb, BrtMdtinfo, BrtMergeCell, BrtName, BrtPageSetup, BrtPane,
+    BrtPrintOptions, BrtRangeProtection, BrtRowHdr, BrtSSTItem, BrtSel, BrtSheetProtection,
+    BrtSparkline, BrtStyle, BrtSupSelf, BrtTableStyleClient, BrtWbProp, BrtWsDim, BrtWsFmtInfo,
+    BrtWsProp, BrtXF, CF_TEMPLATE_ABOVE_AVERAGE, CF_TEMPLATE_BELOW_AVERAGE,
+    CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_ERRORS, CF_TEMPLATE_CONTAINS_NO_BLANKS,
+    CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT, CF_TEMPLATE_DATABAR,
+    CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_ABOVE_AVERAGE, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
+    CF_TEMPLATE_EXPR, CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT,
+    CF_TEMPLATE_MULTISTATE, CF_TEMPLATE_TIME_PERIOD_LAST_MONTH, CF_TEMPLATE_TIME_PERIOD_LAST_WEEK,
     CF_TEMPLATE_TIME_PERIOD_LAST7DAYS, CF_TEMPLATE_TIME_PERIOD_NEXT_MONTH,
     CF_TEMPLATE_TIME_PERIOD_NEXT_WEEK, CF_TEMPLATE_TIME_PERIOD_THIS_MONTH,
     CF_TEMPLATE_TIME_PERIOD_THIS_WEEK, CF_TEMPLATE_TIME_PERIOD_TODAY,
@@ -124,6 +124,7 @@ mod tests {
     #[case::brt_sup_self(|| checked_test::<BrtSupSelf>(0))]
     #[case::brt_xf(|| checked_test::<BrtXF>(16))]
     #[case::brt_bk_him(|| checked_test::<BrtBkHim>(4))]
+    #[case::brt_drawing(|| checked_test::<BrtDrawing>(4))]
     #[case::brt_begin_metadata(|| checked_test::<BrtBeginMetadata>(0))]
     #[case::brt_end_metadata(|| checked_test::<BrtEndMetadata>(0))]
     #[case::brt_begin_esmdtinfo(|| checked_test::<BrtBeginEsmdtinfo>(4))]

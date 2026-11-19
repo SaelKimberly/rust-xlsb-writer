@@ -38,6 +38,7 @@ pub struct Workbook {
     default_format: Option<Format>,
     default_row_height: Option<u32>,
     default_col_width: Option<f64>,
+    default_column_metrics: Option<(u32, u32)>,
     defined_names: Vec<DefinedName>,
 }
 
@@ -65,6 +66,7 @@ impl Workbook {
             default_format: None,
             default_row_height: None,
             default_col_width: None,
+            default_column_metrics: None,
             defined_names: Vec::new(),
         }
     }
@@ -229,6 +231,7 @@ impl Workbook {
         self.default_row_height = Some(row_height);
         self.default_col_width =
             Some((f64::from(col_width) - f64::from(padding)) / f64::from(digit_width));
+        self.default_column_metrics = Some((digit_width, padding));
         Ok(self)
     }
 
@@ -264,7 +267,14 @@ impl Workbook {
             self.default_row_height,
             self.default_col_width,
         ) {
-            worksheet.initialize_default_format(format, height, width);
+            let (digit_width, padding) = self.default_column_metrics.unwrap_or((7, 5));
+            worksheet.initialize_default_format_with_metrics(
+                format,
+                height,
+                width,
+                digit_width,
+                padding,
+            );
         }
     }
 

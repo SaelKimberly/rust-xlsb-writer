@@ -10,6 +10,7 @@ use crate::data::{
     RichRun, RichString,
 };
 use crate::data_validation::{DataValidation, DataValidationRange};
+use crate::drawing::PlacedImage;
 use crate::filter::FilterCondition;
 use crate::format::BorderSide;
 use crate::formula::{Formula, cached_result, compile, result_is_too_long, subtotal_formula};
@@ -319,6 +320,7 @@ pub struct Worksheet {
     default_format: Option<Format>,
     default_row_height: Option<f64>,
     default_col_width: Option<f64>,
+    default_column_metrics: (u32, u32),
     page_setup: PageSetup,
     header_footer: HeaderFooter,
     page_breaks: Vec<u32>,
@@ -343,6 +345,7 @@ pub struct Worksheet {
     tables: Vec<TableRange>,
     sparkline_groups: Vec<SparklineGroup>,
     background_image: Option<Image>,
+    images: Vec<PlacedImage>,
     max_autofit_row: RowNum,
     max_autofit_width: u32,
 }
@@ -396,6 +399,7 @@ impl Worksheet {
             default_format: None,
             default_row_height: None,
             default_col_width: None,
+            default_column_metrics: (7, 5),
             page_setup: PageSetup::default(),
             header_footer: HeaderFooter::default(),
             page_breaks: Vec::new(),
@@ -420,6 +424,7 @@ impl Worksheet {
             tables: Vec::new(),
             sparkline_groups: Vec::new(),
             background_image: None,
+            images: Vec::new(),
             max_autofit_row: MAX_ROW,
             max_autofit_width: MAX_AUTOFIT_WIDTH_PIXELS,
         }
@@ -2213,23 +2218,28 @@ impl Worksheet {
         };
         validate_row_height(f64::from(row_height) * 0.75)?;
 
-        self.initialize_default_format(
+        self.initialize_default_format_with_metrics(
             format,
             row_height,
             (f64::from(col_width) - f64::from(padding)) / f64::from(digit_width),
+            digit_width,
+            padding,
         );
         Ok(self)
     }
 
-    pub(crate) fn initialize_default_format(
+    pub(crate) fn initialize_default_format_with_metrics(
         &mut self,
         format: &Format,
         row_height: u32,
         col_width: f64,
+        digit_width: u32,
+        padding: u32,
     ) {
         self.default_format = Some(format.clone());
         self.default_row_height = Some(f64::from(row_height) * 0.75);
         self.default_col_width = Some(col_width);
+        self.default_column_metrics = (digit_width, padding);
     }
 
     /// Sets the printed page orientation to landscape.
@@ -3355,6 +3365,46 @@ impl Worksheet {
         self
     }
 
+    /// Inserts a foreground image at a cell.
+    ///
+    /// The image keeps its native pixel size. It is written to
+    /// `xl/media/imageN.<ext>` and anchored through an `xl/drawings/drawingN.xml`
+    /// part.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] for an out-of-range cell, or
+    /// [`Error::ImageError`] when the image header has no readable dimensions.
+    pub fn insert_image(&mut self, row: RowNum, col: ColNum, image: &Image) -> Result<&mut Self> {
+        self.insert_image_with_offset(row, col, image, 0, 0)
+    }
+
+    /// Inserts a foreground image at a pixel offset within a cell.
+    ///
+    /// Offsets may place the image outside the target cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RowColumnLimit`] for an out-of-range cell, or
+    /// [`Error::ImageError`] when the image header has no readable dimensions.
+    pub fn insert_image_with_offset(
+        &mut self,
+        row: RowNum,
+        col: ColNum,
+        image: &Image,
+        x_offset: u32,
+        y_offset: u32,
+    ) -> Result<&mut Self> {
+        self.images.push(PlacedImage::new(
+            image.clone(),
+            row,
+            col,
+            x_offset,
+            y_offset,
+        )?);
+        Ok(self)
+    }
+
     /// Merges a rectangular range and writes a string into its top-left cell.
     ///
     /// The rest of the range becomes formatted blanks. Overlapping ranges and
@@ -3609,6 +3659,14 @@ impl Worksheet {
 
     pub(crate) const fn default_col_width(&self) -> Option<f64> {
         self.default_col_width
+    }
+
+    pub(crate) const fn default_column_metrics(&self) -> (u32, u32) {
+        self.default_column_metrics
+    }
+
+    pub(crate) fn images(&self) -> &[PlacedImage] {
+        &self.images
     }
 
     pub(crate) const fn unused_rows_hidden(&self) -> bool {
@@ -5182,7 +5240,7 @@ mod tests {
     #[test]
     fn default_dimensions_convert_pixels() {
         let mut worksheet = Worksheet::new();
-        worksheet.initialize_default_format(&Format::new(), 24, 8.0);
+        worksheet.initialize_default_format_with_metrics(&Format::new(), 24, 8.0, 7, 5);
 
         assert_eq!(worksheet.default_row_height(), Some(18.0));
         assert_eq!(worksheet.default_col_width(), Some(8.0));
@@ -5361,7 +5419,7 @@ mod tests {
     #[test]
     fn default_hyperlink_style_keeps_workbook_default_format() {
         let mut worksheet = Worksheet::new_named("Sheet1".to_owned());
-        worksheet.initialize_default_format(&Format::new().set_bold(), 24, 8.0);
+        worksheet.initialize_default_format_with_metrics(&Format::new().set_bold(), 24, 8.0, 7, 5);
         worksheet
             .write_url(0, 0, "https://example.com")
             .expect("writes url");

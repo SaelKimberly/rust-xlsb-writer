@@ -21,6 +21,7 @@ use crate::data::CellData;
 use crate::defined_name::{
     DefinedName, NameTable, XtiCollector, area3d, area3d_value, sheet_index,
 };
+use crate::drawing::{drawing_rels, drawing_xml};
 use crate::formula::TableInfo;
 use crate::properties::CustomPropertyValue;
 use crate::sparkline::{SparklineSaveCell, SparklineSaveGroup};
@@ -154,8 +155,11 @@ pub fn build_package(
     let mut sheet_parts = Vec::with_capacity(sheets.len());
     let mut table_parts = Vec::new();
     let mut table_ids = Vec::new();
+    let mut drawing_parts = Vec::new();
+    let mut drawing_ids = Vec::new();
     let mut media_parts = Vec::new();
     let mut image_types = Vec::new();
+    let mut drawing_number = 0u32;
     let view = workbook_view(sheets);
     for (index, sheet) in sheets.iter().enumerate() {
         let image_index = sheet.background_image().map(|image| {
@@ -170,9 +174,44 @@ pub fn build_package(
             }
             image_index
         });
-        let background_rel_id = image_index
-            .map(|_| background_image_rel_id(sheet))
-            .transpose()?;
+        let mut next_rel_id = next_sheet_rel_id(sheet)?;
+        let drawing = if sheet.images().is_empty() {
+            None
+        } else {
+            drawing_number += 1;
+            drawing_ids.push(drawing_number);
+            let images = sheet.images();
+            let mut media_indices = Vec::with_capacity(images.len());
+            for image in images {
+                let media_index = media_parts.len() + 1;
+                let extension = image.image.extension();
+                media_parts.push((
+                    format!("xl/media/image{media_index}.{extension}"),
+                    image.image.data().to_vec(),
+                ));
+                if !image_types.iter().any(|(known, _)| *known == extension) {
+                    image_types.push((extension, image.image.content_type()));
+                }
+                media_indices.push(media_index);
+            }
+            drawing_parts.push((
+                format!("xl/drawings/drawing{drawing_number}.xml"),
+                drawing_xml(sheet, images).into_bytes(),
+            ));
+            drawing_parts.push((
+                format!("xl/drawings/_rels/drawing{drawing_number}.xml.rels"),
+                drawing_rels(images, &media_indices).into_bytes(),
+            ));
+            let rel_id = next_rel_id;
+            next_rel_id += 1;
+            Some((drawing_number, rel_id))
+        };
+        let background_rel_id = if image_index.is_some() {
+            let rel_id = next_rel_id;
+            Some(rel_id)
+        } else {
+            None
+        };
         let mut bytes = Vec::new();
         let selected = index == view.active && (view.explicit_active || view.active != 0);
         crate::sheet::write_sheet_with_fonts(
@@ -183,11 +222,12 @@ pub fn build_package(
             &conditional_dxf_ids[index],
             &sheet_sparklines[index],
             selected,
+            drawing.map(|(_, rel_id)| rel_id),
             background_rel_id,
             &mut bytes,
         )?;
         sheet_parts.push((format!("xl/worksheets/sheet{}.bin", index + 1), bytes));
-        if let Some(rels) = sheet_rels(sheet, image_index.zip(background_rel_id)) {
+        if let Some(rels) = sheet_rels(sheet, drawing, image_index.zip(background_rel_id)) {
             sheet_parts.push((
                 format!("xl/worksheets/_rels/sheet{}.bin.rels", index + 1),
                 rels.into_bytes(),
@@ -219,6 +259,7 @@ pub fn build_package(
                 has_custom_properties,
                 settings.theme.as_ref(),
                 &table_ids,
+                &drawing_ids,
                 &image_types,
                 has_dynamic_arrays,
             )
@@ -262,6 +303,7 @@ pub fn build_package(
     }
     parts.extend(sheet_parts);
     parts.extend(table_parts);
+    parts.extend(drawing_parts);
     parts.extend(media_parts);
 
     if has_strings {
@@ -595,7 +637,7 @@ fn push_defined_name(
     Ok(())
 }
 
-fn background_image_rel_id(sheet: &Worksheet) -> Result<u32> {
+fn next_sheet_rel_id(sheet: &Worksheet) -> Result<u32> {
     let mut rel_id = u32::try_from(sheet.tables().len())
         .map_err(|_| Error::ValueNotRepresentable("too many tables"))?;
     for link in sheet.hyperlinks().values() {
@@ -610,9 +652,14 @@ fn background_image_rel_id(sheet: &Worksheet) -> Result<u32> {
     ))
 }
 
-fn sheet_rels(sheet: &Worksheet, background: Option<(usize, u32)>) -> Option<String> {
+fn sheet_rels(
+    sheet: &Worksheet,
+    drawing: Option<(u32, u32)>,
+    background: Option<(usize, u32)>,
+) -> Option<String> {
     if sheet.tables().is_empty()
         && sheet.hyperlinks().values().all(crate::Url::is_internal)
+        && drawing.is_none()
         && background.is_none()
     {
         return None;
@@ -644,6 +691,13 @@ fn sheet_rels(sheet: &Worksheet, background: Option<(usize, u32)>) -> Option<Str
         )
         .expect("writing to String cannot fail");
     }
+    if let Some((drawing_number, drawing_rel_id)) = drawing {
+        write!(
+            body,
+            r#"<Relationship Id="rId{drawing_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing{drawing_number}.xml"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
     if let Some((image_index, image_rel_id)) = background {
         let extension = sheet
             .background_image()
@@ -669,6 +723,7 @@ fn content_types(
     has_custom_properties: bool,
     theme: Option<&crate::theme::Theme>,
     table_ids: &[u32],
+    drawing_ids: &[u32],
     image_types: &[(&str, &str)],
     has_metadata: bool,
 ) -> String {
@@ -734,6 +789,13 @@ fn content_types(
         write!(
             body,
             r#"<Override PartName="/xl/tables/table{id}.bin" ContentType="application/vnd.ms-excel.table"/>"#
+        )
+        .expect("writing to String cannot fail");
+    }
+    for id in drawing_ids {
+        write!(
+            body,
+            r#"<Override PartName="/xl/drawings/drawing{id}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#
         )
         .expect("writing to String cannot fail");
     }
@@ -1300,10 +1362,10 @@ mod tests {
         BrtBeginCustomFilters, BrtBeginDVals, BrtBeginDatabar, BrtBeginFilterColumn,
         BrtBeginFilters, BrtBeginIconSet, BrtBeginList, BrtBeginListCol, BrtBeginListParts,
         BrtBeginWsView, BrtBkHim, BrtBookView, BrtBundleSh, BrtCFVO, BrtCalcProp, BrtCellMeta,
-        BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtExternSheet, BrtFileSharing,
-        BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont, BrtHLink,
-        BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName, BrtRowHdr, BrtSheetProtection,
-        BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
+        BrtCellRString, BrtColor, BrtCustomFilter, BrtDVal, BrtDXF, BrtDrawing, BrtExternSheet,
+        BrtFileSharing, BrtFilter, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString, BrtFont,
+        BrtHLink, BrtListPart, BrtListTrFmla, BrtMdb, BrtMdtinfo, BrtName, BrtRowHdr,
+        BrtSheetProtection, BrtSparkline, BrtTableStyleClient, BrtWbProp, BrtWsFmtInfo, BrtXF,
         CF_TEMPLATE_CONTAINS_BLANKS, CF_TEMPLATE_CONTAINS_NO_ERRORS, CF_TEMPLATE_CONTAINS_TEXT,
         CF_TEMPLATE_DATABAR, CF_TEMPLATE_DUPLICATE_VALUES, CF_TEMPLATE_EQUAL_BELOW_AVERAGE,
         CF_TEMPLATE_FILTER, CF_TEMPLATE_FMLA, CF_TEMPLATE_GRADIENT, CF_TEMPLATE_MULTISTATE,
@@ -4593,6 +4655,204 @@ mod tests {
 
         let bytes = workbook.save_to_buffer().expect("saves");
         assert_eq!(read_u16(&bytes, 8).expect("method"), 0);
+    }
+
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let mut png = [0u8; 24];
+        png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        png[12..16].copy_from_slice(b"IHDR");
+        png[16..20].copy_from_slice(&width.to_be_bytes());
+        png[20..24].copy_from_slice(&height.to_be_bytes());
+        png.to_vec()
+    }
+
+    #[test]
+    fn image_insertion_rejects_bad_dimensions_and_cells() {
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        let bad = crate::Image::new_from_buffer(b"\x89PNG\r\n\x1a\nshort").expect("png");
+        assert!(matches!(
+            sheet.insert_image(0, 0, &bad),
+            Err(Error::ImageError(_))
+        ));
+
+        let image = crate::Image::new_from_buffer(&png(1, 1)).expect("png");
+        assert!(matches!(
+            sheet.insert_image(MAX_ROW + 1, 0, &image),
+            Err(Error::RowColumnLimit)
+        ));
+        assert!(matches!(
+            sheet.insert_image(0, MAX_COL + 1, &image),
+            Err(Error::RowColumnLimit)
+        ));
+    }
+
+    #[test]
+    fn each_image_sheet_gets_its_own_drawing_part() {
+        let image = crate::Image::new_from_buffer(&png(1, 1)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        workbook
+            .add_worksheet()
+            .insert_image(0, 0, &image)
+            .expect("first sheet");
+        workbook
+            .add_worksheet()
+            .insert_image(0, 0, &image)
+            .expect("second sheet");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(names.contains(&"xl/drawings/drawing1.xml".to_owned()));
+        assert!(names.contains(&"xl/drawings/drawing2.xml".to_owned()));
+        assert!(names.contains(&"xl/media/image1.png".to_owned()));
+        assert!(names.contains(&"xl/media/image2.png".to_owned()));
+        for sheet in 1..=2 {
+            let rels = String::from_utf8(
+                part_bytes(
+                    &bytes,
+                    &format!("xl/worksheets/_rels/sheet{sheet}.bin.rels"),
+                )
+                .expect("rels"),
+            )
+            .expect("utf8");
+            assert!(rels.contains(&format!(r#"Target="../drawings/drawing{sheet}.xml""#)));
+        }
+    }
+
+    #[test]
+    fn no_images_emit_no_drawing_parts() {
+        let mut workbook = crate::Workbook::new();
+        workbook.add_worksheet().write(0, 0, "plain").expect("cell");
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(!names.iter().any(|name| name.contains("drawings/")));
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(!content_types.contains("drawing+xml"));
+    }
+
+    #[test]
+    fn foreground_images_emit_drawing_media_and_relationships() {
+        let first = crate::Image::new_from_buffer(&png(3, 2)).expect("png");
+        let second = crate::Image::new_from_buffer(&png(4, 5)).expect("png");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet
+            .insert_image_with_offset(2, 3, &first, 10, 5)
+            .expect("first image");
+        sheet.insert_image(4, 5, &second).expect("second image");
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let names = part_names(&bytes).expect("parts");
+        assert!(names.contains(&"xl/drawings/drawing1.xml".to_owned()));
+        assert!(names.contains(&"xl/drawings/_rels/drawing1.xml.rels".to_owned()));
+        assert_eq!(
+            part_bytes(&bytes, "xl/media/image1.png").expect("first media"),
+            png(3, 2)
+        );
+        assert_eq!(
+            part_bytes(&bytes, "xl/media/image2.png").expect("second media"),
+            png(4, 5)
+        );
+
+        let drawing =
+            String::from_utf8(part_bytes(&bytes, "xl/drawings/drawing1.xml").expect("drawing"))
+                .expect("utf8");
+        assert!(drawing.contains(
+            "<xdr:from><xdr:col>3</xdr:col><xdr:colOff>95250</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>47625</xdr:rowOff></xdr:from>"
+        ));
+        assert!(drawing.contains(
+            "<xdr:to><xdr:col>3</xdr:col><xdr:colOff>123825</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>66675</xdr:rowOff></xdr:to>"
+        ));
+        assert!(drawing.contains(r#"<xdr:cNvPr id="1" name="Picture 1"/>"#));
+        assert!(drawing.contains(r#"<xdr:cNvPr id="2" name="Picture 2"/>"#));
+        assert!(drawing.contains(r#"<a:blip r:embed="rId1"/>"#));
+        assert!(drawing.contains(r#"<a:blip r:embed="rId2"/>"#));
+        assert_eq!(drawing.matches("<xdr:twoCellAnchor").count(), 2);
+
+        let drawing_rels = String::from_utf8(
+            part_bytes(&bytes, "xl/drawings/_rels/drawing1.xml.rels").expect("drawing rels"),
+        )
+        .expect("utf8");
+        assert!(drawing_rels.contains(r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png""#));
+        assert!(drawing_rels.contains(r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image2.png""#));
+
+        let sheet_bytes = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("worksheet");
+        let drawings = records::<BrtDrawing>(&sheet_bytes);
+        assert_eq!(drawings.len(), 1);
+        assert_eq!(
+            drawings[0].rgb.to_optional_string().as_deref(),
+            Some("rId1")
+        );
+        let ids = record_ids(&sheet_bytes);
+        assert!(ids.contains(&KnownID::BrtDrawing));
+
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert_eq!(
+            rels,
+            concat!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+                r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>"#,
+                r#"</Relationships>"#,
+            )
+        );
+
+        let content_types =
+            String::from_utf8(part_bytes(&bytes, "[Content_Types].xml").expect("types"))
+                .expect("utf8");
+        assert!(content_types.contains(r#"<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>"#));
+    }
+
+    #[test]
+    fn foreground_and_background_images_keep_distinct_relationships() {
+        let foreground = crate::Image::new_from_buffer(&png(3, 2)).expect("png");
+        let background = crate::Image::new_from_buffer(&png(1, 1)).expect("background");
+        let mut workbook = crate::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.insert_image(0, 0, &foreground).expect("image");
+        sheet.insert_background_image(&background);
+
+        let bytes = workbook.save_to_buffer().expect("saves");
+        let sheet_bytes = part_bytes(&bytes, "xl/worksheets/sheet1.bin").expect("worksheet");
+        let drawings = records::<BrtDrawing>(&sheet_bytes);
+        let backgrounds = records::<BrtBkHim>(&sheet_bytes);
+        assert_eq!(drawings.len(), 1);
+        assert_eq!(
+            drawings[0].rgb.to_optional_string().as_deref(),
+            Some("rId1")
+        );
+        assert_eq!(backgrounds.len(), 1);
+        assert_eq!(
+            backgrounds[0].rgb.to_optional_string().as_deref(),
+            Some("rId2")
+        );
+        let ids = record_ids(&sheet_bytes);
+        let drawing_index = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtDrawing)
+            .expect("drawing");
+        let background_index = ids
+            .iter()
+            .position(|id| *id == KnownID::BrtBkHim)
+            .expect("background");
+        assert!(drawing_index < background_index);
+
+        let drawing_rels = String::from_utf8(
+            part_bytes(&bytes, "xl/drawings/_rels/drawing1.xml.rels").expect("drawing rels"),
+        )
+        .expect("utf8");
+        assert!(drawing_rels.contains(r#"Target="../media/image2.png""#));
+        let rels = String::from_utf8(
+            part_bytes(&bytes, "xl/worksheets/_rels/sheet1.bin.rels").expect("rels"),
+        )
+        .expect("utf8");
+        assert!(rels.contains(r#"Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing""#));
+        assert!(rels.contains(r#"Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png""#));
     }
 
     #[test]

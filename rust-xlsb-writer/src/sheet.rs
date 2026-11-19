@@ -8,9 +8,9 @@ use rust_xlsb_core::prelude::{
     BrtBeginSheet, BrtBeginSheetData, BrtBeginSparklineGroup, BrtBeginSparklineGroups,
     BrtBeginSparklines, BrtBeginWsView, BrtBeginWsViews, BrtBkHim, BrtBrk, BrtCellBlank,
     BrtCellBool, BrtCellError, BrtCellIgnoreEC, BrtCellIsst, BrtCellMeta, BrtCellRString,
-    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtColor, BrtEndAFilter, BrtEndCFRule,
-    BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting, BrtEndDVals,
-    BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
+    BrtCellReal, BrtCellRk, BrtColInfo, BrtColSpan, BrtColor, BrtDrawing, BrtEndAFilter,
+    BrtEndCFRule, BrtEndCellIgnoreECs, BrtEndColBrk, BrtEndColInfos, BrtEndConditionalFormatting,
+    BrtEndDVals, BrtEndHeaderFooter, BrtEndListParts, BrtEndMergeCells, BrtEndRwBrk, BrtEndSheet,
     BrtEndSheetData, BrtEndSparklineGroup, BrtEndSparklineGroups, BrtEndSparklines, BrtEndWsView,
     BrtEndWsViews, BrtFRTBegin, BrtFRTEnd, BrtFmlaBool, BrtFmlaError, BrtFmlaNum, BrtFmlaString,
     BrtFont, BrtHLink, BrtListPart, BrtMargins, BrtMergeCell, BrtPageSetup, BrtPane,
@@ -61,6 +61,7 @@ pub fn write_sheet(
         &[],
         selected,
         None,
+        None,
         out,
     )
 }
@@ -77,6 +78,7 @@ pub(crate) fn write_sheet_with_fonts(
     conditional_dxf_ids: &[Option<u32>],
     sparkline_groups: &[SparklineSaveGroup<'_>],
     selected: bool,
+    drawing_rel_id: Option<u32>,
     background_rel_id: Option<u32>,
     out: &mut Vec<u8>,
 ) -> Result<()> {
@@ -205,6 +207,7 @@ pub(crate) fn write_sheet_with_fonts(
     write_header_footer(sheet, out)?;
     write_page_breaks(sheet, out)?;
     write_ignored_errors(sheet, out)?;
+    write_drawing(drawing_rel_id, out)?;
     write_background_image(background_rel_id, out)?;
     write_list_parts(sheet, out)?;
     write_sparklines(sparkline_groups, out)?;
@@ -614,6 +617,18 @@ fn write_hyperlinks(sheet: &Worksheet, out: &mut Vec<u8>) -> Result<()> {
                 location: XlWideString::construct(Some(link.location.as_str())),
                 tooltip: XlWideString::construct(Some(link.tooltip.as_str())),
                 display: XlWideString::construct(Some(display)),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn write_drawing(rel_id: Option<u32>, out: &mut Vec<u8>) -> Result<()> {
+    if let Some(rel_id) = rel_id {
+        push(
+            out,
+            &BrtDrawing {
+                rgb: XlNullableWideString::construct(Some(format!("rId{rel_id}").as_str())),
             },
         )?;
     }
