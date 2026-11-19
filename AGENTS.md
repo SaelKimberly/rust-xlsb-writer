@@ -158,6 +158,18 @@ per-column width/format options; the writer emits coalesced `BrtColInfo`
 records and sets `BrtRowHdr.ixfe` with `fGhostDirty` for rows.
 `StyleRegistry::write_to_biff` emits the complete Styles part record sequence.
 
+Formatting is separate again. Core's `StyleRegistry` (`styles.rs`) is seeded
+with the default `BrtXF` at index 0; `set_default_style` can replace cell XF 0
+and the Normal style XF before worksheet formats are registered. `CellStyle`
+pairs a `BrtFont`, `BrtFill`, `BrtBorder`, and the direct `BrtXF` attributes;
+`add_style` interns each component, patches
+`iFont`/`iFill`/`ixBorder`/`ixfeParent`, and deduplicates the resulting XF. `add_number_format` allocates custom `iFmt` ids from 164. The
+public `Format` builder maps to `CellStyle` at save; border-aware range
+formatting copies only the requested border sides; `Worksheet` stores row and
+per-column width/format options; the writer emits coalesced `BrtColInfo`
+records and sets `BrtRowHdr.ixfe` with `fGhostDirty` for rows.
+`StyleRegistry::write_to_biff` emits the complete Styles part record sequence.
+
 Temporal conversion lives in `temporal.rs` and reuses the same path.
 `NaiveDate` becomes an integer day serial in the 1900 system, so dates are
 `BrtCellRk` ints; `NaiveTime`, `NaiveDateTime`, and `TimeDelta` become day
